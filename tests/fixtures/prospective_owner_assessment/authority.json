@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-06T04:12:22.061404+00:00",
+  "authority": "Root latest human OAC-owner9512 internal decisions and formal source-bound Planner scope request; not Product technical PASS",
+  "source_scope_request_sha256": "ff34789f03bef8b04200e4f812670db0c6f3aac19596217e666b122c9e7a9154",
+  "Root_grouping_decision": "SPLIT Agent API and MCP. Shared governance or release consumers do not force atomic grouping; no dependency path between original roots.",
+  "prospective_assessment_ONLY_candidates": {
+    "agent-api": [
+      "agent-catalog-production-commands",
+      "api-agent"
+    ],
+    "mcp": [
+      "mcp-platform-transaction-composition",
+      "agentrun-mcp-consumption-evidence",
+      "mcp-catalog-governed-hardening",
+      "api-mcp"
+    ]
+  },
+  "existing_resource_lifecycle": "unchanged genuine prerequisite/context; no coordination retry or mutation authorized",
+  "OAC_owning_bounds": "Exactly Planner supplied Source design responsibilities and additive compensating publications; DONE agent-definition/agent-definition-audit/agent-run-job/platform-agentrun/runtimeSDK producers and all historical contracts/artifacts remain immutable. No ScopeTransfer or prerequisite producer bypass; complete release/publication compatibility decisions and fresh independent proposal Reviewer mandatory before effects.",
+  "prospective_new_node_definitions_not_yet_approved": true,
+  "new_native_budget_grant_or_zero_history_assertion": false,
+  "default20_is_NOT_auto_grant_or_fabricated_consumed0": true,
+  "future_effect_permission": "NONE in this decision. Only qualification of a supported Source-bound drafting/assessment route for exact prospective candidate identities. Existing actual changed/derived budgets, current limits/source rights, CAS, controls, native Relatedterminal, ALLDONE/meta/consumed history stay strict. New node execution/allocation/apply remains separately Source-qualified and explicitly authorized; unborn WorkItem absence is not zero usage or grant.",
+  "Root_retains_OAC_priority_owner_and_grouping_decisions": true,
+  "OMAC_fixer_must_NOT_design_OAC_nodes_or_proposals": true,
+  "not_permission_to_relabel_old_decisions_dropselectors_or_force_nodeRetry": true
+}

@@ -1,0 +1,857 @@
+schema: omac.review-ledger/v1
+cycles:
+- round: 1
+  subject_digest: da5dc87c7dd7840fcfe9fb9a742794db62e32abe64f94ad0e143b6be9a1a1b55
+  report_digest: b1396b649e76a1a97a3436fd3240fd859929993b83a187f1b3fe8d159896fe89
+  verdict: reject
+  obligation_results:
+    dimension:authority: fail
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: fail
+    dimension:evidence: fail
+    dimension:regression: fail
+    integration:api-mcp-gate: pass
+  new_count: 7
+  fixed_count: 0
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 7
+  prior_open_blocker_ids: []
+  open_blocker_ids: &id001
+  - BLK-006c632cb966
+  - BLK-07f1a38b0b58
+  - BLK-0af923b33075
+  - BLK-73b0d5041f63
+  - BLK-c22144122c6e
+  - BLK-c69f4cc0b7ec
+  - BLK-d24b87fd226c
+  reported_blocker_ids: *id001
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-006c632cb966
+    root_cause_key: mcp-api.openapi-contract-drift
+    obligation_id: dimension:structure
+    summary: The published OpenAPI contract is inconsistent and incomplete.
+    evidence: api/openapi/mcp/types.go:130-154 supports top-level mcpServers while
+      openapi.yaml:126-140 omits it; openapi.yaml:399-427 leaves launch untyped and
+      omits the accepted materialization request.
+    required_fix: Choose and document one import shape, define MaterializedLaunch
+      and the request contract, regenerate openapi.gen.go, and add schema-vs-handler
+      tests.
+    status: open
+    classification: new
+  - blocker_id: BLK-07f1a38b0b58
+    root_cause_key: mcp-api.idempotency-not-enforced
+    obligation_id: dimension:evidence
+    summary: Idempotency keys are validated but never enforced.
+    evidence: internal/httpapi/mcp/service.go:103-146, 155-183, 194-238, and 261-295
+      only check that the key is nonblank; Catalog at :54-63 has no reservation or
+      replay operation.
+    required_fix: Add a durable command reservation keyed by request context, operation,
+      subject, and canonical request digest; atomically replay the same result or
+      return Conflict for a different digest.
+    status: open
+    classification: new
+  - blocker_id: BLK-0af923b33075
+    root_cause_key: mcp-api.noncanonical-governance-lineage
+    obligation_id: dimension:authority
+    summary: Authorization and audit are not connected to canonical governance contracts.
+    evidence: internal/httpapi/mcp/service.go:27-63 defines local request/event types
+      without exact subject, policy, RequestContext, or evaluated-control provenance,
+      and :363-367 returns before audit on denial.
+    required_fix: Use canonical AuthorizationEngine/decision and AuditEvent ports,
+      carry exact subject revision/digest and policy evidence, and persist allowed
+      and denied outcomes through the canonical path.
+    status: open
+    classification: new
+  - blocker_id: BLK-73b0d5041f63
+    root_cause_key: mcp-api.untrusted-runtime-materialization-context
+    obligation_id: dimension:execution
+    summary: Materialization status trusts caller-supplied runtime paths.
+    evidence: internal/httpapi/mcp/handler.go:174-196 accepts an undocumented GET
+      body and service.go:304-334 passes its WorkspaceRoot/AllowedPaths into filesystem-based
+      MaterializeRuntime.
+    required_fix: Remove client-controlled runtime paths; use a trusted runtime/workspace
+      binding or return blocked/unknown, and keep launch materialization internal.
+    status: open
+    classification: new
+  - blocker_id: BLK-c22144122c6e
+    root_cause_key: mcp-api.release-tooling-scope-expansion
+    obligation_id: dimension:ownership
+    summary: Shared release-tooling ownership was expanded outside this delivery boundary.
+    evidence: The diff adds 180/11 lines to link_go_component.py and 101/3 lines to
+      verify_generated_contract.py, outside the declared API scope and overlapping
+      blocked release-artifact-tooling.
+    required_fix: Split the release-tooling changes into the owning prerequisite or
+      obtain an explicit DAG/contract amendment.
+    status: open
+    classification: new
+  - blocker_id: BLK-c69f4cc0b7ec
+    root_cause_key: mcp-api.inline-secret-response
+    obligation_id: dimension:regression
+    summary: Manual Create/Update can persist and return secret-shaped values under
+      non-sensitive names.
+    evidence: api/openapi/mcp/types.go:325-334 and :419-447 copy environment/header
+      values into responses; internal/mcp/types.go validates sensitive names but import-only
+      value detection is not used by Create/Update.
+    required_fix: Apply fail-closed secret detection to every public definition input
+      or require typed non-secret input plus explicit CredentialBinding creation;
+      never return classified secret material.
+    status: open
+    classification: new
+  - blocker_id: BLK-d24b87fd226c
+    root_cause_key: mcp-api.cross-scope-resource-mutation
+    obligation_id: dimension:regression
+    summary: Update/read isolation is not fail-closed across scopes.
+    evidence: internal/httpapi/mcp/service.go:210-227 fetches by unconstrained ID
+      and rewrites input.ScopeID from the caller context at :224 without checking
+      the loaded definition scope; Test and MaterializationStatus lack the same equality
+      check.
+    required_fix: Constrain reads by authenticated scope, require scope equality before
+      authorization/mutation, preserve persisted scope, and include exact subject
+      digest in authorization and commit CAS.
+    status: open
+    classification: new
+- round: 2
+  subject_digest: b67fc8b5ae7b4341696bfcfc4fada251c1cbf1d02af87bfe6def8e0d31f10ad8
+  report_digest: d562c8861b0f2a6e987d81221ff40089f52035404ea4799374270c4be7d90258
+  verdict: reject
+  obligation_results:
+    dimension:authority: fail
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: fail
+    dimension:evidence: fail
+    dimension:regression: fail
+    integration:api-mcp-gate: fail
+  new_count: 4
+  fixed_count: 3
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 8
+  prior_open_blocker_ids:
+  - BLK-006c632cb966
+  - BLK-07f1a38b0b58
+  - BLK-0af923b33075
+  - BLK-73b0d5041f63
+  - BLK-c22144122c6e
+  - BLK-c69f4cc0b7ec
+  - BLK-d24b87fd226c
+  open_blocker_ids: &id002
+  - BLK-006c632cb966
+  - BLK-07f1a38b0b58
+  - BLK-0af923b33075
+  - BLK-ac001635f24b
+  - BLK-c69f4cc0b7ec
+  - BLK-d7fc58321943
+  - BLK-e4b1d79f0f32
+  - BLK-f8f297e18616
+  reported_blocker_ids: *id002
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-006c632cb966
+    root_cause_key: mcp-api.openapi-contract-drift
+    obligation_id: dimension:structure
+    summary: The published OpenAPI and error contract still does not describe the
+      implemented public behavior.
+    evidence: api/openapi/mcp/types.go:134-140 defines Descriptions but api/openapi/mcp/openapi.yaml:127-142
+      omits it. ErrorResponse at types.go:267-271 and openapi.yaml:446-455 expose
+      only code, message, and request_id, while UJ-EXTERNAL-AGENT-CLI-001 requires
+      retryable and hint in conflict responses. The current schema tests only check
+      for a few positive strings and do not detect these omissions.
+    required_fix: Make one authoritative OpenAPI/error DTO shape that includes every
+      accepted request/response field and the required retryable/hint semantics, regenerate
+      openapi.gen.go through the exact released generator contract, and add schema-vs-handler
+      tests for missing fields and error responses.
+    status: open
+    classification: deeper
+    last_evidence: The generated contract now includes a typed MaterializedLaunch
+      and the undocumented materialization request was removed, but the published
+      schema still omits the implemented Descriptions field and retryable/hint error
+      fields; the final-head release contract command also cannot validate this generated
+      contract.
+  - blocker_id: BLK-07f1a38b0b58
+    root_cause_key: mcp-api.idempotency-not-enforced
+    obligation_id: dimension:evidence
+    summary: Idempotency replay is not stable or fail-safe across real retries and
+      unknown commit outcomes.
+    evidence: internal/httpapi/mcp/service.go:388-410 performs GetDefinition/UpdateDefinition
+      before ReserveCommand at :429-430; commandIdentity at :770-771 includes request.RequestID,
+      and service_test.go:375-377 includes that field in the fake reservation key.
+      releaseIfNeeded at :739-745 releases on every non-committed return, including
+      an indeterminate CommitCommand result. Existing replay coverage reuses the same
+      RequestContext and does not exercise lost-response/new-request identity.
+    required_fix: Use a durable stable command identity that excludes per-attempt
+      RequestID while retaining immutable provenance separately; resolve replay before
+      mutable CAS rejection, bind reservation/commit to canonical request digest and
+      subject revision, and retain/observe an indeterminate reservation instead of
+      releasing it until commit outcome is known.
+    status: open
+    classification: deeper
+    last_evidence: Durable reservation/replay hooks were added, but replay identity
+      is still bound to RequestContext.RequestID, Update rejects stale revisions before
+      checking replay, and any commit error triggers reservation release. The prior
+      idempotency/recovery root remains open with a narrower but consequential failure
+      mode.
+  - blocker_id: BLK-0af923b33075
+    root_cause_key: mcp-api.noncanonical-governance-lineage
+    obligation_id: dimension:authority
+    summary: Admission and credential use still bypass the canonical governance contracts.
+    evidence: internal/httpapi/mcp/service.go:56-68 defines AdmitMCP and AuthorizeMCPUse
+      as local methods returning auditcontract.EvaluatedControl. service.go:666-697
+      validates only control/outcome/rules/facts strings; Test at :512-526 passes
+      definition references directly to MCPConnector without a credential lease, and
+      MaterializationStatus at :584-596 does the same for RuntimeMaterializer. Canonical
+      ExecutionAdmissionRequest/Decision and CredentialResolveRequest are defined
+      in contracts/governance/admission/contract.go:52-63/471-553 and contracts/governance/credential/wire.go:619-656.
+    required_fix: Use the canonical ExecutionAdmissionEngine and CredentialBroker
+      ports, construct and validate exact request/subject/digest/owner/security/usage
+      inputs, persist canonical admit/reject and credential-use evidence, and resolve
+      each binding into a short-lived purpose- and subject-bound lease before Connector
+      or Runtime use.
+    status: open
+    classification: deeper
+    last_evidence: AuthorizationRequest and AuditEvent now alias canonical packages
+      and denied outcomes are recorded, but AdmissionEngine and CredentialBroker still
+      expose local audit-shaped ports without canonical admission request/decision
+      or credential resolve/lease identity. Governance lineage remains incomplete.
+  - blocker_id: BLK-73b0d5041f63
+    root_cause_key: mcp-api.untrusted-runtime-materialization-context
+    obligation_id: dimension:execution
+    summary: Materialization status trusts caller-supplied runtime paths.
+    evidence: internal/httpapi/mcp/handler.go:174-196 accepts an undocumented GET
+      body and service.go:304-334 passes its WorkspaceRoot/AllowedPaths into filesystem-based
+      MaterializeRuntime.
+    required_fix: Remove client-controlled runtime paths; use a trusted runtime/workspace
+      binding or return blocked/unknown, and keep launch materialization internal.
+    status: fixed
+    classification: fixed
+    last_evidence: handler.go:175-195 no longer decodes WorkspaceRoot or AllowedPaths
+      from the public status request; MaterializationRequest contains only RequestContext
+      and ServerID, and runtime materialization is delegated to a trusted dependency.
+      A separate launch-identity mismatch blocker is reported for the remaining result-validation
+      gap.
+  - blocker_id: BLK-ac001635f24b
+    root_cause_key: mcp-api.runtime-materialization-result-mismatch
+    obligation_id: dimension:execution
+    summary: Materialization status reports ready for a Runtime launch that is not
+      bound to the requested definition.
+    evidence: internal/httpapi/mcp/service.go:596-608 converts the RuntimeMaterializer
+      result and sets Status=ready without comparing it with definition.MCPServerDefinitionID,
+      definition.Transport, definition.ConfigurationDigest, or credentialTargets(definition).
+      api/openapi/mcp/types.go:367-389 validates only payload shape. The current fakeRuntimeMaterializer
+      at internal/httpapi/mcp/service_test.go:407-414 deliberately returns fixed server/digest
+      values unrelated to the requested definition, and tests at :124-130/:286-309
+      assert ready without detecting the mismatch.
+    required_fix: Validate the Runtime result against the queried definition and the
+      canonical credential/admission evidence before returning ready; return blocked/unknown
+      on any identity or digest mismatch and add a negative test with a mismatched
+      launch.
+    status: open
+    classification: new
+  - blocker_id: BLK-c22144122c6e
+    root_cause_key: mcp-api.release-tooling-scope-expansion
+    obligation_id: dimension:ownership
+    summary: Shared release-tooling ownership was expanded outside this delivery boundary.
+    evidence: The diff adds 180/11 lines to link_go_component.py and 101/3 lines to
+      verify_generated_contract.py, outside the declared API scope and overlapping
+      blocked release-artifact-tooling.
+    required_fix: Split the release-tooling changes into the owning prerequisite or
+      obtain an explicit DAG/contract amendment.
+    status: fixed
+    classification: fixed
+    last_evidence: git diff main...HEAD --name-status contains only the 17 API/OpenAPI
+      and internal/httpapi/mcp files; scripts/release/link_go_component.py and verify_generated_contract.py
+      are absent from the final PR diff.
+  - blocker_id: BLK-c69f4cc0b7ec
+    root_cause_key: mcp-api.inline-secret-response
+    obligation_id: dimension:regression
+    summary: Manual definition inputs still rely on heuristic secret classification
+      rather than a fail-closed non-secret boundary.
+    evidence: api/openapi/mcp/types.go:403-454 applies isSensitiveName plus looksLikeSecretValue,
+      where values only match a handful of prefixes or a whitespace-free length threshold.
+      internal/mcp/types.go:409-453 also enforces names rather than a typed non-secret
+      input. The import path strips detected values at internal/mcp/import.go:198-221,
+      but that does not prove arbitrary manual Create/Update values are non-secret.
+    required_fix: Reject raw environment/header values in public Create/Update unless
+      they are an explicitly typed non-secret field, or require every value to be
+      represented by a purpose-bound CredentialBinding; never persist or return a
+      value based only on heuristic classification.
+    status: open
+    classification: deeper
+    last_evidence: Create/Update now invoke validateNoInlineSecrets, but that check
+      remains a prefix/length heuristic and accepts arbitrary credential-shaped values
+      under non-sensitive names. It is not the fail-closed typed non-secret or explicit-binding
+      boundary required by the prior fix.
+  - blocker_id: BLK-d24b87fd226c
+    root_cause_key: mcp-api.cross-scope-resource-mutation
+    obligation_id: dimension:regression
+    summary: Update/read isolation is not fail-closed across scopes.
+    evidence: internal/httpapi/mcp/service.go:210-227 fetches by unconstrained ID
+      and rewrites input.ScopeID from the caller context at :224 without checking
+      the loaded definition scope; Test and MaterializationStatus lack the same equality
+      check.
+    required_fix: Constrain reads by authenticated scope, require scope equality before
+      authorization/mutation, preserve persisted scope, and include exact subject
+      digest in authorization and commit CAS.
+    status: fixed
+    classification: fixed
+    last_evidence: Catalog.GetDefinition now receives the authenticated scope, the
+      fake catalog enforces it, service.go:392-394/494-495/569-570 checks the loaded
+      definition scope, and Update preserves previous.ScopeID; the scoped regression
+      test passed.
+  - blocker_id: BLK-d7fc58321943
+    root_cause_key: mcp-api.undocumented-route-fallback
+    obligation_id: dimension:structure
+    summary: The HTTP handler routes undocumented paths and aliases through the update/test/materialization
+      operations.
+    evidence: internal/httpapi/mcp/handler.go:65-80 only calls TrimPrefix and defaults
+      every unmatched path to updateDefinition; it does not first require the documented
+      prefix or exact route shape. The same block accepts /test and /materialization-status
+      aliases at :71-78, while openapi.yaml declares only :test and /materialization.
+      handler_coverage_test.go:64-69 codifies the undocumented materialization-status
+      alias rather than rejecting it.
+    required_fix: Use exact route matching (including the documented prefix), return
+      NotFound for unmatched paths, and remove or explicitly publish any aliases;
+      add a regression test for an unmatched PUT path and each supported route.
+    status: open
+    classification: new
+  - blocker_id: BLK-e4b1d79f0f32
+    root_cause_key: mcp-api.release-contract-not-reproducible
+    obligation_id: integration:api-mcp-gate
+    summary: The contract-declared generated-contract and source-link commands do
+      not run against the final PR HEAD.
+    evidence: Independent final-head execution of the exact verify_generated_contract.py
+      command exited 2 because scripts/release/verify_generated_contract.py:10-12
+      requires --component-manifest and --generated-contract, not the contract's --root/--require-go-generate-directive/--expected-outputs-file
+      flags. The exact link_go_component.py command exited 2 because scripts/release/link_go_component.py:35-39
+      requires --component-manifest, --go-binaries-manifest, and --output, not the
+      contract's entrypoint/bundle flags. The stable package_component.py and verify_component_manifest.py
+      commands pass, but they do not make the two exact gate commands reproducible.
+    required_fix: Either update the contract to the released tooling interface and
+      regenerate the gate evidence, or land the owning release-tooling prerequisite
+      before this gate is required; then rerun the exact commands at the final PR
+      HEAD without temporary scripts.
+    status: open
+    classification: new
+  - blocker_id: BLK-f8f297e18616
+    root_cause_key: mcp-api.production-composition-unwired
+    obligation_id: dimension:ownership
+    summary: The delivered MCP API has no production composition or concrete governance/runtime
+      owner wired in the repository.
+    evidence: A repository-wide search at the delivered head found only internal/httpapi/mcp
+      tests and helper definitions for NewHandler/New, Catalog, AdmitMCP, AuthorizeMCPUse,
+      RuntimeMaterializer, and MCPConnector; no production call site or concrete implementation
+      is present. The only successful end-to-end-shaped tests use newTestService/fakeCatalog/allowAllAdmission/allowAllCredentialBroker/fakeConnector
+      in internal/httpapi/mcp/service_test.go:184-243.
+    required_fix: Wire the handler through the owning production API composition root
+      with the concrete Catalog and canonical governance, CredentialBroker, Connector,
+      and trusted Runtime adapters, or explicitly split and gate this delivery with
+      an executable downstream integration fixture before claiming the public MCP
+      API is exposed.
+    status: open
+    classification: new
+- round: 3
+  subject_digest: 59c4abebd71acf227f171fe1a80beca3193548cc2b69b1fb8a571c66aaaffea0
+  report_digest: e2385aafabfc46de8bdd065375352fe8dffadbf6630e76d679cca875d02a28fc
+  verdict: reject
+  obligation_results:
+    dimension:authority: fail
+    dimension:structure: fail
+    dimension:execution: fail
+    dimension:ownership: fail
+    dimension:evidence: fail
+    dimension:regression: fail
+    integration:api-mcp-gate: fail
+  new_count: 1
+  fixed_count: 1
+  regressed_count: 0
+  unchanged_count: 0
+  open_count: 8
+  prior_open_blocker_ids:
+  - BLK-006c632cb966
+  - BLK-07f1a38b0b58
+  - BLK-0af923b33075
+  - BLK-ac001635f24b
+  - BLK-c69f4cc0b7ec
+  - BLK-d7fc58321943
+  - BLK-e4b1d79f0f32
+  - BLK-f8f297e18616
+  open_blocker_ids: &id003
+  - BLK-006c632cb966
+  - BLK-07f1a38b0b58
+  - BLK-0af923b33075
+  - BLK-36816070c77b
+  - BLK-ac001635f24b
+  - BLK-c69f4cc0b7ec
+  - BLK-e4b1d79f0f32
+  - BLK-f8f297e18616
+  reported_blocker_ids: *id003
+  blocker_facts_schema: omac.review-cycle-blocker-facts/v1
+  blocker_facts:
+  - blocker_id: BLK-006c632cb966
+    root_cause_key: mcp-api.openapi-contract-drift
+    obligation_id: dimension:structure
+    summary: The public OpenAPI contract still does not describe all accepted request
+      and response behavior.
+    evidence: api/openapi/mcp/types.go:183-187 exposes TestMcpServerRequest.mcp_server_definition_id
+      while api/openapi/mcp/openapi.yaml:206-215 omits it; handler.go:173-178 decodes
+      the field but ignores it. handler.go:180-185 emits a 502 object containing error
+      and snapshot, while openapi.yaml:89-90 provides no content schema. Handler error
+      paths at handler.go:249-263 expose 403/404/405/503 responses that are not declared
+      for the corresponding operations. The current OpenAPI test only checks string
+      presence at api/openapi/mcp/mcp_test.go:34-48.
+    required_fix: Choose one authoritative public DTO shape, remove in-process-only
+      fields from public wire DTOs or document and enforce them, add explicit ErrorResponse
+      schemas for every supported operation/status including the 502 wrapper, then
+      regenerate and run structural schema-vs-handler tests.
+    status: open
+    classification: deeper
+    last_evidence: Descriptions, retryable, and hint were added to the OpenAPI/DTO,
+      and generated drift checks pass separately. Remaining public shape drift includes
+      the ignored TestMcpServerRequest identity field, the undocumented 502 body,
+      incomplete error response declarations, and caller-authored definition identity.
+  - blocker_id: BLK-07f1a38b0b58
+    root_cause_key: mcp-api.idempotency-not-enforced
+    obligation_id: dimension:evidence
+    summary: The service-level idempotency repair is not backed by a delivered durable
+      reservation/replay implementation.
+    evidence: internal/httpapi/mcp/service.go:120-149 defines the reservation/commit
+      contract and service.go:428-438/477-487 now exercises replay before CAS and
+      retains a reservation after commit is attempted; the corresponding tests pass.
+      Repository-wide inspection found no production Catalog implementation or composition,
+      so the fake reservation map in internal/httpapi/mcp/service_test.go:293-404
+      is the only exercised persistence behavior.
+    required_fix: Deliver or wire the durable Catalog command-record implementation,
+      prove atomic reservation/definition/snapshot/result/audit persistence, and add
+      a restart/lost-response integration test that observes both committed replay
+      and indeterminate outcomes.
+    status: open
+    classification: deeper
+    last_evidence: The current service now derives a stable reservation key without
+      RequestContextID, reserves before Update CAS, and retains reservations after
+      commit is attempted; the fresh-context and mutated-revision tests pass. The
+      real durable Catalog/recovery implementation is absent, so production lost-response
+      semantics remain unverified and are covered by the production-composition blocker.
+  - blocker_id: BLK-0af923b33075
+    root_cause_key: mcp-api.noncanonical-governance-lineage
+    obligation_id: dimension:authority
+    summary: The API calls canonical-shaped ports but does not supply or verify authoritative
+      governance identity and execution facts.
+    evidence: internal/httpapi/mcp/service.go:697-710 puts the domain command digest
+      in a requirement and compares the returned decision to that value instead of
+      verifying a canonical full AuthorizationRequest digest. service.go:725-750 uses
+      ScopeID as ProjectID, ComponentID/architecture/IsolationLevel "mcp-api", NetworkModeAllowed,
+      and ComponentRun for every operation. service.go:558-586 resolves probe leases
+      but commits only authorization/admission controls; service.go:594-668 resolves
+      status leases without a credential-use audit handoff. The authoritative admission
+      contract requires exact owner/resolved execution/security inputs at contracts/governance/admission/contract.go:329-351,
+      and the governance design requires Credential Resolution and Audit in the canonical
+      chain at docs/design/detailed/09-governance-and-security-detailed-design.md:27-45,462-474,553-572.
+    required_fix: Connect the MCP use cases to the sole AuthorizationEngine, ExecutionAdmissionEngine,
+      CredentialBroker, and canonical audit/credential-use ports. Derive an operation-specific
+      exact subject, owner (or an explicit non-project owner boundary), resolved connector/runtime/workspace,
+      network/security requirements, and canonical request digests from trusted facts;
+      do not substitute ScopeID or feature labels.
+    status: open
+    classification: deeper
+    last_evidence: Canonical type signatures and lease validation replaced the former
+      audit-shaped ports, but service.go still constructs non-authoritative admission
+      ownership/execution facts and has no production canonical engine/broker composition
+      or explicit credential-use evidence handoff.
+  - blocker_id: BLK-36816070c77b
+    root_cause_key: mcp-api.caller-authored-definition-identity
+    obligation_id: dimension:ownership
+    summary: Create accepts a caller-authored MCP definition identity even though
+      the authoritative contract assigns it to the system.
+    evidence: docs/references/execution/agent-runtime.md:130-142 defines mcp_server_definition_id
+      as a system-produced identity generated on first creation. api/openapi/mcp/types.go:94-106
+      and openapi.yaml:216-230 expose it in ServerDefinitionInput, and internal/httpapi/mcp/service.go:309-366
+      accepts it and skips NewID when present. The service tests also treat a caller-provided
+      ID as the normal create path.
+    required_fix: Remove mcp_server_definition_id from the public create input and
+      always generate it server-side; keep any in-process compatibility alias out
+      of the public wire schema, and add a test that a caller-supplied identity is
+      rejected or ignored without changing the generated identity.
+    status: open
+    classification: new
+  - blocker_id: BLK-ac001635f24b
+    root_cause_key: mcp-api.runtime-materialization-result-mismatch
+    obligation_id: dimension:execution
+    summary: Materialization can report ready without proving that the launch consumed
+      the exact credential bindings and complete launch payload requested.
+    evidence: internal/httpapi/mcp/service.go:655-667 marks ready after validateMaterializedLaunch.
+      service.go:998-1035 compares server ID, transport, configuration digest, and
+      target strings only; it never compares binding IDs/purposes with the definition
+      or leases and never checks command, working directory, endpoint, headers, or
+      binding identity. The existing launch contract validation at contracts/agentrun/agentrun.go:618-735
+      requires those fields, but its validator is not invoked by this adapter. Tests
+      in internal/httpapi/mcp/service_test.go:476-503 ignore the lease argument and
+      cover only target-name/mismatch cases.
+    required_fix: Validate the full launch against the exact definition and ordered
+      (CredentialBindingID, Target, Purpose) set and the subject-bound active leases,
+      or require a trusted materialization proof that binds those values. Fail closed
+      with blocked/unknown for any mismatch or incomplete payload, and add negative
+      binding-ID/purpose tests.
+    status: open
+    classification: deeper
+    last_evidence: Runtime server ID, transport, digest, and ordered target names
+      are now checked, and mismatched fake launches are rejected. Binding IDs/purposes
+      and complete launch payload validation are still omitted, so a launch can be
+      ready while using a different credential identity or incomplete materialization
+      payload.
+  - blocker_id: BLK-c69f4cc0b7ec
+    root_cause_key: mcp-api.inline-secret-response
+    obligation_id: dimension:regression
+    summary: Manual and imported environment/header values still rely on heuristic
+      secret classification instead of a fail-closed binding-only boundary.
+    evidence: api/openapi/mcp/types.go:414-470 requires ValueClassificationNonSecret
+      but then relies on isSensitiveName plus a small prefix/length detector; internal/mcp/types.go:409-414
+      rejects only sensitive names; internal/mcp/import.go:198-221 applies the same
+      heuristics before copying values into normalized candidates. Existing negative
+      tests cover known detector branches, not an unknown/short credential value.
+    required_fix: Do not treat a client-supplied non-secret assertion as proof. Make
+      public environment/header values binding-only unless they come from a server-defined,
+      strictly typed non-secret field, and add a regression test proving arbitrary
+      credential-shaped values cannot be persisted or returned.
+    status: open
+    classification: deeper
+    last_evidence: Create/Update require the new non-secret classification and reject
+      known sensitive names/prefixes/lengths, but the classification is caller-authored
+      and the remaining value detector is heuristic. Unknown or short secret material
+      under a non-sensitive name can still be returned/persisted.
+  - blocker_id: BLK-d7fc58321943
+    root_cause_key: mcp-api.undocumented-route-fallback
+    obligation_id: dimension:structure
+    summary: The HTTP handler routes undocumented paths and aliases through the update/test/materialization
+      operations.
+    evidence: internal/httpapi/mcp/handler.go:65-80 only calls TrimPrefix and defaults
+      every unmatched path to updateDefinition; it does not first require the documented
+      prefix or exact route shape. The same block accepts /test and /materialization-status
+      aliases at :71-78, while openapi.yaml declares only :test and /materialization.
+      handler_coverage_test.go:64-69 codifies the undocumented materialization-status
+      alias rather than rejecting it.
+    required_fix: Use exact route matching (including the documented prefix), return
+      NotFound for unmatched paths, and remove or explicitly publish any aliases;
+      add a regression test for an unmatched PUT path and each supported route.
+    status: fixed
+    classification: fixed
+    last_evidence: handler.go:65-89 now requires the exact /v1/mcp/servers route family,
+      exact :test and /materialization suffixes, and a single path-segment update
+      ID; the materialization-status alias and unrelated fallback routes are rejected
+      by passing regression tests.
+  - blocker_id: BLK-e4b1d79f0f32
+    root_cause_key: mcp-api.release-contract-not-reproducible
+    obligation_id: integration:api-mcp-gate
+    summary: The contract-declared generated-contract and source-link commands cannot
+      run against the final PR HEAD.
+    evidence: The exact verify_generated_contract.py command exited 2 because scripts/release/verify_generated_contract.py:10-12
+      requires --component-manifest and --generated-contract, not the contract's --root/--require-go-generate-directive/--expected-outputs-file
+      flags. The exact link_go_component.py command exited 2 because scripts/release/link_go_component.py:35-39
+      requires --component-manifest, --go-binaries-manifest, and --output, not the
+      contract's entrypoint/bundle flags. Stable package_component.py and verify_component_manifest.py
+      passed, but they do not make the two exact gate commands reproducible.
+    required_fix: Update the contract to the released tooling interface and regenerate
+      the gate evidence, or land the owning release-tooling prerequisite before this
+      gate is required; then rerun the exact commands at the final PR HEAD without
+      temporary scripts.
+    status: open
+    classification: deeper
+    last_evidence: The exact final-head verify_generated_contract.py and link_go_component.py
+      commands still exit 2 with required-argument usage errors. The stable package_component.py/verify_component_manifest.py
+      path passes, but the contract-declared gate remains unreproducible.
+  - blocker_id: BLK-f8f297e18616
+    root_cause_key: mcp-api.production-composition-unwired
+    obligation_id: dimension:ownership
+    summary: The delivered public MCP API has no production composition or concrete
+      governed persistence/runtime owner in the repository.
+    evidence: Repository-wide symbol search at e9b0cf11 found NewHandler/New, Catalog,
+      RuntimeMaterializer, MCPConnector, and governance implementations only in internal/httpapi/mcp
+      tests and helper/interface definitions. The only successful end-to-end-shaped
+      fixture is internal/httpapi/mcp/service_test.go:190-200, which wires fakeCatalog,
+      allowAllAuthorizer, allowAllAdmission, allowAllCredentialBroker, and fakeConnector.
+    required_fix: Wire the handler through the owning production API composition root
+      with a durable Catalog and concrete canonical governance, CredentialBroker,
+      MCP connector, and trusted Runtime/Workspace adapters, or explicitly split this
+      as a contract-only delivery and add a downstream executable integration fixture
+      before claiming the public API is exposed.
+    status: open
+    classification: deeper
+    last_evidence: The final 17-file PR contains only API/OpenAPI and HTTP adapter
+      code. Repository-wide symbol search found constructors, interfaces, and test
+      fakes but no production composition root or concrete persistence/governance/runtime
+      adapters, so the public governed API path remains unverified.
+blockers:
+- blocker_id: BLK-006c632cb966
+  root_cause_key: mcp-api.openapi-contract-drift
+  obligation_id: dimension:structure
+  summary: The public OpenAPI contract still does not describe all accepted request
+    and response behavior.
+  evidence: api/openapi/mcp/types.go:183-187 exposes TestMcpServerRequest.mcp_server_definition_id
+    while api/openapi/mcp/openapi.yaml:206-215 omits it; handler.go:173-178 decodes
+    the field but ignores it. handler.go:180-185 emits a 502 object containing error
+    and snapshot, while openapi.yaml:89-90 provides no content schema. Handler error
+    paths at handler.go:249-263 expose 403/404/405/503 responses that are not declared
+    for the corresponding operations. The current OpenAPI test only checks string
+    presence at api/openapi/mcp/mcp_test.go:34-48.
+  required_fix: Choose one authoritative public DTO shape, remove in-process-only
+    fields from public wire DTOs or document and enforce them, add explicit ErrorResponse
+    schemas for every supported operation/status including the 502 wrapper, then regenerate
+    and run structural schema-vs-handler tests.
+  status: open
+  classification: deeper
+  first_seen_round: 1
+  last_seen_round: 3
+  seen_count: 3
+  last_evidence: Descriptions, retryable, and hint were added to the OpenAPI/DTO,
+    and generated drift checks pass separately. Remaining public shape drift includes
+    the ignored TestMcpServerRequest identity field, the undocumented 502 body, incomplete
+    error response declarations, and caller-authored definition identity.
+- blocker_id: BLK-07f1a38b0b58
+  root_cause_key: mcp-api.idempotency-not-enforced
+  obligation_id: dimension:evidence
+  summary: The service-level idempotency repair is not backed by a delivered durable
+    reservation/replay implementation.
+  evidence: internal/httpapi/mcp/service.go:120-149 defines the reservation/commit
+    contract and service.go:428-438/477-487 now exercises replay before CAS and retains
+    a reservation after commit is attempted; the corresponding tests pass. Repository-wide
+    inspection found no production Catalog implementation or composition, so the fake
+    reservation map in internal/httpapi/mcp/service_test.go:293-404 is the only exercised
+    persistence behavior.
+  required_fix: Deliver or wire the durable Catalog command-record implementation,
+    prove atomic reservation/definition/snapshot/result/audit persistence, and add
+    a restart/lost-response integration test that observes both committed replay and
+    indeterminate outcomes.
+  status: open
+  classification: deeper
+  first_seen_round: 1
+  last_seen_round: 3
+  seen_count: 3
+  last_evidence: The current service now derives a stable reservation key without
+    RequestContextID, reserves before Update CAS, and retains reservations after commit
+    is attempted; the fresh-context and mutated-revision tests pass. The real durable
+    Catalog/recovery implementation is absent, so production lost-response semantics
+    remain unverified and are covered by the production-composition blocker.
+- blocker_id: BLK-0af923b33075
+  root_cause_key: mcp-api.noncanonical-governance-lineage
+  obligation_id: dimension:authority
+  summary: The API calls canonical-shaped ports but does not supply or verify authoritative
+    governance identity and execution facts.
+  evidence: internal/httpapi/mcp/service.go:697-710 puts the domain command digest
+    in a requirement and compares the returned decision to that value instead of verifying
+    a canonical full AuthorizationRequest digest. service.go:725-750 uses ScopeID
+    as ProjectID, ComponentID/architecture/IsolationLevel "mcp-api", NetworkModeAllowed,
+    and ComponentRun for every operation. service.go:558-586 resolves probe leases
+    but commits only authorization/admission controls; service.go:594-668 resolves
+    status leases without a credential-use audit handoff. The authoritative admission
+    contract requires exact owner/resolved execution/security inputs at contracts/governance/admission/contract.go:329-351,
+    and the governance design requires Credential Resolution and Audit in the canonical
+    chain at docs/design/detailed/09-governance-and-security-detailed-design.md:27-45,462-474,553-572.
+  required_fix: Connect the MCP use cases to the sole AuthorizationEngine, ExecutionAdmissionEngine,
+    CredentialBroker, and canonical audit/credential-use ports. Derive an operation-specific
+    exact subject, owner (or an explicit non-project owner boundary), resolved connector/runtime/workspace,
+    network/security requirements, and canonical request digests from trusted facts;
+    do not substitute ScopeID or feature labels.
+  status: open
+  classification: deeper
+  first_seen_round: 1
+  last_seen_round: 3
+  seen_count: 3
+  last_evidence: Canonical type signatures and lease validation replaced the former
+    audit-shaped ports, but service.go still constructs non-authoritative admission
+    ownership/execution facts and has no production canonical engine/broker composition
+    or explicit credential-use evidence handoff.
+- blocker_id: BLK-36816070c77b
+  root_cause_key: mcp-api.caller-authored-definition-identity
+  obligation_id: dimension:ownership
+  summary: Create accepts a caller-authored MCP definition identity even though the
+    authoritative contract assigns it to the system.
+  evidence: docs/references/execution/agent-runtime.md:130-142 defines mcp_server_definition_id
+    as a system-produced identity generated on first creation. api/openapi/mcp/types.go:94-106
+    and openapi.yaml:216-230 expose it in ServerDefinitionInput, and internal/httpapi/mcp/service.go:309-366
+    accepts it and skips NewID when present. The service tests also treat a caller-provided
+    ID as the normal create path.
+  required_fix: Remove mcp_server_definition_id from the public create input and always
+    generate it server-side; keep any in-process compatibility alias out of the public
+    wire schema, and add a test that a caller-supplied identity is rejected or ignored
+    without changing the generated identity.
+  status: open
+  classification: new
+  first_seen_round: 3
+  last_seen_round: 3
+  seen_count: 1
+- blocker_id: BLK-73b0d5041f63
+  root_cause_key: mcp-api.untrusted-runtime-materialization-context
+  obligation_id: dimension:execution
+  summary: Materialization status trusts caller-supplied runtime paths.
+  evidence: internal/httpapi/mcp/handler.go:174-196 accepts an undocumented GET body
+    and service.go:304-334 passes its WorkspaceRoot/AllowedPaths into filesystem-based
+    MaterializeRuntime.
+  required_fix: Remove client-controlled runtime paths; use a trusted runtime/workspace
+    binding or return blocked/unknown, and keep launch materialization internal.
+  status: fixed
+  classification: fixed
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: handler.go:175-195 no longer decodes WorkspaceRoot or AllowedPaths
+    from the public status request; MaterializationRequest contains only RequestContext
+    and ServerID, and runtime materialization is delegated to a trusted dependency.
+    A separate launch-identity mismatch blocker is reported for the remaining result-validation
+    gap.
+- blocker_id: BLK-ac001635f24b
+  root_cause_key: mcp-api.runtime-materialization-result-mismatch
+  obligation_id: dimension:execution
+  summary: Materialization can report ready without proving that the launch consumed
+    the exact credential bindings and complete launch payload requested.
+  evidence: internal/httpapi/mcp/service.go:655-667 marks ready after validateMaterializedLaunch.
+    service.go:998-1035 compares server ID, transport, configuration digest, and target
+    strings only; it never compares binding IDs/purposes with the definition or leases
+    and never checks command, working directory, endpoint, headers, or binding identity.
+    The existing launch contract validation at contracts/agentrun/agentrun.go:618-735
+    requires those fields, but its validator is not invoked by this adapter. Tests
+    in internal/httpapi/mcp/service_test.go:476-503 ignore the lease argument and
+    cover only target-name/mismatch cases.
+  required_fix: Validate the full launch against the exact definition and ordered
+    (CredentialBindingID, Target, Purpose) set and the subject-bound active leases,
+    or require a trusted materialization proof that binds those values. Fail closed
+    with blocked/unknown for any mismatch or incomplete payload, and add negative
+    binding-ID/purpose tests.
+  status: open
+  classification: deeper
+  first_seen_round: 2
+  last_seen_round: 3
+  seen_count: 2
+  last_evidence: Runtime server ID, transport, digest, and ordered target names are
+    now checked, and mismatched fake launches are rejected. Binding IDs/purposes and
+    complete launch payload validation are still omitted, so a launch can be ready
+    while using a different credential identity or incomplete materialization payload.
+- blocker_id: BLK-c22144122c6e
+  root_cause_key: mcp-api.release-tooling-scope-expansion
+  obligation_id: dimension:ownership
+  summary: Shared release-tooling ownership was expanded outside this delivery boundary.
+  evidence: The diff adds 180/11 lines to link_go_component.py and 101/3 lines to
+    verify_generated_contract.py, outside the declared API scope and overlapping blocked
+    release-artifact-tooling.
+  required_fix: Split the release-tooling changes into the owning prerequisite or
+    obtain an explicit DAG/contract amendment.
+  status: fixed
+  classification: fixed
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: git diff main...HEAD --name-status contains only the 17 API/OpenAPI
+    and internal/httpapi/mcp files; scripts/release/link_go_component.py and verify_generated_contract.py
+    are absent from the final PR diff.
+- blocker_id: BLK-c69f4cc0b7ec
+  root_cause_key: mcp-api.inline-secret-response
+  obligation_id: dimension:regression
+  summary: Manual and imported environment/header values still rely on heuristic secret
+    classification instead of a fail-closed binding-only boundary.
+  evidence: api/openapi/mcp/types.go:414-470 requires ValueClassificationNonSecret
+    but then relies on isSensitiveName plus a small prefix/length detector; internal/mcp/types.go:409-414
+    rejects only sensitive names; internal/mcp/import.go:198-221 applies the same
+    heuristics before copying values into normalized candidates. Existing negative
+    tests cover known detector branches, not an unknown/short credential value.
+  required_fix: Do not treat a client-supplied non-secret assertion as proof. Make
+    public environment/header values binding-only unless they come from a server-defined,
+    strictly typed non-secret field, and add a regression test proving arbitrary credential-shaped
+    values cannot be persisted or returned.
+  status: open
+  classification: deeper
+  first_seen_round: 1
+  last_seen_round: 3
+  seen_count: 3
+  last_evidence: Create/Update require the new non-secret classification and reject
+    known sensitive names/prefixes/lengths, but the classification is caller-authored
+    and the remaining value detector is heuristic. Unknown or short secret material
+    under a non-sensitive name can still be returned/persisted.
+- blocker_id: BLK-d24b87fd226c
+  root_cause_key: mcp-api.cross-scope-resource-mutation
+  obligation_id: dimension:regression
+  summary: Update/read isolation is not fail-closed across scopes.
+  evidence: internal/httpapi/mcp/service.go:210-227 fetches by unconstrained ID and
+    rewrites input.ScopeID from the caller context at :224 without checking the loaded
+    definition scope; Test and MaterializationStatus lack the same equality check.
+  required_fix: Constrain reads by authenticated scope, require scope equality before
+    authorization/mutation, preserve persisted scope, and include exact subject digest
+    in authorization and commit CAS.
+  status: fixed
+  classification: fixed
+  first_seen_round: 1
+  last_seen_round: 2
+  seen_count: 1
+  last_evidence: Catalog.GetDefinition now receives the authenticated scope, the fake
+    catalog enforces it, service.go:392-394/494-495/569-570 checks the loaded definition
+    scope, and Update preserves previous.ScopeID; the scoped regression test passed.
+- blocker_id: BLK-d7fc58321943
+  root_cause_key: mcp-api.undocumented-route-fallback
+  obligation_id: dimension:structure
+  summary: The HTTP handler routes undocumented paths and aliases through the update/test/materialization
+    operations.
+  evidence: internal/httpapi/mcp/handler.go:65-80 only calls TrimPrefix and defaults
+    every unmatched path to updateDefinition; it does not first require the documented
+    prefix or exact route shape. The same block accepts /test and /materialization-status
+    aliases at :71-78, while openapi.yaml declares only :test and /materialization.
+    handler_coverage_test.go:64-69 codifies the undocumented materialization-status
+    alias rather than rejecting it.
+  required_fix: Use exact route matching (including the documented prefix), return
+    NotFound for unmatched paths, and remove or explicitly publish any aliases; add
+    a regression test for an unmatched PUT path and each supported route.
+  status: fixed
+  classification: fixed
+  first_seen_round: 2
+  last_seen_round: 3
+  seen_count: 1
+  last_evidence: handler.go:65-89 now requires the exact /v1/mcp/servers route family,
+    exact :test and /materialization suffixes, and a single path-segment update ID;
+    the materialization-status alias and unrelated fallback routes are rejected by
+    passing regression tests.
+- blocker_id: BLK-e4b1d79f0f32
+  root_cause_key: mcp-api.release-contract-not-reproducible
+  obligation_id: integration:api-mcp-gate
+  summary: The contract-declared generated-contract and source-link commands cannot
+    run against the final PR HEAD.
+  evidence: The exact verify_generated_contract.py command exited 2 because scripts/release/verify_generated_contract.py:10-12
+    requires --component-manifest and --generated-contract, not the contract's --root/--require-go-generate-directive/--expected-outputs-file
+    flags. The exact link_go_component.py command exited 2 because scripts/release/link_go_component.py:35-39
+    requires --component-manifest, --go-binaries-manifest, and --output, not the contract's
+    entrypoint/bundle flags. Stable package_component.py and verify_component_manifest.py
+    passed, but they do not make the two exact gate commands reproducible.
+  required_fix: Update the contract to the released tooling interface and regenerate
+    the gate evidence, or land the owning release-tooling prerequisite before this
+    gate is required; then rerun the exact commands at the final PR HEAD without temporary
+    scripts.
+  status: open
+  classification: deeper
+  first_seen_round: 2
+  last_seen_round: 3
+  seen_count: 2
+  last_evidence: The exact final-head verify_generated_contract.py and link_go_component.py
+    commands still exit 2 with required-argument usage errors. The stable package_component.py/verify_component_manifest.py
+    path passes, but the contract-declared gate remains unreproducible.
+- blocker_id: BLK-f8f297e18616
+  root_cause_key: mcp-api.production-composition-unwired
+  obligation_id: dimension:ownership
+  summary: The delivered public MCP API has no production composition or concrete
+    governed persistence/runtime owner in the repository.
+  evidence: Repository-wide symbol search at e9b0cf11 found NewHandler/New, Catalog,
+    RuntimeMaterializer, MCPConnector, and governance implementations only in internal/httpapi/mcp
+    tests and helper/interface definitions. The only successful end-to-end-shaped
+    fixture is internal/httpapi/mcp/service_test.go:190-200, which wires fakeCatalog,
+    allowAllAuthorizer, allowAllAdmission, allowAllCredentialBroker, and fakeConnector.
+  required_fix: Wire the handler through the owning production API composition root
+    with a durable Catalog and concrete canonical governance, CredentialBroker, MCP
+    connector, and trusted Runtime/Workspace adapters, or explicitly split this as
+    a contract-only delivery and add a downstream executable integration fixture before
+    claiming the public API is exposed.
+  status: open
+  classification: deeper
+  first_seen_round: 2
+  last_seen_round: 3
+  seen_count: 2
+  last_evidence: The final 17-file PR contains only API/OpenAPI and HTTP adapter code.
+    Repository-wide symbol search found constructors, interfaces, and test fakes but
+    no production composition root or concrete persistence/governance/runtime adapters,
+    so the public governed API path remains unverified.

@@ -1,0 +1,71 @@
+{
+  "schema": "omac.prospective-owner-assessment/v1",
+  "group": "agent-api",
+  "references": {
+    "authority.json": {
+      "file": "authority.json",
+      "bytes": 2202,
+      "sha256": "720d9e4076456157d6011a33620009ecf7a95f2651d4ae4ceba37d91b245a293"
+    },
+    "scope.yaml": {
+      "file": "scope.yaml",
+      "bytes": 11969,
+      "sha256": "ff34789f03bef8b04200e4f812670db0c6f3aac19596217e666b122c9e7a9154"
+    },
+    "scope-native.json": {
+      "file": "scope-native.json",
+      "bytes": 282090,
+      "sha256": "03145440d22267727099873d6ae613f41250a42275fa07518a8a7c5af243b71a"
+    },
+    "scope-issue.json": {
+      "file": "scope-issue.json",
+      "bytes": 216331,
+      "sha256": "00391c26bdd1e533117b4a024e2224b79c71a36b63098087941fb51bb4267059"
+    },
+    "scope-runs.json": {
+      "file": "scope-runs.json",
+      "bytes": 1589,
+      "sha256": "e081a73424034bd5c90b3520fac60ac449500bd26b7bd832972fbc127a1ff9ad"
+    },
+    "manifest.yaml": {
+      "file": "manifest.yaml",
+      "bytes": 13226304,
+      "sha256": "b024b36cc3c651902f8847289432e0edfa4eef9095f36e81ef4f0056e29f2c2b"
+    },
+    "original-request.json": {
+      "file": "original-request.json",
+      "bytes": 2812299,
+      "sha256": "0889de59d82e0245bbc1da5a8af4875e8949ecfad738d1a86fd1860a19f01792"
+    },
+    "api-mcp.json": {
+      "file": "api-mcp.json",
+      "bytes": 88184,
+      "sha256": "8f2815a4302304ae544af4736ec7101333a8970635027c32e847f11bc6f4695b"
+    },
+    "api-mcp-contract.yaml": {
+      "file": "api-mcp-contract.yaml",
+      "bytes": 8367,
+      "sha256": "7bc97dbf863ed234411d57f3193ee67f39466417369ab96c764822aac9c6ba8b"
+    },
+    "api-mcp-ledger.yaml": {
+      "file": "api-mcp-ledger.yaml",
+      "bytes": 51178,
+      "sha256": "fef9fdfb12d70cd2db2f3acfebf0e7c232ad0defcd439e39041034d539a1f333"
+    },
+    "api-mcp-verification.yaml": {
+      "file": "api-mcp-verification.yaml",
+      "bytes": 7844,
+      "sha256": "74950f0650d211e75ed565ea4dcba9d865a4d12d840347011630f1e7ad1d941f"
+    },
+    "recovery.yaml": {
+      "file": "recovery.yaml",
+      "bytes": 118932,
+      "sha256": "f1c8c4ac80c79170666b576f89a955f268825eb36d38605e15cb77c21e730f5f"
+    },
+    "history.json": {
+      "file": "history.json",
+      "bytes": 378953,
+      "sha256": "1b65a852d2c4138f82b8a214bc3a766db331f689e237b955cd54753c78ddbc69"
+    }
+  }
+}

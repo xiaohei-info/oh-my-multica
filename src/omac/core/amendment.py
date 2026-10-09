@@ -1611,6 +1611,9 @@ def apply_amendment(
     runtime: Any = None,
 ) -> dict[str, Any]:
     amendment = parse_proposal(amendment_source)
+    from .prospective_owner import reject_unallocated_application
+
+    reject_unallocated_application(amendment)
     review = amendment.get("review")
     if not isinstance(review, dict) or review.get("verdict") not in {
         "pass", "pass-with-nits",

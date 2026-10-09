@@ -1,0 +1,190 @@
+kind: source-bound-additional-scope-request
+issue_id: 01a10f4d-e786-71ed-ab8c-bfe2b5676096
+assessment_only: true
+ready_for_amendment_submit: false
+ready_for_apply: false
+source_head: 0dae29d869278750a051cf91272f577639c59b4b
+owner_resolution: 6a871cb224504c60ebcbf69f2efed045de378a57a88b8af56c10c4f4a6dd9bf2
+owner_resolution_approval: 958f97ab72e7829da37eb48048d92dcdd4372f95b0a21142b75b225b31043c08
+budget_policy: preserve
+current_allowed_existing_nodes:
+  - api-agent
+  - mcp-catalog-governed-hardening
+outcome: >-
+  No complete implementation recovery is justified inside the current two-node
+  envelope. Return the missing owner/publication scopes before effects, rather
+  than submit empty operations, an unchanged retry, a description-only update,
+  or a proposal whose actual derived recovery exceeds authorization.
+grouping: >-
+  Split Agent API and MCP into independent assessment groups. There is no dependency
+  path between the two current roots. Shared governance contracts and eventual
+  platform-core-entrypoint/release consumers are not proof of one atomic owner.
+requests:
+  - group: agent-api
+    existing_target: api-agent
+    existing_issue_id: 01a1048e-0327-70a5-84b8-d2967af606ea
+    missing_owner_capability: >-
+      Project & Team Agent application commands and queries: logical Agent creation,
+      catalog/history queries, template-backed immutable publication, server-owned
+      model/runtime/preflight resolution, and the actual transport-to-owner mapping.
+      Reuse existing blank publication and template normalization; do not put these
+      semantics in HTTP or make inner application modules import API DTOs.
+    requested_compensating_publication:
+      proposed_node_id: agent-catalog-production-commands
+      existing_semantic_source_root: internal/agents/definitions/**
+      existing_release_owner_and_component: agent-definition
+      requested_boundary: >-
+        A separately authorized, independently reviewable compensating delivery
+        under the Agent Definition application boundary. Keep completed
+        agent-definition and agent-definition-audit-consumer-adaptation nodes,
+        their historical contracts, PRs, artifacts and runtime facts immutable.
+        Publish new source-bound evidence without relabelling historical artifacts.
+      approval_status: not-authorized-by-current-existing-node-request
+    existing_unchanged_prerequisite:
+      node: resource-lifecycle
+      scope: internal/lifecycle/**
+      reason: >-
+        Its existing contract already owns resource eligibility, reference
+        protection, tombstones and immutable retention for Agent/Project/terminal
+        Workflow. Consume that capability for Agent archive/restore/delete instead
+        of implementing a second lifecycle in the HTTP adapter or new publication
+        owner. The snapshot has no work item or delivered implementation for it.
+      proposed_effect: >-
+        Add the genuine prerequisite to the future api-agent dependency/consumer
+        contract. Do not resume or rewrite resource-lifecycle merely for coordination.
+    later_minimum_operation_shape:
+      - Add the separately authorized Agent application compensating delivery.
+      - Update api-agent dependency and complete consumer contract to consume it and resource-lifecycle, retaining all original public-contract findings and gates.
+    recovery_stage:
+      api-agent: authoring
+      rationale: >-
+        The original delivery has no production owner composition and incomplete
+        public error/governance contracts; review-only or merging recovery cannot
+        supply implementation. The new node is unstarted authoring work, not a
+        reopened DONE producer. There are no already-started descendants of
+        api-agent in the bound snapshot.
+    source_evidence:
+      - docs/design/detailed/02-project-and-agent-team-detailed-design.md:37-84,362-386
+      - docs/references/project-and-team/project-and-agent-team.md:405-411
+      - docs/design/detailed/10-web-api-cli-detailed-design.md:1392-1428
+      - internal/agents/templates/templates.go:25-36,120-171
+      - internal/agents/modelpolicy/policy.go:71
+      - internal/agents/definitions/definitions.go:40-49,227-230,303-315,332-503
+      - Original PR105 f0987a71ee760836601bb676e2bcd59b72ba0d08 internal/httpapi/agents/handler.go:50-73
+    retained_open_blockers:
+      - BLK-3ae8ac149441
+      - BLK-9beec89d4933
+  - group: mcp
+    existing_target: mcp-catalog-governed-hardening
+    existing_issue_id: 01a103e4-4377-7af9-b3c9-dd1b118c6af1
+    additional_existing_derived_target:
+      node: api-mcp
+      issue_id: 01a03ba6-c6c2-7e64-bb25-de46a3fe7e32
+      requested_stage: authoring
+      reason: >-
+        This is the only already-started descendant of MCP hardening in the bound
+        snapshot. OMAC derives its recovery for an implementation-affecting MCP
+        amendment even when it is omitted from explicit operations. It is outside
+        allowed_nodes. Fresh full Source/control/budget binding and authorization
+        are required before any recovery; its current hold classification is not
+        supplied by the current request and must not be guessed.
+    requested_compensating_publications:
+      - capability: canonical MCP catalog transaction composition
+        proposed_node_id: mcp-platform-transaction-composition
+        semantic_owner: Platform Core catalog/command transaction application boundary
+        proposed_primary_root: internal/platformcore/mcp/**
+        requested_boundary: >-
+          Implement actual production-capable atomic catalog/CommandRecord/AuditEvent
+          persistence and durable reservation/replay against the canonical platform
+          database. Preserve Unknown reservations and distinguish persisted
+          request_context_id from external RequestContext.RequestID. Reuse canonical
+          governance evaluators and audit/credential owners. A new root needs an
+          explicit additive source-release ownership/publication decision; it must
+          not be smuggled into mcp-catalog, platform-agentrun or audit-ledger ownership.
+        approval_status: new-owner-and-source-publication-authorization-required
+      - capability: consumed MCP launch proof through the actual AgentRun execution path
+        proposed_node_id: agentrun-mcp-consumption-evidence
+        existing_semantic_source_roots:
+          - internal/agentrun/**
+          - cmd/agentrun-job/**
+          - internal/platformcore/agentrun/**
+        requested_boundary: >-
+          Authorize the smallest additive AgentRun Job/Platform Core receipt path
+          that proves actual launch consumption and binds the exact launch, runtime,
+          workspace, configuration and credential-use identities. A materialized
+          path or matching hash is not consumption. Preserve existing Runtime SDK
+          protocol neutrality, SDK compatibility, event/ACK/cancellation behavior,
+          and sole Platform Core persistence. Narrow the exact changed files and
+          independently publish each affected historical source component before
+          implementing; no reopening of DONE agent-run-job, platform-agentrun or
+          runtime-sdk-mcp-launch-compatibility is authorized.
+        approval_status: compensating-owner-and-publication-authorization-required
+    required_unchanged_owner_interfaces:
+      - authorization
+      - execution-admission
+      - credential-store
+      - audit-ledger
+      - Existing Runtime and Workspace contracts and production capabilities
+    constraint: >-
+      These owner names are input responsibilities, not blanket permission to
+      mutate or recover their nodes. Any necessary contract/source change must be
+      added to a fresh exact authorization. platform-core-entrypoint remains the
+      final physical composition consumer; using it as an upstream semantic store
+      would reverse the current dependency direction and create a cycle.
+    later_minimum_operation_shape:
+      - Admit independently authorized compensating transaction and consumed-launch publications.
+      - Update MCP hardening's complete contract and genuine prerequisites while preserving all four original blockers and the five original commands.
+      - Include api-mcp in the actual authorized derived recovery set; do not add an unnecessary explicit resume operation solely to repeat a derived recovery.
+    recovery_stage:
+      mcp-catalog-governed-hardening: authoring
+      api-mcp: authoring
+      rationale: >-
+        Production persistence/consumption and governed application implementation
+        remain absent. Neither review-only nor merging is justified. Unstarted
+        descendants remain definitions/prerequisite consumers; do not reset the
+        entire downstream release/acceptance graph.
+    source_evidence:
+      - docs/design/detailed/03-workflow-platform-core-detailed-design.md:22-42,562-618,647-649
+      - docs/deploy-ops/deployment-and-operations-design.md:39-52,132-145
+      - internal/platformcore/agentrun/application.go:881
+      - internal/agentrun/runner.go:18-32,71-104,300-334
+      - internal/authorization/engine.go:229-254
+      - internal/admission/engine.go:45-115
+      - MCP worker current-worker-source/internal/mcp/governed.go MCPStore and MCPRuntimeMaterializer ports
+      - Original MCP report 83c997d95bd850e1ae40941d35ae68f8c4c94207929dc15d6d7d982999095ce3
+    retained_open_blockers:
+      - BLK-41716b28a81a
+      - BLK-5bc1614d11c7
+      - BLK-c17700bf1f0d
+      - BLK-dd6dac26dc8c
+invariants:
+  - No live manifest, source, configuration or platform status/assignee/metadata was changed.
+  - Keep all 183 bound nodes and all 80 DONE full objects immutable until a separately authorized amendment applies only its exact permitted definitions.
+  - Preserve complete original reports, ledgers, failed submits, native Runs, actual null generations, CAS bindings and history.
+  - Preserve every affected and derived effective/absolute/relative budget baseline, consumed/remaining count, limit and approved authority; no grant, reset, refund or omission-as-revocation.
+  - SDK0/12 and Conformance2/2 remain separate UNKNOWN observations, not authority.
+  - The original WHOLE20 metadata, original approved18 records and 264698 step8 history are not changed or reinterpreted.
+  - Source/definition assessment is not independent product PASS, merge, apply or dispatch authority.
+validation:
+  bundle_index_entries_verified: 477
+  authoritative_docs_digest: de04ff26384a7604cc0817ea0c886741db55b600aaa9c0d37fb3ecf0b17d3a02
+  required_input_digest: 9d72682e9bb18f1a7d9dbcf1f582c6a9f28fa422e93ae02d88db6f58b1e0543a
+  required_input_files_verified: 64
+  acceptance_sha256: 9f3969e0052f1eb3cd7101481150e96a52fd2035705ef91db42a2ed898b5f082
+  source_verification: Captured public bytes match exact locally available Git objects at the pinned source commit; the different execution-host live worktree was not used as authority.
+  baseline_dag_check:
+    command: omac dag check .omac/open-agent-cluster.yaml --no-review --output json
+    context: Isolated analysis-only exact Root snapshot with exact digest-verified required inputs; not the active runtime manifest.
+    exit_code: 0
+    lint_errors: 0
+    review: skipped
+  product_tests: not-run-assessment-only
+submission_boundary: >-
+  This is a scope request, not an omac.dag-amendment/v1 proposal. The installed
+  existing-node owner-assessment route refuses new IDs and requires every actual
+  changed/derived target in allowed_nodes. It offers no amendment-phase work-block
+  report template. Do not relabel this request as a supported amendment, omit
+  derived targets, fabricate an operation to pass the shallow submit parser, or
+  use direct platform writes to bypass that boundary. The coordinator must first
+  resolve the exact additional owner/publication scope through an authorized
+  route, then obtain a complete schema-valid proposal and fresh independent review.

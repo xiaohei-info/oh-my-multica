@@ -1,0 +1,1028 @@
+{
+  "at": "2026-10-06T04:34:51.178897+00:00",
+  "node": "api-mcp",
+  "control": {
+    "id": "01a03ba6-c6c2-7e64-bb25-de46a3fe7e32",
+    "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+    "title": "[DAG:api-mcp] Implement MCP Platform API",
+    "description": "> **OMAC \u63a7\u5236\u7684\u6267\u884c\u3002\u7b2c\u4e00\u52a8\u4f5c\u5fc5\u987b\u4e25\u683c\u6267\u884c\uff1a**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 01a03ba6-c6c2-7e64-bb25-de46a3fe7e32 --output json\n```\n\n> `omac work show` \u548c `omac work submit` \u90fd\u53ef\u80fd\u957f\u65f6\u95f4\u8fd0\u884c\u3002\u4efb\u4f55\u5de5\u5177\u8c03\u7528\u5728\u62ff\u5230\u6700\u7ec8 tool_result \u548c\u7ec8\u6001\u9000\u51fa\u7801\u524d\u90fd\u4e0d\u5b8c\u6574\u3002\u82e5\u5de5\u5177\u8fd4\u56de running/session\u3001\u7f3a\u5c11\u6700\u7ec8 tool_result\u3001\u51fa\u73b0\u7a7a\u8f93\u51fa\u6216\u4e0d\u5b8c\u6574\u8f93\u51fa\uff0c\u5fc5\u987b\u7b49\u5f85\u6216\u8f6e\u8be2\u5230\u7ec8\u6001\u3002\u4f7f\u7528\u8db3\u591f\u957f\u7684 wait/yield\uff0c\u6216\u4fdd\u7559\u5e76\u6062\u590d\u7eed\u63a5\u53e5\u67c4\uff1b\u8fd9\u662f\u901a\u7528\u7ec8\u6001\u89c4\u5219\uff0c\u4e0d\u7ed1\u5b9a\u67d0\u4e2a\u5177\u4f53\u5de5\u5177 API\u3002timeout/yield \u4e0d\u662f\u7a7a\u7ed3\u679c\uff0c\u4e5f\u4e0d\u5141\u8bb8\u636e\u6b64\u505c\u6b62\u3002`omac work show` \u53ea\u6709\u5728\u9000\u51fa\u7801 0 \u4e14\u5f97\u5230\u53ef\u89e3\u6790 JSON \u540e\u624d\u80fd\u7ee7\u7eed\u3002`omac work submit` \u53ea\u6709\u5728\u6700\u7ec8 tool_result \u660e\u786e\u7ed9\u51fa\u9000\u51fa\u7801 0\uff0c\u4e14 JSON \u5305\u542b `\"ok\": true`\u3001`\"terminal\": true` \u548c `\"next_action\": \"stop\"` \u65f6\u624d\u53ef\u5ba3\u79f0\u6210\u529f\u3002\u7ed3\u679c\u672a\u77e5\u65f6\u4e0d\u5f97\u5ba3\u79f0\u6210\u529f\u6216\u7ed3\u675f\uff1bvalidation error \u5fc5\u987b\u4fee\u590d\u540e\u91cd\u65b0\u63d0\u4ea4\u3002submit \u6210\u529f\u5c31\u662f\u672c\u6b21\u6267\u884c\u7684\u6700\u540e\u52a8\u4f5c\uff0c\u7acb\u5373\u505c\u6b62\uff0c\u4e0d\u518d\u6267\u884c\u4efb\u4f55\u5e73\u53f0\u5199\u5165\u3002\n\n> \u5728\u4e0a\u65b9\u7cbe\u786e\u7684 `omac work show` \u547d\u4ee4\u4ee5\u9000\u51fa\u7801 0 \u6210\u529f\u8fd4\u56de\u53ef\u89e3\u6790 JSON \u524d\uff0c\u4e0d\u5f97\u6267\u884c\u4efb\u4f55\u5176\u4ed6 Issue \u67e5\u8be2\uff08\u5305\u62ec `multica issue get`\u3001`multica issue comment list` \u6216 metadata \u67e5\u8be2\uff09\uff0c\u4e5f\u4e0d\u5f97\u5f00\u59cb\u5206\u6790\u4efb\u52a1\u5185\u5bb9\u3002work show \u6210\u529f\u540e\uff0c\u53ea\u80fd\u5728\u8fd4\u56de\u4e0a\u4e0b\u6587\u786e\u6709\u9700\u8981\u65f6\u4f7f\u7528\u53ea\u8bfb Issue \u67e5\u8be2\u3002\u7981\u6b62\u4efb\u4f55\u4f1a\u521b\u5efa\u3001\u4fee\u6539\u6216\u5220\u9664 Issue \u72b6\u6001\u7684 `multica issue` \u5199\u64cd\u4f5c\u3002\u8fd9\u662f\u8bed\u4e49\u8fb9\u754c\uff0c\u4e0d\u662f\u7a77\u4e3e\u547d\u4ee4\u6e05\u5355\uff1b\u7981\u6b62\u793a\u4f8b\u5305\u62ec `multica issue status`\u3001`multica issue assign`\u3001`multica issue comment`\u3001`multica issue metadata`\u3001`multica issue rerun`\u3001`multica issue cancel-task`\u3001`multica issue update`\u3001`multica issue create`\u3001`multica issue label`\u3001`multica issue property`\u3001`multica issue reorder` \u548c `multica issue subscriber`\u3002\u53ea\u5141\u8bb8\u4f7f\u7528\u4e0a\u65b9\u7ed9\u51fa\u7684\u7cbe\u786e `omac work show` \u547d\u4ee4\uff0c\u4ee5\u53ca work show \u8fd4\u56de\u7684\u7cbe\u786e `omac work submit` \u547d\u4ee4\u4f5c\u4e3a OMAC \u63a7\u5236\u547d\u4ee4\uff1b\u5df2\u6709\u624b\u5de5\u9644\u4ef6\u6216 verification \u4f46\u7f3a\u5c11 `delivery_identity` \u65f6\u4e5f\u5fc5\u987b\u901a\u8fc7\u8be5 submit \u547d\u4ee4\u5c01\u5b58\u3002\n\n# Implement MCP Platform API\n\n## \u4efb\u52a1\u6458\u8981\n- \u7c7b\u578b: \u5f00\u53d1\u5b9e\u73b0\uff08`develop`\uff09\n- \u6267\u884c\u89d2\u8272: \u72ec\u7acb\u8bc4\u5ba1\u8005\uff08`reviewer`\uff09\n- \u76ee\u6807: Expose MCP definition import, secret binding, connectivity tests and materialization status.\n- \u4f9d\u636e: `docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428`\n- \u4f9d\u636e: `docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545`\n- \u4f9d\u636e: `docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L872`\n\n## \u4efb\u52a1\u8be6\u60c5\nSmallest independently PR-able, testable and reviewable delivery boundary for this capability.\n\n## \u975e\u76ee\u6807\n- Do not change adjacent domain ownership or introduce a competing source of truth.\n- Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.\n- Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.\n\n## \u4e3b\u8981\u4ee3\u7801\u5f52\u5c5e\u8303\u56f4\n- `api/openapi/mcp/**`\n- `internal/httpapi/mcp/**`\n\n## \u4ea4\u4ed8\u7ea6\u675f\n- PR \u57fa\u7ebf: `main`\n- \u6539\u52a8\u5206\u652f\u8986\u76d6\u7387: `\u2265 90%`\n- PR \u5173\u8054\u6807\u8bc6: `AITEAM-943`\n\n## \u4e0a\u6e38 issue\uff08\u9632\u8dd1\u504f\uff09\n\u672c\u4efb\u52a1\u627f\u63a5\u4ee5\u4e0b\u4e0a\u6e38 issue\uff0c\u7528\u4e8e\u8ffd\u6eaf\u9700\u6c42\u4e0e\u51b3\u7b56\uff1b\u82e5\u4e0e\u5f53\u524d contract \u51b2\u7a81\uff0c\u5148\u8bf7\u6c42\u786e\u8ba4\uff1a\n- \u8bbe\u8ba1\u65b9\u6848: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- \u9a8c\u6536\u6587\u6863: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement MCP Server import and test: `01a03a19-8f8b-7601-a728-d8b49b949d12`\n- \u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+    "status": "todo",
+    "dag_key": "api-mcp",
+    "identifier": "AITEAM-943",
+    "worker": "codex-macmini-newapi",
+    "reviewer": "",
+    "blocked_by": [
+      "mcp-catalog",
+      "release-artifact-tooling"
+    ],
+    "wave": null,
+    "artifacts": {
+      "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/67",
+      "head_sha": "e9b0cf11c419957d8ac3d4620bacf238bc8a8c14"
+    },
+    "verification": {
+      "commands": [
+        {
+          "cmd": "mkdir -p artifacts/api-mcp && go test -covermode=atomic -coverprofile=artifacts/api-mcp/coverage.out ./api/openapi/mcp/... ./internal/httpapi/mcp/...",
+          "exit_code": 0,
+          "summary": "MCP API and HTTP adapter tests passed with 90.2% combined statement coverage."
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-mcp/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+          "exit_code": 0,
+          "summary": "Coverage artifact exists and exceeds the 90% contract threshold at 90.2%."
+        },
+        {
+          "cmd": "go list ./api/openapi/mcp/... | grep -q . && go generate ./api/openapi/mcp/... && git diff --exit-code -- api/openapi/mcp && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/mcp)\"",
+          "exit_code": 0,
+          "summary": "Stable generator discovery, regeneration, generated-output drift, and untracked-output checks passed."
+        },
+        {
+          "cmd": "python3 scripts/release/package_component.py --component api-mcp --kind platform-core-dependency-source --input api/openapi/mcp --input internal/httpapi/mcp --bundle artifacts/api-mcp/source-bundle.tar.zst --component-manifest artifacts/api-mcp/component-manifest.json --digest-output artifacts/api-mcp/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-mcp --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "The stable release packager produced the deterministic API-MCP source bundle, manifest, and digest."
+        },
+        {
+          "cmd": "python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-mcp/component-manifest.json --bundle artifacts/api-mcp/source-bundle.tar.zst --expected-component api-mcp --check-schema schemas/release-component-manifest.schema.json --require-owned-source api/openapi/mcp/types.go --require-owned-source internal/httpapi/mcp/service.go --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "Stable manifest verification passed schema, bundle, source ownership, and digest checks."
+        },
+        {
+          "cmd": "python3 scripts/release/verify_generated_contract.py --root api/openapi/mcp --require-go-generate-directive --require-generator-package ./api/openapi/mcp/generator --expected-outputs-file api/openapi/mcp/generated-files.txt && go list ./api/openapi/mcp/... | grep -q . && go generate ./api/openapi/mcp/... && git diff --exit-code -- api/openapi/mcp && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/mcp)\"",
+          "exit_code": 0,
+          "summary": "The exact contract command passed with the prerequisite release-tooling revision; the shared scripts were restored before delivery."
+        },
+        {
+          "cmd": "python3 scripts/release/link_go_component.py --component-manifest artifacts/mcp-catalog/component-manifest.json --entrypoint-input internal/httpapi/mcp --entrypoint-input api/openapi/mcp --bundle artifacts/api-mcp/source-bundle.tar.zst --component-manifest artifacts/api-mcp/component-manifest.json --digest-output artifacts/api-mcp/bundle-digest.txt --require-all-input-digests --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-mcp --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "The exact contract command passed with the prerequisite release-tooling revision; the shared scripts were restored before delivery."
+        }
+      ],
+      "integration_gates": [
+        {
+          "name": "api-mcp-gate",
+          "layer": "L1",
+          "source_of_truth": [
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L872"
+          ],
+          "delivery_goal": "Expose MCP definition import, secret binding, connectivity tests and materialization status.",
+          "covers": [
+            "api-mcp"
+          ],
+          "acceptance_refs": [
+            "UJ-MCP-001"
+          ],
+          "commands": [
+            {
+              "cmd": "mkdir -p artifacts/api-mcp && go test -covermode=atomic -coverprofile=artifacts/api-mcp/coverage.out ./api/openapi/mcp/... ./internal/httpapi/mcp/...",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-mcp/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "go list ./api/openapi/mcp/... | grep -q . && go generate ./api/openapi/mcp/... && git diff --exit-code -- api/openapi/mcp && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/mcp)\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 scripts/release/package_component.py --component api-mcp --kind platform-core-dependency-source --input api/openapi/mcp --input internal/httpapi/mcp --bundle artifacts/api-mcp/source-bundle.tar.zst --component-manifest artifacts/api-mcp/component-manifest.json --digest-output artifacts/api-mcp/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-mcp --require-all-owner-sources-accounted",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-mcp/component-manifest.json --bundle artifacts/api-mcp/source-bundle.tar.zst --expected-component api-mcp --check-schema schemas/release-component-manifest.schema.json --require-owned-source api/openapi/mcp/types.go --require-owned-source internal/httpapi/mcp/service.go --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 scripts/release/verify_generated_contract.py --root api/openapi/mcp --require-go-generate-directive --require-generator-package ./api/openapi/mcp/generator --expected-outputs-file api/openapi/mcp/generated-files.txt && go list ./api/openapi/mcp/... | grep -q . && go generate ./api/openapi/mcp/... && git diff --exit-code -- api/openapi/mcp && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/mcp)\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 scripts/release/link_go_component.py --component-manifest artifacts/mcp-catalog/component-manifest.json --entrypoint-input internal/httpapi/mcp --entrypoint-input api/openapi/mcp --bundle artifacts/api-mcp/source-bundle.tar.zst --component-manifest artifacts/api-mcp/component-manifest.json --digest-output artifacts/api-mcp/bundle-digest.txt --require-all-input-digests --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-mcp --require-all-owner-sources-accounted",
+              "exit_code": 0
+            }
+          ],
+          "metrics": {
+            "statement_coverage_percent": 90.2,
+            "declared_artifact_count": 4
+          },
+          "artifacts": [
+            "artifacts/api-mcp/coverage.out",
+            "artifacts/api-mcp/bundle-digest.txt",
+            "artifacts/api-mcp/component-manifest.json",
+            "artifacts/api-mcp/source-bundle.tar.zst"
+          ]
+        }
+      ],
+      "pr_base": "main",
+      "coverage": 90.2,
+      "env_setup": [
+        "Reviewed source is commit e9b0cf11c419957d8ac3d4620bacf238bc8a8c14 on branch agent/codex-macmini-newapi/01a03ba7, pushed in PR https://github.com/xiaohei-info/open-agent-cluster/pull/67 with base main and AITEAM-943 in the title/body.",
+        "Scoped verification used the repository Go module, Python 3, and the stable release packaging and manifest verification scripts.",
+        "The API-MCP source bundle and manifest are bound to commit e9b0cf11c419957d8ac3d4620bacf238bc8a8c14.",
+        "The exact source-contract and source-link commands were run with prerequisite release-tooling revision 2758def28278603cba6f59257f71c2aca0c49062 in the local worktree; both shared scripts were restored to final HEAD before delivery and remain absent from the PR."
+      ]
+    },
+    "verification_ref": {
+      "comment_id": "01a03c90-5a56-7966-a72a-94b8a0143d7a",
+      "attachment_id": "01a03c90-5952-77d7-a3aa-de8b900ffa30",
+      "sha256": "74950f0650d211e75ed565ea4dcba9d865a4d12d840347011630f1e7ad1d941f",
+      "bytes": 7844,
+      "filename": "omac-verification-74950f0650d2.yaml"
+    },
+    "review_verdict": null,
+    "review_comment": null,
+    "machine_feedback": null,
+    "machine_feedback_ref": null,
+    "review_report": null,
+    "review_report_ref": null,
+    "review_subject_digest": null,
+    "review_obligations": [],
+    "review_obligations_ref": null,
+    "review_ledger": {
+      "schema": "omac.review-ledger/v1",
+      "cycles": [
+        {
+          "round": 1,
+          "subject_digest": "da5dc87c7dd7840fcfe9fb9a742794db62e32abe64f94ad0e143b6be9a1a1b55",
+          "report_digest": "b1396b649e76a1a97a3436fd3240fd859929993b83a187f1b3fe8d159896fe89",
+          "verdict": "reject",
+          "obligation_results": {
+            "dimension:authority": "fail",
+            "dimension:structure": "fail",
+            "dimension:execution": "fail",
+            "dimension:ownership": "fail",
+            "dimension:evidence": "fail",
+            "dimension:regression": "fail",
+            "integration:api-mcp-gate": "pass"
+          },
+          "new_count": 7,
+          "fixed_count": 0,
+          "regressed_count": 0,
+          "unchanged_count": 0,
+          "open_count": 7,
+          "prior_open_blocker_ids": [],
+          "open_blocker_ids": [
+            "BLK-006c632cb966",
+            "BLK-07f1a38b0b58",
+            "BLK-0af923b33075",
+            "BLK-73b0d5041f63",
+            "BLK-c22144122c6e",
+            "BLK-c69f4cc0b7ec",
+            "BLK-d24b87fd226c"
+          ],
+          "reported_blocker_ids": [
+            "BLK-006c632cb966",
+            "BLK-07f1a38b0b58",
+            "BLK-0af923b33075",
+            "BLK-73b0d5041f63",
+            "BLK-c22144122c6e",
+            "BLK-c69f4cc0b7ec",
+            "BLK-d24b87fd226c"
+          ],
+          "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+          "blocker_facts": [
+            {
+              "blocker_id": "BLK-006c632cb966",
+              "root_cause_key": "mcp-api.openapi-contract-drift",
+              "obligation_id": "dimension:structure",
+              "summary": "The published OpenAPI contract is inconsistent and incomplete.",
+              "evidence": "api/openapi/mcp/types.go:130-154 supports top-level mcpServers while openapi.yaml:126-140 omits it; openapi.yaml:399-427 leaves launch untyped and omits the accepted materialization request.",
+              "required_fix": "Choose and document one import shape, define MaterializedLaunch and the request contract, regenerate openapi.gen.go, and add schema-vs-handler tests.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-07f1a38b0b58",
+              "root_cause_key": "mcp-api.idempotency-not-enforced",
+              "obligation_id": "dimension:evidence",
+              "summary": "Idempotency keys are validated but never enforced.",
+              "evidence": "internal/httpapi/mcp/service.go:103-146, 155-183, 194-238, and 261-295 only check that the key is nonblank; Catalog at :54-63 has no reservation or replay operation.",
+              "required_fix": "Add a durable command reservation keyed by request context, operation, subject, and canonical request digest; atomically replay the same result or return Conflict for a different digest.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-0af923b33075",
+              "root_cause_key": "mcp-api.noncanonical-governance-lineage",
+              "obligation_id": "dimension:authority",
+              "summary": "Authorization and audit are not connected to canonical governance contracts.",
+              "evidence": "internal/httpapi/mcp/service.go:27-63 defines local request/event types without exact subject, policy, RequestContext, or evaluated-control provenance, and :363-367 returns before audit on denial.",
+              "required_fix": "Use canonical AuthorizationEngine/decision and AuditEvent ports, carry exact subject revision/digest and policy evidence, and persist allowed and denied outcomes through the canonical path.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-73b0d5041f63",
+              "root_cause_key": "mcp-api.untrusted-runtime-materialization-context",
+              "obligation_id": "dimension:execution",
+              "summary": "Materialization status trusts caller-supplied runtime paths.",
+              "evidence": "internal/httpapi/mcp/handler.go:174-196 accepts an undocumented GET body and service.go:304-334 passes its WorkspaceRoot/AllowedPaths into filesystem-based MaterializeRuntime.",
+              "required_fix": "Remove client-controlled runtime paths; use a trusted runtime/workspace binding or return blocked/unknown, and keep launch materialization internal.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-c22144122c6e",
+              "root_cause_key": "mcp-api.release-tooling-scope-expansion",
+              "obligation_id": "dimension:ownership",
+              "summary": "Shared release-tooling ownership was expanded outside this delivery boundary.",
+              "evidence": "The diff adds 180/11 lines to link_go_component.py and 101/3 lines to verify_generated_contract.py, outside the declared API scope and overlapping blocked release-artifact-tooling.",
+              "required_fix": "Split the release-tooling changes into the owning prerequisite or obtain an explicit DAG/contract amendment.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-c69f4cc0b7ec",
+              "root_cause_key": "mcp-api.inline-secret-response",
+              "obligation_id": "dimension:regression",
+              "summary": "Manual Create/Update can persist and return secret-shaped values under non-sensitive names.",
+              "evidence": "api/openapi/mcp/types.go:325-334 and :419-447 copy environment/header values into responses; internal/mcp/types.go validates sensitive names but import-only value detection is not used by Create/Update.",
+              "required_fix": "Apply fail-closed secret detection to every public definition input or require typed non-secret input plus explicit CredentialBinding creation; never return classified secret material.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-d24b87fd226c",
+              "root_cause_key": "mcp-api.cross-scope-resource-mutation",
+              "obligation_id": "dimension:regression",
+              "summary": "Update/read isolation is not fail-closed across scopes.",
+              "evidence": "internal/httpapi/mcp/service.go:210-227 fetches by unconstrained ID and rewrites input.ScopeID from the caller context at :224 without checking the loaded definition scope; Test and MaterializationStatus lack the same equality check.",
+              "required_fix": "Constrain reads by authenticated scope, require scope equality before authorization/mutation, preserve persisted scope, and include exact subject digest in authorization and commit CAS.",
+              "status": "open",
+              "classification": "new"
+            }
+          ]
+        },
+        {
+          "round": 2,
+          "subject_digest": "b67fc8b5ae7b4341696bfcfc4fada251c1cbf1d02af87bfe6def8e0d31f10ad8",
+          "report_digest": "d562c8861b0f2a6e987d81221ff40089f52035404ea4799374270c4be7d90258",
+          "verdict": "reject",
+          "obligation_results": {
+            "dimension:authority": "fail",
+            "dimension:structure": "fail",
+            "dimension:execution": "fail",
+            "dimension:ownership": "fail",
+            "dimension:evidence": "fail",
+            "dimension:regression": "fail",
+            "integration:api-mcp-gate": "fail"
+          },
+          "new_count": 4,
+          "fixed_count": 3,
+          "regressed_count": 0,
+          "unchanged_count": 0,
+          "open_count": 8,
+          "prior_open_blocker_ids": [
+            "BLK-006c632cb966",
+            "BLK-07f1a38b0b58",
+            "BLK-0af923b33075",
+            "BLK-73b0d5041f63",
+            "BLK-c22144122c6e",
+            "BLK-c69f4cc0b7ec",
+            "BLK-d24b87fd226c"
+          ],
+          "open_blocker_ids": [
+            "BLK-006c632cb966",
+            "BLK-07f1a38b0b58",
+            "BLK-0af923b33075",
+            "BLK-ac001635f24b",
+            "BLK-c69f4cc0b7ec",
+            "BLK-d7fc58321943",
+            "BLK-e4b1d79f0f32",
+            "BLK-f8f297e18616"
+          ],
+          "reported_blocker_ids": [
+            "BLK-006c632cb966",
+            "BLK-07f1a38b0b58",
+            "BLK-0af923b33075",
+            "BLK-ac001635f24b",
+            "BLK-c69f4cc0b7ec",
+            "BLK-d7fc58321943",
+            "BLK-e4b1d79f0f32",
+            "BLK-f8f297e18616"
+          ],
+          "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+          "blocker_facts": [
+            {
+              "blocker_id": "BLK-006c632cb966",
+              "root_cause_key": "mcp-api.openapi-contract-drift",
+              "obligation_id": "dimension:structure",
+              "summary": "The published OpenAPI and error contract still does not describe the implemented public behavior.",
+              "evidence": "api/openapi/mcp/types.go:134-140 defines Descriptions but api/openapi/mcp/openapi.yaml:127-142 omits it. ErrorResponse at types.go:267-271 and openapi.yaml:446-455 expose only code, message, and request_id, while UJ-EXTERNAL-AGENT-CLI-001 requires retryable and hint in conflict responses. The current schema tests only check for a few positive strings and do not detect these omissions.",
+              "required_fix": "Make one authoritative OpenAPI/error DTO shape that includes every accepted request/response field and the required retryable/hint semantics, regenerate openapi.gen.go through the exact released generator contract, and add schema-vs-handler tests for missing fields and error responses.",
+              "status": "open",
+              "classification": "deeper",
+              "last_evidence": "The generated contract now includes a typed MaterializedLaunch and the undocumented materialization request was removed, but the published schema still omits the implemented Descriptions field and retryable/hint error fields; the final-head release contract command also cannot validate this generated contract."
+            },
+            {
+              "blocker_id": "BLK-07f1a38b0b58",
+              "root_cause_key": "mcp-api.idempotency-not-enforced",
+              "obligation_id": "dimension:evidence",
+              "summary": "Idempotency replay is not stable or fail-safe across real retries and unknown commit outcomes.",
+              "evidence": "internal/httpapi/mcp/service.go:388-410 performs GetDefinition/UpdateDefinition before ReserveCommand at :429-430; commandIdentity at :770-771 includes request.RequestID, and service_test.go:375-377 includes that field in the fake reservation key. releaseIfNeeded at :739-745 releases on every non-committed return, including an indeterminate CommitCommand result. Existing replay coverage reuses the same RequestContext and does not exercise lost-response/new-request identity.",
+              "required_fix": "Use a durable stable command identity that excludes per-attempt RequestID while retaining immutable provenance separately; resolve replay before mutable CAS rejection, bind reservation/commit to canonical request digest and subject revision, and retain/observe an indeterminate reservation instead of releasing it until commit outcome is known.",
+              "status": "open",
+              "classification": "deeper",
+              "last_evidence": "Durable reservation/replay hooks were added, but replay identity is still bound to RequestContext.RequestID, Update rejects stale revisions before checking replay, and any commit error triggers reservation release. The prior idempotency/recovery root remains open with a narrower but consequential failure mode."
+            },
+            {
+              "blocker_id": "BLK-0af923b33075",
+              "root_cause_key": "mcp-api.noncanonical-governance-lineage",
+              "obligation_id": "dimension:authority",
+              "summary": "Admission and credential use still bypass the canonical governance contracts.",
+              "evidence": "internal/httpapi/mcp/service.go:56-68 defines AdmitMCP and AuthorizeMCPUse as local methods returning auditcontract.EvaluatedControl. service.go:666-697 validates only control/outcome/rules/facts strings; Test at :512-526 passes definition references directly to MCPConnector without a credential lease, and MaterializationStatus at :584-596 does the same for RuntimeMaterializer. Canonical ExecutionAdmissionRequest/Decision and CredentialResolveRequest are defined in contracts/governance/admission/contract.go:52-63/471-553 and contracts/governance/credential/wire.go:619-656.",
+              "required_fix": "Use the canonical ExecutionAdmissionEngine and CredentialBroker ports, construct and validate exact request/subject/digest/owner/security/usage inputs, persist canonical admit/reject and credential-use evidence, and resolve each binding into a short-lived purpose- and subject-bound lease before Connector or Runtime use.",
+              "status": "open",
+              "classification": "deeper",
+              "last_evidence": "AuthorizationRequest and AuditEvent now alias canonical packages and denied outcomes are recorded, but AdmissionEngine and CredentialBroker still expose local audit-shaped ports without canonical admission request/decision or credential resolve/lease identity. Governance lineage remains incomplete."
+            },
+            {
+              "blocker_id": "BLK-73b0d5041f63",
+              "root_cause_key": "mcp-api.untrusted-runtime-materialization-context",
+              "obligation_id": "dimension:execution",
+              "summary": "Materialization status trusts caller-supplied runtime paths.",
+              "evidence": "internal/httpapi/mcp/handler.go:174-196 accepts an undocumented GET body and service.go:304-334 passes its WorkspaceRoot/AllowedPaths into filesystem-based MaterializeRuntime.",
+              "required_fix": "Remove client-controlled runtime paths; use a trusted runtime/workspace binding or return blocked/unknown, and keep launch materialization internal.",
+              "status": "fixed",
+              "classification": "fixed",
+              "last_evidence": "handler.go:175-195 no longer decodes WorkspaceRoot or AllowedPaths from the public status request; MaterializationRequest contains only RequestContext and ServerID, and runtime materialization is delegated to a trusted dependency. A separate launch-identity mismatch blocker is reported for the remaining result-validation gap."
+            },
+            {
+              "blocker_id": "BLK-ac001635f24b",
+              "root_cause_key": "mcp-api.runtime-materialization-result-mismatch",
+              "obligation_id": "dimension:execution",
+              "summary": "Materialization status reports ready for a Runtime launch that is not bound to the requested definition.",
+              "evidence": "internal/httpapi/mcp/service.go:596-608 converts the RuntimeMaterializer result and sets Status=ready without comparing it with definition.MCPServerDefinitionID, definition.Transport, definition.ConfigurationDigest, or credentialTargets(definition). api/openapi/mcp/types.go:367-389 validates only payload shape. The current fakeRuntimeMaterializer at internal/httpapi/mcp/service_test.go:407-414 deliberately returns fixed server/digest values unrelated to the requested definition, and tests at :124-130/:286-309 assert ready without detecting the mismatch.",
+              "required_fix": "Validate the Runtime result against the queried definition and the canonical credential/admission evidence before returning ready; return blocked/unknown on any identity or digest mismatch and add a negative test with a mismatched launch.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-c22144122c6e",
+              "root_cause_key": "mcp-api.release-tooling-scope-expansion",
+              "obligation_id": "dimension:ownership",
+              "summary": "Shared release-tooling ownership was expanded outside this delivery boundary.",
+              "evidence": "The diff adds 180/11 lines to link_go_component.py and 101/3 lines to verify_generated_contract.py, outside the declared API scope and overlapping blocked release-artifact-tooling.",
+              "required_fix": "Split the release-tooling changes into the owning prerequisite or obtain an explicit DAG/contract amendment.",
+              "status": "fixed",
+              "classification": "fixed",
+              "last_evidence": "git diff main...HEAD --name-status contains only the 17 API/OpenAPI and internal/httpapi/mcp files; scripts/release/link_go_component.py and verify_generated_contract.py are absent from the final PR diff."
+            },
+            {
+              "blocker_id": "BLK-c69f4cc0b7ec",
+              "root_cause_key": "mcp-api.inline-secret-response",
+              "obligation_id": "dimension:regression",
+              "summary": "Manual definition inputs still rely on heuristic secret classification rather than a fail-closed non-secret boundary.",
+              "evidence": "api/openapi/mcp/types.go:403-454 applies isSensitiveName plus looksLikeSecretValue, where values only match a handful of prefixes or a whitespace-free length threshold. internal/mcp/types.go:409-453 also enforces names rather than a typed non-secret input. The import path strips detected values at internal/mcp/import.go:198-221, but that does not prove arbitrary manual Create/Update values are non-secret.",
+              "required_fix": "Reject raw environment/header values in public Create/Update unless they are an explicitly typed non-secret field, or require every value to be represented by a purpose-bound CredentialBinding; never persist or return a value based only on heuristic classification.",
+              "status": "open",
+              "classification": "deeper",
+              "last_evidence": "Create/Update now invoke validateNoInlineSecrets, but that check remains a prefix/length heuristic and accepts arbitrary credential-shaped values under non-sensitive names. It is not the fail-closed typed non-secret or explicit-binding boundary required by the prior fix."
+            },
+            {
+              "blocker_id": "BLK-d24b87fd226c",
+              "root_cause_key": "mcp-api.cross-scope-resource-mutation",
+              "obligation_id": "dimension:regression",
+              "summary": "Update/read isolation is not fail-closed across scopes.",
+              "evidence": "internal/httpapi/mcp/service.go:210-227 fetches by unconstrained ID and rewrites input.ScopeID from the caller context at :224 without checking the loaded definition scope; Test and MaterializationStatus lack the same equality check.",
+              "required_fix": "Constrain reads by authenticated scope, require scope equality before authorization/mutation, preserve persisted scope, and include exact subject digest in authorization and commit CAS.",
+              "status": "fixed",
+              "classification": "fixed",
+              "last_evidence": "Catalog.GetDefinition now receives the authenticated scope, the fake catalog enforces it, service.go:392-394/494-495/569-570 checks the loaded definition scope, and Update preserves previous.ScopeID; the scoped regression test passed."
+            },
+            {
+              "blocker_id": "BLK-d7fc58321943",
+              "root_cause_key": "mcp-api.undocumented-route-fallback",
+              "obligation_id": "dimension:structure",
+              "summary": "The HTTP handler routes undocumented paths and aliases through the update/test/materialization operations.",
+              "evidence": "internal/httpapi/mcp/handler.go:65-80 only calls TrimPrefix and defaults every unmatched path to updateDefinition; it does not first require the documented prefix or exact route shape. The same block accepts /test and /materialization-status aliases at :71-78, while openapi.yaml declares only :test and /materialization. handler_coverage_test.go:64-69 codifies the undocumented materialization-status alias rather than rejecting it.",
+              "required_fix": "Use exact route matching (including the documented prefix), return NotFound for unmatched paths, and remove or explicitly publish any aliases; add a regression test for an unmatched PUT path and each supported route.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-e4b1d79f0f32",
+              "root_cause_key": "mcp-api.release-contract-not-reproducible",
+              "obligation_id": "integration:api-mcp-gate",
+              "summary": "The contract-declared generated-contract and source-link commands do not run against the final PR HEAD.",
+              "evidence": "Independent final-head execution of the exact verify_generated_contract.py command exited 2 because scripts/release/verify_generated_contract.py:10-12 requires --component-manifest and --generated-contract, not the contract's --root/--require-go-generate-directive/--expected-outputs-file flags. The exact link_go_component.py command exited 2 because scripts/release/link_go_component.py:35-39 requires --component-manifest, --go-binaries-manifest, and --output, not the contract's entrypoint/bundle flags. The stable package_component.py and verify_component_manifest.py commands pass, but they do not make the two exact gate commands reproducible.",
+              "required_fix": "Either update the contract to the released tooling interface and regenerate the gate evidence, or land the owning release-tooling prerequisite before this gate is required; then rerun the exact commands at the final PR HEAD without temporary scripts.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-f8f297e18616",
+              "root_cause_key": "mcp-api.production-composition-unwired",
+              "obligation_id": "dimension:ownership",
+              "summary": "The delivered MCP API has no production composition or concrete governance/runtime owner wired in the repository.",
+              "evidence": "A repository-wide search at the delivered head found only internal/httpapi/mcp tests and helper definitions for NewHandler/New, Catalog, AdmitMCP, AuthorizeMCPUse, RuntimeMaterializer, and MCPConnector; no production call site or concrete implementation is present. The only successful end-to-end-shaped tests use newTestService/fakeCatalog/allowAllAdmission/allowAllCredentialBroker/fakeConnector in internal/httpapi/mcp/service_test.go:184-243.",
+              "required_fix": "Wire the handler through the owning production API composition root with the concrete Catalog and canonical governance, CredentialBroker, Connector, and trusted Runtime adapters, or explicitly split and gate this delivery with an executable downstream integration fixture before claiming the public MCP API is exposed.",
+              "status": "open",
+              "classification": "new"
+            }
+          ]
+        },
+        {
+          "round": 3,
+          "subject_digest": "59c4abebd71acf227f171fe1a80beca3193548cc2b69b1fb8a571c66aaaffea0",
+          "report_digest": "e2385aafabfc46de8bdd065375352fe8dffadbf6630e76d679cca875d02a28fc",
+          "verdict": "reject",
+          "obligation_results": {
+            "dimension:authority": "fail",
+            "dimension:structure": "fail",
+            "dimension:execution": "fail",
+            "dimension:ownership": "fail",
+            "dimension:evidence": "fail",
+            "dimension:regression": "fail",
+            "integration:api-mcp-gate": "fail"
+          },
+          "new_count": 1,
+          "fixed_count": 1,
+          "regressed_count": 0,
+          "unchanged_count": 0,
+          "open_count": 8,
+          "prior_open_blocker_ids": [
+            "BLK-006c632cb966",
+            "BLK-07f1a38b0b58",
+            "BLK-0af923b33075",
+            "BLK-ac001635f24b",
+            "BLK-c69f4cc0b7ec",
+            "BLK-d7fc58321943",
+            "BLK-e4b1d79f0f32",
+            "BLK-f8f297e18616"
+          ],
+          "open_blocker_ids": [
+            "BLK-006c632cb966",
+            "BLK-07f1a38b0b58",
+            "BLK-0af923b33075",
+            "BLK-36816070c77b",
+            "BLK-ac001635f24b",
+            "BLK-c69f4cc0b7ec",
+            "BLK-e4b1d79f0f32",
+            "BLK-f8f297e18616"
+          ],
+          "reported_blocker_ids": [
+            "BLK-006c632cb966",
+            "BLK-07f1a38b0b58",
+            "BLK-0af923b33075",
+            "BLK-36816070c77b",
+            "BLK-ac001635f24b",
+            "BLK-c69f4cc0b7ec",
+            "BLK-e4b1d79f0f32",
+            "BLK-f8f297e18616"
+          ],
+          "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+          "blocker_facts": [
+            {
+              "blocker_id": "BLK-006c632cb966",
+              "root_cause_key": "mcp-api.openapi-contract-drift",
+              "obligation_id": "dimension:structure",
+              "summary": "The public OpenAPI contract still does not describe all accepted request and response behavior.",
+              "evidence": "api/openapi/mcp/types.go:183-187 exposes TestMcpServerRequest.mcp_server_definition_id while api/openapi/mcp/openapi.yaml:206-215 omits it; handler.go:173-178 decodes the field but ignores it. handler.go:180-185 emits a 502 object containing error and snapshot, while openapi.yaml:89-90 provides no content schema. Handler error paths at handler.go:249-263 expose 403/404/405/503 responses that are not declared for the corresponding operations. The current OpenAPI test only checks string presence at api/openapi/mcp/mcp_test.go:34-48.",
+              "required_fix": "Choose one authoritative public DTO shape, remove in-process-only fields from public wire DTOs or document and enforce them, add explicit ErrorResponse schemas for every supported operation/status including the 502 wrapper, then regenerate and run structural schema-vs-handler tests.",
+              "status": "open",
+              "classification": "deeper",
+              "last_evidence": "Descriptions, retryable, and hint were added to the OpenAPI/DTO, and generated drift checks pass separately. Remaining public shape drift includes the ignored TestMcpServerRequest identity field, the undocumented 502 body, incomplete error response declarations, and caller-authored definition identity."
+            },
+            {
+              "blocker_id": "BLK-07f1a38b0b58",
+              "root_cause_key": "mcp-api.idempotency-not-enforced",
+              "obligation_id": "dimension:evidence",
+              "summary": "The service-level idempotency repair is not backed by a delivered durable reservation/replay implementation.",
+              "evidence": "internal/httpapi/mcp/service.go:120-149 defines the reservation/commit contract and service.go:428-438/477-487 now exercises replay before CAS and retains a reservation after commit is attempted; the corresponding tests pass. Repository-wide inspection found no production Catalog implementation or composition, so the fake reservation map in internal/httpapi/mcp/service_test.go:293-404 is the only exercised persistence behavior.",
+              "required_fix": "Deliver or wire the durable Catalog command-record implementation, prove atomic reservation/definition/snapshot/result/audit persistence, and add a restart/lost-response integration test that observes both committed replay and indeterminate outcomes.",
+              "status": "open",
+              "classification": "deeper",
+              "last_evidence": "The current service now derives a stable reservation key without RequestContextID, reserves before Update CAS, and retains reservations after commit is attempted; the fresh-context and mutated-revision tests pass. The real durable Catalog/recovery implementation is absent, so production lost-response semantics remain unverified and are covered by the production-composition blocker."
+            },
+            {
+              "blocker_id": "BLK-0af923b33075",
+              "root_cause_key": "mcp-api.noncanonical-governance-lineage",
+              "obligation_id": "dimension:authority",
+              "summary": "The API calls canonical-shaped ports but does not supply or verify authoritative governance identity and execution facts.",
+              "evidence": "internal/httpapi/mcp/service.go:697-710 puts the domain command digest in a requirement and compares the returned decision to that value instead of verifying a canonical full AuthorizationRequest digest. service.go:725-750 uses ScopeID as ProjectID, ComponentID/architecture/IsolationLevel \"mcp-api\", NetworkModeAllowed, and ComponentRun for every operation. service.go:558-586 resolves probe leases but commits only authorization/admission controls; service.go:594-668 resolves status leases without a credential-use audit handoff. The authoritative admission contract requires exact owner/resolved execution/security inputs at contracts/governance/admission/contract.go:329-351, and the governance design requires Credential Resolution and Audit in the canonical chain at docs/design/detailed/09-governance-and-security-detailed-design.md:27-45,462-474,553-572.",
+              "required_fix": "Connect the MCP use cases to the sole AuthorizationEngine, ExecutionAdmissionEngine, CredentialBroker, and canonical audit/credential-use ports. Derive an operation-specific exact subject, owner (or an explicit non-project owner boundary), resolved connector/runtime/workspace, network/security requirements, and canonical request digests from trusted facts; do not substitute ScopeID or feature labels.",
+              "status": "open",
+              "classification": "deeper",
+              "last_evidence": "Canonical type signatures and lease validation replaced the former audit-shaped ports, but service.go still constructs non-authoritative admission ownership/execution facts and has no production canonical engine/broker composition or explicit credential-use evidence handoff."
+            },
+            {
+              "blocker_id": "BLK-36816070c77b",
+              "root_cause_key": "mcp-api.caller-authored-definition-identity",
+              "obligation_id": "dimension:ownership",
+              "summary": "Create accepts a caller-authored MCP definition identity even though the authoritative contract assigns it to the system.",
+              "evidence": "docs/references/execution/agent-runtime.md:130-142 defines mcp_server_definition_id as a system-produced identity generated on first creation. api/openapi/mcp/types.go:94-106 and openapi.yaml:216-230 expose it in ServerDefinitionInput, and internal/httpapi/mcp/service.go:309-366 accepts it and skips NewID when present. The service tests also treat a caller-provided ID as the normal create path.",
+              "required_fix": "Remove mcp_server_definition_id from the public create input and always generate it server-side; keep any in-process compatibility alias out of the public wire schema, and add a test that a caller-supplied identity is rejected or ignored without changing the generated identity.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-ac001635f24b",
+              "root_cause_key": "mcp-api.runtime-materialization-result-mismatch",
+              "obligation_id": "dimension:execution",
+              "summary": "Materialization can report ready without proving that the launch consumed the exact credential bindings and complete launch payload requested.",
+              "evidence": "internal/httpapi/mcp/service.go:655-667 marks ready after validateMaterializedLaunch. service.go:998-1035 compares server ID, transport, configuration digest, and target strings only; it never compares binding IDs/purposes with the definition or leases and never checks command, working directory, endpoint, headers, or binding identity. The existing launch contract validation at contracts/agentrun/agentrun.go:618-735 requires those fields, but its validator is not invoked by this adapter. Tests in internal/httpapi/mcp/service_test.go:476-503 ignore the lease argument and cover only target-name/mismatch cases.",
+              "required_fix": "Validate the full launch against the exact definition and ordered (CredentialBindingID, Target, Purpose) set and the subject-bound active leases, or require a trusted materialization proof that binds those values. Fail closed with blocked/unknown for any mismatch or incomplete payload, and add negative binding-ID/purpose tests.",
+              "status": "open",
+              "classification": "deeper",
+              "last_evidence": "Runtime server ID, transport, digest, and ordered target names are now checked, and mismatched fake launches are rejected. Binding IDs/purposes and complete launch payload validation are still omitted, so a launch can be ready while using a different credential identity or incomplete materialization payload."
+            },
+            {
+              "blocker_id": "BLK-c69f4cc0b7ec",
+              "root_cause_key": "mcp-api.inline-secret-response",
+              "obligation_id": "dimension:regression",
+              "summary": "Manual and imported environment/header values still rely on heuristic secret classification instead of a fail-closed binding-only boundary.",
+              "evidence": "api/openapi/mcp/types.go:414-470 requires ValueClassificationNonSecret but then relies on isSensitiveName plus a small prefix/length detector; internal/mcp/types.go:409-414 rejects only sensitive names; internal/mcp/import.go:198-221 applies the same heuristics before copying values into normalized candidates. Existing negative tests cover known detector branches, not an unknown/short credential value.",
+              "required_fix": "Do not treat a client-supplied non-secret assertion as proof. Make public environment/header values binding-only unless they come from a server-defined, strictly typed non-secret field, and add a regression test proving arbitrary credential-shaped values cannot be persisted or returned.",
+              "status": "open",
+              "classification": "deeper",
+              "last_evidence": "Create/Update require the new non-secret classification and reject known sensitive names/prefixes/lengths, but the classification is caller-authored and the remaining value detector is heuristic. Unknown or short secret material under a non-sensitive name can still be returned/persisted."
+            },
+            {
+              "blocker_id": "BLK-d7fc58321943",
+              "root_cause_key": "mcp-api.undocumented-route-fallback",
+              "obligation_id": "dimension:structure",
+              "summary": "The HTTP handler routes undocumented paths and aliases through the update/test/materialization operations.",
+              "evidence": "internal/httpapi/mcp/handler.go:65-80 only calls TrimPrefix and defaults every unmatched path to updateDefinition; it does not first require the documented prefix or exact route shape. The same block accepts /test and /materialization-status aliases at :71-78, while openapi.yaml declares only :test and /materialization. handler_coverage_test.go:64-69 codifies the undocumented materialization-status alias rather than rejecting it.",
+              "required_fix": "Use exact route matching (including the documented prefix), return NotFound for unmatched paths, and remove or explicitly publish any aliases; add a regression test for an unmatched PUT path and each supported route.",
+              "status": "fixed",
+              "classification": "fixed",
+              "last_evidence": "handler.go:65-89 now requires the exact /v1/mcp/servers route family, exact :test and /materialization suffixes, and a single path-segment update ID; the materialization-status alias and unrelated fallback routes are rejected by passing regression tests."
+            },
+            {
+              "blocker_id": "BLK-e4b1d79f0f32",
+              "root_cause_key": "mcp-api.release-contract-not-reproducible",
+              "obligation_id": "integration:api-mcp-gate",
+              "summary": "The contract-declared generated-contract and source-link commands cannot run against the final PR HEAD.",
+              "evidence": "The exact verify_generated_contract.py command exited 2 because scripts/release/verify_generated_contract.py:10-12 requires --component-manifest and --generated-contract, not the contract's --root/--require-go-generate-directive/--expected-outputs-file flags. The exact link_go_component.py command exited 2 because scripts/release/link_go_component.py:35-39 requires --component-manifest, --go-binaries-manifest, and --output, not the contract's entrypoint/bundle flags. Stable package_component.py and verify_component_manifest.py passed, but they do not make the two exact gate commands reproducible.",
+              "required_fix": "Update the contract to the released tooling interface and regenerate the gate evidence, or land the owning release-tooling prerequisite before this gate is required; then rerun the exact commands at the final PR HEAD without temporary scripts.",
+              "status": "open",
+              "classification": "deeper",
+              "last_evidence": "The exact final-head verify_generated_contract.py and link_go_component.py commands still exit 2 with required-argument usage errors. The stable package_component.py/verify_component_manifest.py path passes, but the contract-declared gate remains unreproducible."
+            },
+            {
+              "blocker_id": "BLK-f8f297e18616",
+              "root_cause_key": "mcp-api.production-composition-unwired",
+              "obligation_id": "dimension:ownership",
+              "summary": "The delivered public MCP API has no production composition or concrete governed persistence/runtime owner in the repository.",
+              "evidence": "Repository-wide symbol search at e9b0cf11 found NewHandler/New, Catalog, RuntimeMaterializer, MCPConnector, and governance implementations only in internal/httpapi/mcp tests and helper/interface definitions. The only successful end-to-end-shaped fixture is internal/httpapi/mcp/service_test.go:190-200, which wires fakeCatalog, allowAllAuthorizer, allowAllAdmission, allowAllCredentialBroker, and fakeConnector.",
+              "required_fix": "Wire the handler through the owning production API composition root with a durable Catalog and concrete canonical governance, CredentialBroker, MCP connector, and trusted Runtime/Workspace adapters, or explicitly split this as a contract-only delivery and add a downstream executable integration fixture before claiming the public API is exposed.",
+              "status": "open",
+              "classification": "deeper",
+              "last_evidence": "The final 17-file PR contains only API/OpenAPI and HTTP adapter code. Repository-wide symbol search found constructors, interfaces, and test fakes but no production composition root or concrete persistence/governance/runtime adapters, so the public governed API path remains unverified."
+            }
+          ]
+        }
+      ],
+      "blockers": [
+        {
+          "blocker_id": "BLK-006c632cb966",
+          "root_cause_key": "mcp-api.openapi-contract-drift",
+          "obligation_id": "dimension:structure",
+          "summary": "The public OpenAPI contract still does not describe all accepted request and response behavior.",
+          "evidence": "api/openapi/mcp/types.go:183-187 exposes TestMcpServerRequest.mcp_server_definition_id while api/openapi/mcp/openapi.yaml:206-215 omits it; handler.go:173-178 decodes the field but ignores it. handler.go:180-185 emits a 502 object containing error and snapshot, while openapi.yaml:89-90 provides no content schema. Handler error paths at handler.go:249-263 expose 403/404/405/503 responses that are not declared for the corresponding operations. The current OpenAPI test only checks string presence at api/openapi/mcp/mcp_test.go:34-48.",
+          "required_fix": "Choose one authoritative public DTO shape, remove in-process-only fields from public wire DTOs or document and enforce them, add explicit ErrorResponse schemas for every supported operation/status including the 502 wrapper, then regenerate and run structural schema-vs-handler tests.",
+          "status": "open",
+          "classification": "deeper",
+          "first_seen_round": 1,
+          "last_seen_round": 3,
+          "seen_count": 3,
+          "last_evidence": "Descriptions, retryable, and hint were added to the OpenAPI/DTO, and generated drift checks pass separately. Remaining public shape drift includes the ignored TestMcpServerRequest identity field, the undocumented 502 body, incomplete error response declarations, and caller-authored definition identity."
+        },
+        {
+          "blocker_id": "BLK-07f1a38b0b58",
+          "root_cause_key": "mcp-api.idempotency-not-enforced",
+          "obligation_id": "dimension:evidence",
+          "summary": "The service-level idempotency repair is not backed by a delivered durable reservation/replay implementation.",
+          "evidence": "internal/httpapi/mcp/service.go:120-149 defines the reservation/commit contract and service.go:428-438/477-487 now exercises replay before CAS and retains a reservation after commit is attempted; the corresponding tests pass. Repository-wide inspection found no production Catalog implementation or composition, so the fake reservation map in internal/httpapi/mcp/service_test.go:293-404 is the only exercised persistence behavior.",
+          "required_fix": "Deliver or wire the durable Catalog command-record implementation, prove atomic reservation/definition/snapshot/result/audit persistence, and add a restart/lost-response integration test that observes both committed replay and indeterminate outcomes.",
+          "status": "open",
+          "classification": "deeper",
+          "first_seen_round": 1,
+          "last_seen_round": 3,
+          "seen_count": 3,
+          "last_evidence": "The current service now derives a stable reservation key without RequestContextID, reserves before Update CAS, and retains reservations after commit is attempted; the fresh-context and mutated-revision tests pass. The real durable Catalog/recovery implementation is absent, so production lost-response semantics remain unverified and are covered by the production-composition blocker."
+        },
+        {
+          "blocker_id": "BLK-0af923b33075",
+          "root_cause_key": "mcp-api.noncanonical-governance-lineage",
+          "obligation_id": "dimension:authority",
+          "summary": "The API calls canonical-shaped ports but does not supply or verify authoritative governance identity and execution facts.",
+          "evidence": "internal/httpapi/mcp/service.go:697-710 puts the domain command digest in a requirement and compares the returned decision to that value instead of verifying a canonical full AuthorizationRequest digest. service.go:725-750 uses ScopeID as ProjectID, ComponentID/architecture/IsolationLevel \"mcp-api\", NetworkModeAllowed, and ComponentRun for every operation. service.go:558-586 resolves probe leases but commits only authorization/admission controls; service.go:594-668 resolves status leases without a credential-use audit handoff. The authoritative admission contract requires exact owner/resolved execution/security inputs at contracts/governance/admission/contract.go:329-351, and the governance design requires Credential Resolution and Audit in the canonical chain at docs/design/detailed/09-governance-and-security-detailed-design.md:27-45,462-474,553-572.",
+          "required_fix": "Connect the MCP use cases to the sole AuthorizationEngine, ExecutionAdmissionEngine, CredentialBroker, and canonical audit/credential-use ports. Derive an operation-specific exact subject, owner (or an explicit non-project owner boundary), resolved connector/runtime/workspace, network/security requirements, and canonical request digests from trusted facts; do not substitute ScopeID or feature labels.",
+          "status": "open",
+          "classification": "deeper",
+          "first_seen_round": 1,
+          "last_seen_round": 3,
+          "seen_count": 3,
+          "last_evidence": "Canonical type signatures and lease validation replaced the former audit-shaped ports, but service.go still constructs non-authoritative admission ownership/execution facts and has no production canonical engine/broker composition or explicit credential-use evidence handoff."
+        },
+        {
+          "blocker_id": "BLK-36816070c77b",
+          "root_cause_key": "mcp-api.caller-authored-definition-identity",
+          "obligation_id": "dimension:ownership",
+          "summary": "Create accepts a caller-authored MCP definition identity even though the authoritative contract assigns it to the system.",
+          "evidence": "docs/references/execution/agent-runtime.md:130-142 defines mcp_server_definition_id as a system-produced identity generated on first creation. api/openapi/mcp/types.go:94-106 and openapi.yaml:216-230 expose it in ServerDefinitionInput, and internal/httpapi/mcp/service.go:309-366 accepts it and skips NewID when present. The service tests also treat a caller-provided ID as the normal create path.",
+          "required_fix": "Remove mcp_server_definition_id from the public create input and always generate it server-side; keep any in-process compatibility alias out of the public wire schema, and add a test that a caller-supplied identity is rejected or ignored without changing the generated identity.",
+          "status": "open",
+          "classification": "new",
+          "first_seen_round": 3,
+          "last_seen_round": 3,
+          "seen_count": 1
+        },
+        {
+          "blocker_id": "BLK-73b0d5041f63",
+          "root_cause_key": "mcp-api.untrusted-runtime-materialization-context",
+          "obligation_id": "dimension:execution",
+          "summary": "Materialization status trusts caller-supplied runtime paths.",
+          "evidence": "internal/httpapi/mcp/handler.go:174-196 accepts an undocumented GET body and service.go:304-334 passes its WorkspaceRoot/AllowedPaths into filesystem-based MaterializeRuntime.",
+          "required_fix": "Remove client-controlled runtime paths; use a trusted runtime/workspace binding or return blocked/unknown, and keep launch materialization internal.",
+          "status": "fixed",
+          "classification": "fixed",
+          "first_seen_round": 1,
+          "last_seen_round": 2,
+          "seen_count": 1,
+          "last_evidence": "handler.go:175-195 no longer decodes WorkspaceRoot or AllowedPaths from the public status request; MaterializationRequest contains only RequestContext and ServerID, and runtime materialization is delegated to a trusted dependency. A separate launch-identity mismatch blocker is reported for the remaining result-validation gap."
+        },
+        {
+          "blocker_id": "BLK-ac001635f24b",
+          "root_cause_key": "mcp-api.runtime-materialization-result-mismatch",
+          "obligation_id": "dimension:execution",
+          "summary": "Materialization can report ready without proving that the launch consumed the exact credential bindings and complete launch payload requested.",
+          "evidence": "internal/httpapi/mcp/service.go:655-667 marks ready after validateMaterializedLaunch. service.go:998-1035 compares server ID, transport, configuration digest, and target strings only; it never compares binding IDs/purposes with the definition or leases and never checks command, working directory, endpoint, headers, or binding identity. The existing launch contract validation at contracts/agentrun/agentrun.go:618-735 requires those fields, but its validator is not invoked by this adapter. Tests in internal/httpapi/mcp/service_test.go:476-503 ignore the lease argument and cover only target-name/mismatch cases.",
+          "required_fix": "Validate the full launch against the exact definition and ordered (CredentialBindingID, Target, Purpose) set and the subject-bound active leases, or require a trusted materialization proof that binds those values. Fail closed with blocked/unknown for any mismatch or incomplete payload, and add negative binding-ID/purpose tests.",
+          "status": "open",
+          "classification": "deeper",
+          "first_seen_round": 2,
+          "last_seen_round": 3,
+          "seen_count": 2,
+          "last_evidence": "Runtime server ID, transport, digest, and ordered target names are now checked, and mismatched fake launches are rejected. Binding IDs/purposes and complete launch payload validation are still omitted, so a launch can be ready while using a different credential identity or incomplete materialization payload."
+        },
+        {
+          "blocker_id": "BLK-c22144122c6e",
+          "root_cause_key": "mcp-api.release-tooling-scope-expansion",
+          "obligation_id": "dimension:ownership",
+          "summary": "Shared release-tooling ownership was expanded outside this delivery boundary.",
+          "evidence": "The diff adds 180/11 lines to link_go_component.py and 101/3 lines to verify_generated_contract.py, outside the declared API scope and overlapping blocked release-artifact-tooling.",
+          "required_fix": "Split the release-tooling changes into the owning prerequisite or obtain an explicit DAG/contract amendment.",
+          "status": "fixed",
+          "classification": "fixed",
+          "first_seen_round": 1,
+          "last_seen_round": 2,
+          "seen_count": 1,
+          "last_evidence": "git diff main...HEAD --name-status contains only the 17 API/OpenAPI and internal/httpapi/mcp files; scripts/release/link_go_component.py and verify_generated_contract.py are absent from the final PR diff."
+        },
+        {
+          "blocker_id": "BLK-c69f4cc0b7ec",
+          "root_cause_key": "mcp-api.inline-secret-response",
+          "obligation_id": "dimension:regression",
+          "summary": "Manual and imported environment/header values still rely on heuristic secret classification instead of a fail-closed binding-only boundary.",
+          "evidence": "api/openapi/mcp/types.go:414-470 requires ValueClassificationNonSecret but then relies on isSensitiveName plus a small prefix/length detector; internal/mcp/types.go:409-414 rejects only sensitive names; internal/mcp/import.go:198-221 applies the same heuristics before copying values into normalized candidates. Existing negative tests cover known detector branches, not an unknown/short credential value.",
+          "required_fix": "Do not treat a client-supplied non-secret assertion as proof. Make public environment/header values binding-only unless they come from a server-defined, strictly typed non-secret field, and add a regression test proving arbitrary credential-shaped values cannot be persisted or returned.",
+          "status": "open",
+          "classification": "deeper",
+          "first_seen_round": 1,
+          "last_seen_round": 3,
+          "seen_count": 3,
+          "last_evidence": "Create/Update require the new non-secret classification and reject known sensitive names/prefixes/lengths, but the classification is caller-authored and the remaining value detector is heuristic. Unknown or short secret material under a non-sensitive name can still be returned/persisted."
+        },
+        {
+          "blocker_id": "BLK-d24b87fd226c",
+          "root_cause_key": "mcp-api.cross-scope-resource-mutation",
+          "obligation_id": "dimension:regression",
+          "summary": "Update/read isolation is not fail-closed across scopes.",
+          "evidence": "internal/httpapi/mcp/service.go:210-227 fetches by unconstrained ID and rewrites input.ScopeID from the caller context at :224 without checking the loaded definition scope; Test and MaterializationStatus lack the same equality check.",
+          "required_fix": "Constrain reads by authenticated scope, require scope equality before authorization/mutation, preserve persisted scope, and include exact subject digest in authorization and commit CAS.",
+          "status": "fixed",
+          "classification": "fixed",
+          "first_seen_round": 1,
+          "last_seen_round": 2,
+          "seen_count": 1,
+          "last_evidence": "Catalog.GetDefinition now receives the authenticated scope, the fake catalog enforces it, service.go:392-394/494-495/569-570 checks the loaded definition scope, and Update preserves previous.ScopeID; the scoped regression test passed."
+        },
+        {
+          "blocker_id": "BLK-d7fc58321943",
+          "root_cause_key": "mcp-api.undocumented-route-fallback",
+          "obligation_id": "dimension:structure",
+          "summary": "The HTTP handler routes undocumented paths and aliases through the update/test/materialization operations.",
+          "evidence": "internal/httpapi/mcp/handler.go:65-80 only calls TrimPrefix and defaults every unmatched path to updateDefinition; it does not first require the documented prefix or exact route shape. The same block accepts /test and /materialization-status aliases at :71-78, while openapi.yaml declares only :test and /materialization. handler_coverage_test.go:64-69 codifies the undocumented materialization-status alias rather than rejecting it.",
+          "required_fix": "Use exact route matching (including the documented prefix), return NotFound for unmatched paths, and remove or explicitly publish any aliases; add a regression test for an unmatched PUT path and each supported route.",
+          "status": "fixed",
+          "classification": "fixed",
+          "first_seen_round": 2,
+          "last_seen_round": 3,
+          "seen_count": 1,
+          "last_evidence": "handler.go:65-89 now requires the exact /v1/mcp/servers route family, exact :test and /materialization suffixes, and a single path-segment update ID; the materialization-status alias and unrelated fallback routes are rejected by passing regression tests."
+        },
+        {
+          "blocker_id": "BLK-e4b1d79f0f32",
+          "root_cause_key": "mcp-api.release-contract-not-reproducible",
+          "obligation_id": "integration:api-mcp-gate",
+          "summary": "The contract-declared generated-contract and source-link commands cannot run against the final PR HEAD.",
+          "evidence": "The exact verify_generated_contract.py command exited 2 because scripts/release/verify_generated_contract.py:10-12 requires --component-manifest and --generated-contract, not the contract's --root/--require-go-generate-directive/--expected-outputs-file flags. The exact link_go_component.py command exited 2 because scripts/release/link_go_component.py:35-39 requires --component-manifest, --go-binaries-manifest, and --output, not the contract's entrypoint/bundle flags. Stable package_component.py and verify_component_manifest.py passed, but they do not make the two exact gate commands reproducible.",
+          "required_fix": "Update the contract to the released tooling interface and regenerate the gate evidence, or land the owning release-tooling prerequisite before this gate is required; then rerun the exact commands at the final PR HEAD without temporary scripts.",
+          "status": "open",
+          "classification": "deeper",
+          "first_seen_round": 2,
+          "last_seen_round": 3,
+          "seen_count": 2,
+          "last_evidence": "The exact final-head verify_generated_contract.py and link_go_component.py commands still exit 2 with required-argument usage errors. The stable package_component.py/verify_component_manifest.py path passes, but the contract-declared gate remains unreproducible."
+        },
+        {
+          "blocker_id": "BLK-f8f297e18616",
+          "root_cause_key": "mcp-api.production-composition-unwired",
+          "obligation_id": "dimension:ownership",
+          "summary": "The delivered public MCP API has no production composition or concrete governed persistence/runtime owner in the repository.",
+          "evidence": "Repository-wide symbol search at e9b0cf11 found NewHandler/New, Catalog, RuntimeMaterializer, MCPConnector, and governance implementations only in internal/httpapi/mcp tests and helper/interface definitions. The only successful end-to-end-shaped fixture is internal/httpapi/mcp/service_test.go:190-200, which wires fakeCatalog, allowAllAuthorizer, allowAllAdmission, allowAllCredentialBroker, and fakeConnector.",
+          "required_fix": "Wire the handler through the owning production API composition root with a durable Catalog and concrete canonical governance, CredentialBroker, MCP connector, and trusted Runtime/Workspace adapters, or explicitly split this as a contract-only delivery and add a downstream executable integration fixture before claiming the public API is exposed.",
+          "status": "open",
+          "classification": "deeper",
+          "first_seen_round": 2,
+          "last_seen_round": 3,
+          "seen_count": 2,
+          "last_evidence": "The final 17-file PR contains only API/OpenAPI and HTTP adapter code. Repository-wide symbol search found constructors, interfaces, and test fakes but no production composition root or concrete persistence/governance/runtime adapters, so the public governed API path remains unverified."
+        }
+      ]
+    },
+    "review_ledger_ref": {
+      "comment_id": "01a03cb9-d377-709d-8824-10931d26161f",
+      "attachment_id": "01a03cb9-d309-7cb3-a764-461265be479d",
+      "sha256": "fef9fdfb12d70cd2db2f3acfebf0e7c232ad0defcd439e39041034d539a1f333",
+      "bytes": 51178,
+      "filename": "omac-review-ledger-fef9fdfb12d7.yaml"
+    },
+    "review_generation": "amendment-27955339387f74256cf20c12",
+    "review_ledger_generation": null,
+    "review_continuation": null,
+    "reviewer_run_baseline": null,
+    "worker_handoff": null,
+    "delivery_identity": null,
+    "decision_required": null,
+    "amendment_attempt": null,
+    "contract": {
+      "objective": "Deliver the public MCP OpenAPI and HTTP adapter over the canonical governed MCP use case, with system-owned resource identity, binding-only public secret fields, exact RequestContext/authorization/admission lineage, complete materialization-proof validation, structural request/response/error parity, and reproducible final-head release evidence.",
+      "non_goals": [
+        "Do not own or reimplement MCP persistence, authorization, execution admission, credential resolution, audit, Runtime, Workspace, or production service composition in the API adapter.",
+        "Do not accept caller-authored mcp_server_definition_id, caller-asserted non-secret values, inline Header or Environment secrets, synthetic governance facts, or incomplete runtime proof.",
+        "Do not expose in-process-only fields, undocumented error bodies or statuses, provider payloads, authorization headers, credential material, private prompts, or feature-local fallback paths.",
+        "Do not use test fakes, temporary release-tooling revisions, or commands that are incompatible with the final reviewed head as release evidence."
+      ],
+      "verification_commands": [
+        "mkdir -p artifacts/api-mcp && go test -covermode=atomic -coverprofile=artifacts/api-mcp/coverage.out ./api/openapi/mcp/... ./internal/httpapi/mcp/...",
+        "go test ./api/openapi/mcp/... ./internal/httpapi/mcp/... -run '^(TestOpenAPIWireContractMatchesHandlers|TestCreateRejectsCallerAuthoredDefinitionIdentity|TestPublicValuesRequireCredentialBindings|TestCanonicalGovernanceRequestLineage|TestMaterializationRequiresExactBindingPurposeAndLaunchProof)$' -count=1",
+        "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-mcp/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+        "go list ./api/openapi/mcp/... | grep -q . && go generate ./api/openapi/mcp/... && git diff --exit-code -- api/openapi/mcp && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/mcp)\"",
+        "python3 scripts/release/package_component.py --component api-mcp --kind platform-core-dependency-source --input api/openapi/mcp --input internal/httpapi/mcp --generated-input artifacts/mcp-catalog-governed-hardening/component-manifest.json --require-generated-input-digest --bundle artifacts/api-mcp/source-bundle.tar.zst --component-manifest artifacts/api-mcp/component-manifest.json --digest-output artifacts/api-mcp/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-mcp --require-all-owner-sources-accounted",
+        "python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-mcp/component-manifest.json --bundle artifacts/api-mcp/source-bundle.tar.zst --expected-component api-mcp --check-schema schemas/release-component-manifest.schema.json --require-owned-source api/openapi/mcp/types.go --require-owned-source internal/httpapi/mcp/service.go --require-generated-input artifacts/mcp-catalog-governed-hardening/component-manifest.json --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted"
+      ],
+      "integration_gates": [
+        {
+          "name": "api-mcp-gate",
+          "layer": "L1",
+          "source_of_truth": [
+            "api-mcp-amendment-decision.md",
+            "docs/design/open-agent-cluster-overview-design.md:L75-L95",
+            "docs/design/open-agent-cluster-overview-design.md:L189-L243",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L278-L402",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L474",
+            "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L572",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L5-L60",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L426-L486",
+            "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545",
+            "docs/references/governance/security-and-enterprise.md:L236-L317",
+            "docs/references/governance/security-and-enterprise.md:L402-L488",
+            "docs/references/execution/agent-runtime.md:L130-L223",
+            "contracts/agentrun/agentrun.go:L618-L735"
+          ],
+          "delivery_goal": "Deliver a structurally complete and fail-closed public MCP wire adapter that delegates to the hardened canonical MCP component and can be packaged reproducibly at final HEAD.",
+          "covers": [
+            "api-mcp"
+          ],
+          "acceptance_refs": [
+            "UJ-MCP-001"
+          ],
+          "commands": [
+            "mkdir -p artifacts/api-mcp && go test -covermode=atomic -coverprofile=artifacts/api-mcp/coverage.out ./api/openapi/mcp/... ./internal/httpapi/mcp/...",
+            "go test ./api/openapi/mcp/... ./internal/httpapi/mcp/... -run '^(TestOpenAPIWireContractMatchesHandlers|TestCreateRejectsCallerAuthoredDefinitionIdentity|TestPublicValuesRequireCredentialBindings|TestCanonicalGovernanceRequestLineage|TestMaterializationRequiresExactBindingPurposeAndLaunchProof)$' -count=1",
+            "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-mcp/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"",
+            "go list ./api/openapi/mcp/... | grep -q . && go generate ./api/openapi/mcp/... && git diff --exit-code -- api/openapi/mcp && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/mcp)\"",
+            "python3 scripts/release/package_component.py --component api-mcp --kind platform-core-dependency-source --input api/openapi/mcp --input internal/httpapi/mcp --generated-input artifacts/mcp-catalog-governed-hardening/component-manifest.json --require-generated-input-digest --bundle artifacts/api-mcp/source-bundle.tar.zst --component-manifest artifacts/api-mcp/component-manifest.json --digest-output artifacts/api-mcp/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-mcp --require-all-owner-sources-accounted",
+            "python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-mcp/component-manifest.json --bundle artifacts/api-mcp/source-bundle.tar.zst --expected-component api-mcp --check-schema schemas/release-component-manifest.schema.json --require-owned-source api/openapi/mcp/types.go --require-owned-source internal/httpapi/mcp/service.go --require-generated-input artifacts/mcp-catalog-governed-hardening/component-manifest.json --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted"
+          ],
+          "required_metrics": {
+            "statement_coverage_percent": 90,
+            "required_wire_and_boundary_regression_test_count": 5,
+            "caller_authored_definition_identity_accept_count": 0,
+            "inline_secret_value_accept_count": 0,
+            "undocumented_handler_response_count": 0,
+            "materialization_binding_or_payload_mismatch_accept_count": 0,
+            "declared_artifact_count": 4
+          },
+          "artifacts": [
+            "artifacts/api-mcp/coverage.out",
+            "artifacts/api-mcp/bundle-digest.txt",
+            "artifacts/api-mcp/component-manifest.json",
+            "artifacts/api-mcp/source-bundle.tar.zst"
+          ]
+        }
+      ],
+      "pr_base": "main",
+      "acceptance_refs": [
+        "UJ-MCP-001"
+      ],
+      "source_of_truth": [
+        "api-mcp-amendment-decision.md",
+        "docs/design/open-agent-cluster-overview-design.md:L75-L95",
+        "docs/design/open-agent-cluster-overview-design.md:L189-L243",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L278-L402",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L474",
+        "docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L572",
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L5-L60",
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L426-L486",
+        "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545",
+        "docs/references/governance/security-and-enterprise.md:L236-L317",
+        "docs/references/governance/security-and-enterprise.md:L402-L488",
+        "docs/references/execution/agent-runtime.md:L130-L223",
+        "contracts/agentrun/agentrun.go:L618-L735"
+      ],
+      "required_contracts": [
+        "docs/references/execution/agent-runtime.md",
+        "docs/references/governance/security-and-enterprise.md"
+      ],
+      "scope_paths": [
+        "api/openapi/mcp/**",
+        "internal/httpapi/mcp/**"
+      ]
+    },
+    "contract_ref": {
+      "comment_id": "01a0fbc0-4615-7a91-a319-a315a7e681a6",
+      "attachment_id": "01a0fbc0-4539-7b10-b084-9276950f519e",
+      "sha256": "7bc97dbf863ed234411d57f3193ee67f39466417369ab96c764822aac9c6ba8b",
+      "bytes": 8367,
+      "filename": "omac-contract-7bc97dbf863e.yaml"
+    },
+    "source_refs": [
+      {
+        "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+        "label": "\u8bbe\u8ba1\u65b9\u6848"
+      },
+      {
+        "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+        "label": "\u9a8c\u6536\u6587\u6863"
+      },
+      {
+        "issue_id": "01a03a19-8f8b-7601-a728-d8b49b949d12",
+        "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement MCP Server import and test"
+      },
+      {
+        "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+        "label": "\u524d\u7f6e\u5f00\u53d1\u4efb\u52a1 \u00b7 Implement deterministic release artifact packaging"
+      }
+    ],
+    "kind": "develop",
+    "phase": "authoring",
+    "bounces": {
+      "worker": 0,
+      "ci": 0,
+      "review": 2,
+      "merge": 0
+    },
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 2,
+      "worker": 0
+    },
+    "deliverable": null,
+    "deliverable_ref": null,
+    "project_rules": null,
+    "project_rules_ref": null,
+    "agent_run_finished_without_submit": false,
+    "agent_run_failed": false,
+    "created_at": "2026-08-26T01:19:40Z",
+    "updated_at": "2026-10-02T08:34:41Z",
+    "platform_assignee_id": null,
+    "unknown_persisted_fields": {},
+    "review_nits_acceptance": null
+  },
+  "runs": [
+    {
+      "id": "01a03ca0-4fe0-7434-8e5d-c3621539c0b5",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-26T05:52:14Z",
+      "updated_at": "2026-08-26T06:21:45Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a03c5c-6f24-78d3-a55e-16e4e750078e",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+      "created_at": "2026-08-26T04:38:05Z",
+      "updated_at": "2026-08-26T05:35:05Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a03c49-3eef-7935-ac3b-76f8f32804e1",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-26T04:17:08Z",
+      "updated_at": "2026-08-26T04:38:55Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a03c2b-4575-7643-9334-9e29d5f4b478",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-26T03:44:23Z",
+      "updated_at": "2026-08-26T04:16:08Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a03bfb-c0b4-7cfc-9cfe-c3eb98bb2653",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+      "created_at": "2026-08-26T02:52:29Z",
+      "updated_at": "2026-08-26T03:43:22Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a03be3-c4c4-795d-b0ef-ed1f7967a6db",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-26T02:26:17Z",
+      "updated_at": "2026-08-26T02:52:03Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "01a03ba7-29d8-759f-8343-f1768c07d84b",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "037ad7f0-98f9-489f-bf43-0d1148233356",
+      "created_at": "2026-08-26T01:20:06Z",
+      "updated_at": "2026-08-26T02:25:24Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    }
+  ],
+  "effective_absolute_relative_budget": {
+    "work_item_id": "01a03ba6-c6c2-7e64-bb25-de46a3fe7e32",
+    "contract_sha256": "56983c0e66f5134703390e7606993f27357cd6f7d77bca909505ae3123b38e20",
+    "absolute": {
+      "worker": 0,
+      "review": 2,
+      "merge": 0,
+      "ci": 0
+    },
+    "native_baseline": {
+      "merge": 0,
+      "review": 2,
+      "worker": 0
+    },
+    "effective_baseline": {
+      "merge": 0,
+      "review": 2,
+      "worker": 0
+    },
+    "consumed": {
+      "merge": 0,
+      "review": 0,
+      "worker": 0
+    },
+    "authority_source": "manifest-retained",
+    "authority": {
+      "amendment_id": "amend-0a6a353dea1c",
+      "work_item_id": "01a03ba6-c6c2-7e64-bb25-de46a3fe7e32",
+      "contract_sha256": "56983c0e66f5134703390e7606993f27357cd6f7d77bca909505ae3123b38e20",
+      "bounce_baseline": {
+        "merge": 0,
+        "review": 2,
+        "worker": 0
+      }
+    }
+  },
+  "budget_validation_error": null
+}

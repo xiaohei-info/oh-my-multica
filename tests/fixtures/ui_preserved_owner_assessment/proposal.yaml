@@ -1,0 +1,131 @@
+schema: omac.dag-amendment/v1
+owner_resolution: d43b1570760168e5769890f5ac57821ebb220801a44714c3706bae333cfe94d1
+owner_resolution_approval: 6fd7e693ae491d3a70a90316b2e01fc4c19775dd6724e96c70d99e2a9c606a99
+reason: >-
+  Repair only the existing blocked identity-local node for the two fresh independent
+  canonical-audit findings: persist and bind a server-issued RequestContext identity
+  distinct from external RequestID, and record only truthful evaluated-control
+  provenance for bootstrap, invitation, recovery, and installer proof paths. The
+  existing RequestContext, Authorization, Audit, and security contracts already
+  provide the typed boundary; this amendment does not reopen or alter any done node,
+  add a second audit store, invent policy/provider facts, touch Credential, or change
+  runtime facts. The node returns to authoring because the rejected delivery needs
+  owner implementation and regression evidence before a fresh independent review.
+budget_policy: preserve
+operations:
+  - op: update
+    node: identity-local
+    set:
+      contract:
+        objective: >-
+          Deliver first-admin, invitation, recovery, and browser-session behavior
+          plus one Principal-owned saved locale preference restricted to zh-CN|en-US,
+          updated by Authorization and expected_revision CAS. Persist and bind every
+          governed audit event to a server-issued RequestContext identity distinct
+          from external RequestID, and record only the actual evaluated authorization,
+          admission, or provider evidence for each supported entry point without
+          synthesizing policy, grant, provider, or anonymous-administrator provenance;
+          do not store locale on Scope, Project, Workflow, or Solution.
+        non_goals:
+          - Do not let organization, Scope, or Project override a Principal saved locale.
+          - Do not persist anonymous browser locale on the server.
+          - Do not treat a locale update as identity, authorization, Session, or business-resource mutation.
+          - Do not bypass authorization, expected_revision CAS, idempotency, or audit.
+          - Do not substitute external RequestID for the persisted RequestContext identity; retain it only as correlation data.
+          - Do not create a parallel audit store, invent AuthorizationPolicy or matched-grant identities, or relabel proof/token digests as policy or provider provenance.
+          - Do not add or modify upstream shared contracts or any Credential implementation; use the existing typed boundaries and report an actual schema conflict instead of fabricating evidence.
+          - Do not create anonymous administrator contexts for pre-authentication or installer flows; use only the explicitly supported truthful control evidence.
+        verification_commands:
+          - >-
+            python3 -c "from pathlib import Path; import hashlib; p=Path('account-locale-ownership-decision.md'); assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()=='2ee85c6551db299f14f4903e5b0086e678208b38c6a3cba276c8a32a5f1a5be6'"
+          - >-
+            mkdir -p artifacts/identity-local && go test -covermode=atomic -coverprofile=artifacts/identity-local/coverage.out ./internal/identity/... ./api/auth/local/...
+          - >-
+            go test ./internal/identity/... ./api/auth/local/... -run "Test.*LocalePreference.*(Create|Read|CAS|Conflict|Authorization|Audit|Session|Fallback)" -count=1
+          - >-
+            go test ./internal/identity/... -run "Test.*LocalePreference.*Rejects(Scope|Project|Workflow|Solution|UnsupportedLocale|AnonymousWrite)" -count=1
+          - >-
+            go test ./internal/identity/... ./api/auth/local/... -run "Test.*(CanonicalAudit|RequestContext|EvaluatedControl|ProofAudit|PersistedContext)" -count=1
+          - >-
+            python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/identity-local/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90"
+          - >-
+            python3 scripts/release/package_component.py --component identity-local --kind platform-core-dependency-source --input internal/identity --input api/auth/local --bundle artifacts/identity-local/source-bundle.tar.zst --component-manifest artifacts/identity-local/component-manifest.json --digest-output artifacts/identity-local/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner identity-local --require-all-owner-sources-accounted
+        integration_gates:
+          - name: identity-local-gate
+            layer: L1
+            source_of_truth:
+              - docs/design/detailed/09-governance-and-security-detailed-design.md:L100-L213
+              - docs/design/detailed/09-governance-and-security-detailed-design.md:L214-L296
+              - docs/design/detailed/10-web-api-cli-detailed-design.md:L170-L354
+              - docs/delivery/acceptance-and-validation.md:L129-L150
+              - account-locale-ownership-decision.md
+              - contracts/identity/requestcontext/request_context.go
+              - contracts/governance/authz/contract.go
+              - contracts/governance/audit/contract.go
+              - docs/references/governance/security-and-enterprise.md:L1-L20
+              - docs/references/governance/security-and-enterprise.md:L118-L182
+              - docs/references/governance/security-and-enterprise.md:L184-L317
+            delivery_goal: >-
+              Deliver the existing first-admin, invitation, recovery, browser-session,
+              and Principal-owned locale scope while proving that every supported
+              identity audit event resolves its persisted RequestContextID to the
+              correct server-issued context, retains external RequestID only for
+              correlation, and carries truthful evaluated-control provenance without
+              synthetic policy, grant, provider, or anonymous-administrator evidence.
+            covers:
+              - identity-local
+            acceptance_refs:
+              - UJ-IDENTITY-001
+            commands:
+              - >-
+                python3 -c "from pathlib import Path; import hashlib; p=Path('account-locale-ownership-decision.md'); assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()=='2ee85c6551db299f14f4903e5b0086e678208b38c6a3cba276c8a32a5f1a5be6'"
+              - >-
+                mkdir -p artifacts/identity-local && go test -covermode=atomic -coverprofile=artifacts/identity-local/coverage.out ./internal/identity/... ./api/auth/local/...
+              - >-
+                go test ./internal/identity/... ./api/auth/local/... -run "Test.*LocalePreference.*(Create|Read|CAS|Conflict|Authorization|Audit|Session|Fallback)" -count=1
+              - >-
+                go test ./internal/identity/... -run "Test.*LocalePreference.*Rejects(Scope|Project|Workflow|Solution|UnsupportedLocale|AnonymousWrite)" -count=1
+              - >-
+                go test ./internal/identity/... ./api/auth/local/... -run "Test.*(CanonicalAudit|RequestContext|EvaluatedControl|ProofAudit|PersistedContext)" -count=1
+              - >-
+                python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/identity-local/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90"
+              - >-
+                python3 scripts/release/package_component.py --component identity-local --kind platform-core-dependency-source --input internal/identity --input api/auth/local --bundle artifacts/identity-local/source-bundle.tar.zst --component-manifest artifacts/identity-local/component-manifest.json --digest-output artifacts/identity-local/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner identity-local --require-all-owner-sources-accounted
+            required_metrics:
+              statement_coverage_percent: 90
+              locale_preference_conflict_accept_count: 0
+              persisted_request_context_reference_mismatch_accept_count: 0
+              synthetic_authorization_provenance_accept_count: 0
+            artifacts:
+              - artifacts/identity-local/coverage.out
+              - artifacts/identity-local/source-bundle.tar.zst
+              - artifacts/identity-local/bundle-digest.txt
+              - artifacts/identity-local/component-manifest.json
+        pr_base: main
+        acceptance_refs:
+          - UJ-IDENTITY-001
+        source_of_truth:
+          - docs/design/detailed/09-governance-and-security-detailed-design.md:L100-L213
+          - docs/design/detailed/09-governance-and-security-detailed-design.md:L214-L296
+          - docs/design/detailed/10-web-api-cli-detailed-design.md:L170-L354
+          - docs/delivery/acceptance-and-validation.md:L129-L150
+          - account-locale-ownership-decision.md
+          - contracts/identity/requestcontext/request_context.go
+          - contracts/governance/authz/contract.go
+          - contracts/governance/audit/contract.go
+          - docs/references/governance/security-and-enterprise.md:L1-L20
+          - docs/references/governance/security-and-enterprise.md:L118-L182
+          - docs/references/governance/security-and-enterprise.md:L184-L317
+        required_contracts:
+          - docs/references/governance/security-and-enterprise.md
+          - account-locale-ownership-decision.md
+          - contracts/identity/requestcontext/request_context.go
+          - contracts/governance/authz/contract.go
+          - contracts/governance/audit/contract.go
+        scope_paths:
+          - internal/identity/**
+          - api/auth/local/**
+          - account-locale-ownership-decision.md
+        evidence_mode: artifact
+        produces:
+          - artifact_id: identity-local-account-locale-component

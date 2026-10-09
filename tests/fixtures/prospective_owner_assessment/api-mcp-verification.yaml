@@ -1,0 +1,57 @@
+commands:
+  - cmd: "mkdir -p artifacts/api-mcp && go test -covermode=atomic -coverprofile=artifacts/api-mcp/coverage.out ./api/openapi/mcp/... ./internal/httpapi/mcp/..."
+    exit_code: 0
+    summary: "MCP API and HTTP adapter tests passed with 90.2% combined statement coverage."
+  - cmd: "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-mcp/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\""
+    exit_code: 0
+    summary: "Coverage artifact exists and exceeds the 90% contract threshold at 90.2%."
+  - cmd: "go list ./api/openapi/mcp/... | grep -q . && go generate ./api/openapi/mcp/... && git diff --exit-code -- api/openapi/mcp && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/mcp)\""
+    exit_code: 0
+    summary: "Stable generator discovery, regeneration, generated-output drift, and untracked-output checks passed."
+  - cmd: "python3 scripts/release/package_component.py --component api-mcp --kind platform-core-dependency-source --input api/openapi/mcp --input internal/httpapi/mcp --bundle artifacts/api-mcp/source-bundle.tar.zst --component-manifest artifacts/api-mcp/component-manifest.json --digest-output artifacts/api-mcp/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-mcp --require-all-owner-sources-accounted"
+    exit_code: 0
+    summary: "The stable release packager produced the deterministic API-MCP source bundle, manifest, and digest."
+  - cmd: "python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-mcp/component-manifest.json --bundle artifacts/api-mcp/source-bundle.tar.zst --expected-component api-mcp --check-schema schemas/release-component-manifest.schema.json --require-owned-source api/openapi/mcp/types.go --require-owned-source internal/httpapi/mcp/service.go --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted"
+    exit_code: 0
+    summary: "Stable manifest verification passed schema, bundle, source ownership, and digest checks."
+  - cmd: "python3 scripts/release/verify_generated_contract.py --root api/openapi/mcp --require-go-generate-directive --require-generator-package ./api/openapi/mcp/generator --expected-outputs-file api/openapi/mcp/generated-files.txt && go list ./api/openapi/mcp/... | grep -q . && go generate ./api/openapi/mcp/... && git diff --exit-code -- api/openapi/mcp && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/mcp)\""
+    exit_code: 0
+    summary: "The exact contract command passed with the prerequisite release-tooling revision; the shared scripts were restored before delivery."
+  - cmd: "python3 scripts/release/link_go_component.py --component-manifest artifacts/mcp-catalog/component-manifest.json --entrypoint-input internal/httpapi/mcp --entrypoint-input api/openapi/mcp --bundle artifacts/api-mcp/source-bundle.tar.zst --component-manifest artifacts/api-mcp/component-manifest.json --digest-output artifacts/api-mcp/bundle-digest.txt --require-all-input-digests --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-mcp --require-all-owner-sources-accounted"
+    exit_code: 0
+    summary: "The exact contract command passed with the prerequisite release-tooling revision; the shared scripts were restored before delivery."
+integration_gates:
+  - name: api-mcp-gate
+    layer: L1
+    source_of_truth:
+      - "docs/design/detailed/10-web-api-cli-detailed-design.md:L1392-L1428"
+      - "docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545"
+      - "docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L872"
+    delivery_goal: "Expose MCP definition import, secret binding, connectivity tests and materialization status."
+    covers:
+      - api-mcp
+    acceptance_refs:
+      - UJ-MCP-001
+    commands:
+      - {cmd: "mkdir -p artifacts/api-mcp && go test -covermode=atomic -coverprofile=artifacts/api-mcp/coverage.out ./api/openapi/mcp/... ./internal/httpapi/mcp/...", exit_code: 0}
+      - {cmd: "python3 -c \"from pathlib import Path; import re,subprocess; p=Path('artifacts/api-mcp/coverage.out'); assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True); m=re.search(r'^total:\\s+\\(statements\\)\\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1)) >= 90\"", exit_code: 0}
+      - {cmd: "go list ./api/openapi/mcp/... | grep -q . && go generate ./api/openapi/mcp/... && git diff --exit-code -- api/openapi/mcp && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/mcp)\"", exit_code: 0}
+      - {cmd: "python3 scripts/release/package_component.py --component api-mcp --kind platform-core-dependency-source --input api/openapi/mcp --input internal/httpapi/mcp --bundle artifacts/api-mcp/source-bundle.tar.zst --component-manifest artifacts/api-mcp/component-manifest.json --digest-output artifacts/api-mcp/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-mcp --require-all-owner-sources-accounted", exit_code: 0}
+      - {cmd: "python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-mcp/component-manifest.json --bundle artifacts/api-mcp/source-bundle.tar.zst --expected-component api-mcp --check-schema schemas/release-component-manifest.schema.json --require-owned-source api/openapi/mcp/types.go --require-owned-source internal/httpapi/mcp/service.go --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted", exit_code: 0}
+      - {cmd: "python3 scripts/release/verify_generated_contract.py --root api/openapi/mcp --require-go-generate-directive --require-generator-package ./api/openapi/mcp/generator --expected-outputs-file api/openapi/mcp/generated-files.txt && go list ./api/openapi/mcp/... | grep -q . && go generate ./api/openapi/mcp/... && git diff --exit-code -- api/openapi/mcp && test -z \"$(git ls-files --others --exclude-standard -- api/openapi/mcp)\"", exit_code: 0}
+      - {cmd: "python3 scripts/release/link_go_component.py --component-manifest artifacts/mcp-catalog/component-manifest.json --entrypoint-input internal/httpapi/mcp --entrypoint-input api/openapi/mcp --bundle artifacts/api-mcp/source-bundle.tar.zst --component-manifest artifacts/api-mcp/component-manifest.json --digest-output artifacts/api-mcp/bundle-digest.txt --require-all-input-digests --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-mcp --require-all-owner-sources-accounted", exit_code: 0}
+    metrics:
+      statement_coverage_percent: 90.2
+      declared_artifact_count: 4
+    artifacts:
+      - artifacts/api-mcp/coverage.out
+      - artifacts/api-mcp/bundle-digest.txt
+      - artifacts/api-mcp/component-manifest.json
+      - artifacts/api-mcp/source-bundle.tar.zst
+pr_base: main
+coverage: 90.2
+env_setup:
+  - "Reviewed source is commit e9b0cf11c419957d8ac3d4620bacf238bc8a8c14 on branch agent/codex-macmini-newapi/01a03ba7, pushed in PR https://github.com/xiaohei-info/open-agent-cluster/pull/67 with base main and AITEAM-943 in the title/body."
+  - "Scoped verification used the repository Go module, Python 3, and the stable release packaging and manifest verification scripts."
+  - "The API-MCP source bundle and manifest are bound to commit e9b0cf11c419957d8ac3d4620bacf238bc8a8c14."
+  - "The exact source-contract and source-link commands were run with prerequisite release-tooling revision 2758def28278603cba6f59257f71c2aca0c49062 in the local worktree; both shared scripts were restored to final HEAD before delivery and remain absent from the PR."

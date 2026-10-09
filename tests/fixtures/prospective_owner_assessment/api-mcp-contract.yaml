@@ -1,0 +1,127 @@
+objective: Deliver the public MCP OpenAPI and HTTP adapter over the canonical governed
+  MCP use case, with system-owned resource identity, binding-only public secret fields,
+  exact RequestContext/authorization/admission lineage, complete materialization-proof
+  validation, structural request/response/error parity, and reproducible final-head
+  release evidence.
+non_goals:
+- Do not own or reimplement MCP persistence, authorization, execution admission, credential
+  resolution, audit, Runtime, Workspace, or production service composition in the
+  API adapter.
+- Do not accept caller-authored mcp_server_definition_id, caller-asserted non-secret
+  values, inline Header or Environment secrets, synthetic governance facts, or incomplete
+  runtime proof.
+- Do not expose in-process-only fields, undocumented error bodies or statuses, provider
+  payloads, authorization headers, credential material, private prompts, or feature-local
+  fallback paths.
+- Do not use test fakes, temporary release-tooling revisions, or commands that are
+  incompatible with the final reviewed head as release evidence.
+verification_commands:
+- mkdir -p artifacts/api-mcp && go test -covermode=atomic -coverprofile=artifacts/api-mcp/coverage.out
+  ./api/openapi/mcp/... ./internal/httpapi/mcp/...
+- go test ./api/openapi/mcp/... ./internal/httpapi/mcp/... -run '^(TestOpenAPIWireContractMatchesHandlers|TestCreateRejectsCallerAuthoredDefinitionIdentity|TestPublicValuesRequireCredentialBindings|TestCanonicalGovernanceRequestLineage|TestMaterializationRequiresExactBindingPurposeAndLaunchProof)$'
+  -count=1
+- python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/api-mcp/coverage.out');
+  assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+  m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and float(m.group(1))
+  >= 90"
+- go list ./api/openapi/mcp/... | grep -q . && go generate ./api/openapi/mcp/... &&
+  git diff --exit-code -- api/openapi/mcp && test -z "$(git ls-files --others --exclude-standard
+  -- api/openapi/mcp)"
+- python3 scripts/release/package_component.py --component api-mcp --kind platform-core-dependency-source
+  --input api/openapi/mcp --input internal/httpapi/mcp --generated-input artifacts/mcp-catalog-governed-hardening/component-manifest.json
+  --require-generated-input-digest --bundle artifacts/api-mcp/source-bundle.tar.zst
+  --component-manifest artifacts/api-mcp/component-manifest.json --digest-output artifacts/api-mcp/bundle-digest.txt
+  --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner api-mcp
+  --require-all-owner-sources-accounted
+- python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-mcp/component-manifest.json
+  --bundle artifacts/api-mcp/source-bundle.tar.zst --expected-component api-mcp --check-schema
+  schemas/release-component-manifest.schema.json --require-owned-source api/openapi/mcp/types.go
+  --require-owned-source internal/httpapi/mcp/service.go --require-generated-input
+  artifacts/mcp-catalog-governed-hardening/component-manifest.json --ownership-catalog
+  contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted
+integration_gates:
+- name: api-mcp-gate
+  layer: L1
+  source_of_truth:
+  - api-mcp-amendment-decision.md
+  - docs/design/open-agent-cluster-overview-design.md:L75-L95
+  - docs/design/open-agent-cluster-overview-design.md:L189-L243
+  - docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45
+  - docs/design/detailed/09-governance-and-security-detailed-design.md:L278-L402
+  - docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L474
+  - docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L572
+  - docs/design/detailed/10-web-api-cli-detailed-design.md:L5-L60
+  - docs/design/detailed/10-web-api-cli-detailed-design.md:L426-L486
+  - docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545
+  - docs/references/governance/security-and-enterprise.md:L236-L317
+  - docs/references/governance/security-and-enterprise.md:L402-L488
+  - docs/references/execution/agent-runtime.md:L130-L223
+  - contracts/agentrun/agentrun.go:L618-L735
+  delivery_goal: Deliver a structurally complete and fail-closed public MCP wire adapter
+    that delegates to the hardened canonical MCP component and can be packaged reproducibly
+    at final HEAD.
+  covers:
+  - api-mcp
+  acceptance_refs:
+  - UJ-MCP-001
+  commands:
+  - mkdir -p artifacts/api-mcp && go test -covermode=atomic -coverprofile=artifacts/api-mcp/coverage.out
+    ./api/openapi/mcp/... ./internal/httpapi/mcp/...
+  - go test ./api/openapi/mcp/... ./internal/httpapi/mcp/... -run '^(TestOpenAPIWireContractMatchesHandlers|TestCreateRejectsCallerAuthoredDefinitionIdentity|TestPublicValuesRequireCredentialBindings|TestCanonicalGovernanceRequestLineage|TestMaterializationRequiresExactBindingPurposeAndLaunchProof)$'
+    -count=1
+  - python3 -c "from pathlib import Path; import re,subprocess; p=Path('artifacts/api-mcp/coverage.out');
+    assert p.is_file() and p.stat().st_size>0; out=subprocess.check_output(['go','tool','cover','-func='+str(p)],text=True);
+    m=re.search(r'^total:\s+\(statements\)\s+([0-9.]+)%$',out,re.M); assert m and
+    float(m.group(1)) >= 90"
+  - go list ./api/openapi/mcp/... | grep -q . && go generate ./api/openapi/mcp/...
+    && git diff --exit-code -- api/openapi/mcp && test -z "$(git ls-files --others
+    --exclude-standard -- api/openapi/mcp)"
+  - python3 scripts/release/package_component.py --component api-mcp --kind platform-core-dependency-source
+    --input api/openapi/mcp --input internal/httpapi/mcp --generated-input artifacts/mcp-catalog-governed-hardening/component-manifest.json
+    --require-generated-input-digest --bundle artifacts/api-mcp/source-bundle.tar.zst
+    --component-manifest artifacts/api-mcp/component-manifest.json --digest-output
+    artifacts/api-mcp/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml
+    --owner api-mcp --require-all-owner-sources-accounted
+  - python3 scripts/release/verify_component_manifest.py --manifest artifacts/api-mcp/component-manifest.json
+    --bundle artifacts/api-mcp/source-bundle.tar.zst --expected-component api-mcp
+    --check-schema schemas/release-component-manifest.schema.json --require-owned-source
+    api/openapi/mcp/types.go --require-owned-source internal/httpapi/mcp/service.go
+    --require-generated-input artifacts/mcp-catalog-governed-hardening/component-manifest.json
+    --ownership-catalog contracts/release/source-ownership-catalog.yaml --require-all-owner-sources-accounted
+  required_metrics:
+    statement_coverage_percent: 90
+    required_wire_and_boundary_regression_test_count: 5
+    caller_authored_definition_identity_accept_count: 0
+    inline_secret_value_accept_count: 0
+    undocumented_handler_response_count: 0
+    materialization_binding_or_payload_mismatch_accept_count: 0
+    declared_artifact_count: 4
+  artifacts:
+  - artifacts/api-mcp/coverage.out
+  - artifacts/api-mcp/bundle-digest.txt
+  - artifacts/api-mcp/component-manifest.json
+  - artifacts/api-mcp/source-bundle.tar.zst
+pr_base: main
+acceptance_refs:
+- UJ-MCP-001
+source_of_truth:
+- api-mcp-amendment-decision.md
+- docs/design/open-agent-cluster-overview-design.md:L75-L95
+- docs/design/open-agent-cluster-overview-design.md:L189-L243
+- docs/design/detailed/09-governance-and-security-detailed-design.md:L11-L45
+- docs/design/detailed/09-governance-and-security-detailed-design.md:L278-L402
+- docs/design/detailed/09-governance-and-security-detailed-design.md:L408-L474
+- docs/design/detailed/09-governance-and-security-detailed-design.md:L553-L572
+- docs/design/detailed/10-web-api-cli-detailed-design.md:L5-L60
+- docs/design/detailed/10-web-api-cli-detailed-design.md:L426-L486
+- docs/design/detailed/10-web-api-cli-detailed-design.md:L1375-L1545
+- docs/references/governance/security-and-enterprise.md:L236-L317
+- docs/references/governance/security-and-enterprise.md:L402-L488
+- docs/references/execution/agent-runtime.md:L130-L223
+- contracts/agentrun/agentrun.go:L618-L735
+required_contracts:
+- docs/references/execution/agent-runtime.md
+- docs/references/governance/security-and-enterprise.md
+scope_paths:
+- api/openapi/mcp/**
+- internal/httpapi/mcp/**

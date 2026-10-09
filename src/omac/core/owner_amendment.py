@@ -25,6 +25,62 @@ SCHEMA = "omac.owner-amendment-request/v1"
 JOURNAL = "owner_amendment_resolutions"
 PACKAGE_REASON = "omac-budget-preserving-amendment-recovery-required"
 
+# Exact qualified historical bytes and prospective preservation authority.
+# These fields remain opaque, unresolved source facts; never globally known metadata.
+_PRESERVED_UI_DOCUMENTS = {
+    "manifest.yaml": (9707829, "884b888f6d1dd28fa479bf3e0f3382a80a1c14838dcc6d6ea126b1b1c95345d3"),
+    "ui-foundation.json": (81695, "8efb9df6c1ff99823d614558928b5f8132306cecf65289481c89a2e1d08cd650"),
+    "ui-native.json": (48103, "50fb9fe6803a26b2ac979ee5753564495b841675ed13053e992d50c7b11f6c1e"),
+    "authority.json": (2032, "d9536faaf1e543a531ae588b948e2a6be2a264cdc2d4095fa0e283accc16b2c3"),
+    "history.json": (30461, "425ca132dd8fc28a731c98525e41e671e50e440dd004e171a7d6037c85bb8018"),
+    "recovery.yaml": (118932, "f1c8c4ac80c79170666b576f89a955f268825eb36d38605e15cb77c21e730f5f"),
+    "pr-run.json": (54729, "c7251e394fafbdb27a5d856afeb82b81d4b08db93dbc4e49e372050427b5177e"),
+    "blocked-run.json": (67205, "26f6dfaaeb0752a8f6d8b7d6fd2ef84c70af491fe4562ea831fe96b03e242fb5"),
+    "intermediate-run.json": (78600, "b3c1f8abed3710f41faadac384cb625d19356d5c45fc6ef04b835358ba839491"),
+    "timeline.json": (154309, "2b14929d6d3510a29c683c0a58f5d82d3c5238e1b505711719b4e3ec3482a281"),
+    "comments.json": (106242, "0edf3e87137448fcf00a3745a856ed2270e46e51636971cbcb5eb664133351be"),
+    "failed-call-correlation.json": (133525, "13f7da8039973dfbc7864762e00e8e2741af05febfb2d6b5fd30b5415e0c4da4"),
+    "native-runs/a9847017-cda1-4f19-8c93-0f253864d6bc.json": (345485, "46774db830f119aadcc8d78ba06c08f9ec3a9c21cfbba9cd6dd8cef5cef5ad09"),
+    "native-runs/6a260679-124f-495f-aacd-c307818f301b.json": (15720, "4a7c31130586c51d6a49e696048edbfea0cfc08505a6030bf22ed0ddc74a933c"),
+    "native-runs/1625120b-53d4-4c7f-95c5-f61a1ca57b4b.json": (187857, "5325c3c1cb507684df6d7fc1506f9d97b766c64861c25ff1c2b52d85951fe89b"),
+    "native-runs/9cf82942-1198-43e9-8aa8-5d72d5c6e654.json": (20478, "0b45303c292ce16b12d244475d263fb01f7fae03a2ebbf150efeeaad73166fc7"),
+    "native-runs/0da5271c-25dc-4a9f-b314-36bb664d929b.json": (5982, "2afc0838c7021a2dd40f3a176eb7d2edea4aeb97908bfb83158c4c8202139c36"),
+    "native-runs/65b7a77d-71c1-4aa1-8117-74a65ff1e79c.json": (39314, "abb2be18a94a8a698be6eb07106cf42eadc6e85e2bcfd7ee800c2324cb9e3171"),
+    "native-runs/c75e2458-f357-429f-8c56-022932af7700.json": (3, "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"),
+    "native-runs/eb6eb138-f0eb-4cad-8653-cb1cc83d0ad4.json": (3468, "80aab2fa365410715b69e28791f8ec7b895990541ef37c3260e2e5348885989a"),
+    "native-runs/e44b5582-8217-42cf-9144-3cb35301f9d4.json": (147093, "d8b3df7557b762191add92c613b852ba75059b12653b4ae7a52e88b59cbd4270"),
+    "native-runs/20ab00ff-a96d-41f2-b3a9-447fbb8a03d4.json": (40653, "fb08c41cd94bbe57566274aef71c9a56034f1b5964618a3599c0c1acb0a951af"),
+    "native-runs/2990b72a-bb0e-4f71-b422-5dba3bd37671.json": (300, "11ae240d10e420c88f0c3635c2c466c7a9af03c85608464c3c3e0434aa8c1db6"),
+    "native-runs/eaf069a4-3673-4db3-80b2-618176e8a825.json": (366673, "c21f05a740b27075050ef890ba43e39766d864522d9916fb799d56855df0e5c3"),
+    "native-runs/31424c0e-59f6-4788-b222-79531d88c85b.json": (298933, "54062bfb43fd2142ee91e3ce29ffcd2bd46f54cd74a2373bd634399f285ffc5d"),
+    "native-runs/1eaf0d63-2435-4711-976a-b4bd7e9d643b.json": (157333, "9fec02555406a903fdf450072b3fa51eba2e301009e4b41c6b150fe64b8a905e"),
+    "native-runs/8ed9071c-2b20-45c8-b959-3db4d85948f2.json": (144442, "82c178fd344103d0bca14775688382625254fc98bc86f1e87abc375df1d90ffa"),
+    "native-runs/320964e0-4cb4-4a1f-8f39-1d19dbd57d6f.json": (401113, "cd7ab9ea9dc6882b2e41f7442a71a9bf077da7703b487ee900641b2f8fd40c94"),
+    "native-runs/e1e9aa18-3cbb-4be0-a5a7-3cf73d7c4ef9.json": (465684, "f7df107887ff17a285d190af10d86f51ed9ea5b220e2a15c505a084645521a66"),
+    "native-runs/06db789d-648f-4474-a744-e3fe30f8dc1e.json": (148437, "815fd33a39befa0e945bfd51588f6b309b7c27ce6a52c5eb7ab31b9bc7b1c036"),
+    "native-runs/27ceda4a-e533-40a5-b703-ade677dbb8e5.json": (25285, "18a04f3c5e2ade45000cebbca1a7363e6940408912db4ad827d15baa3316d7c4"),
+    "native-runs/c92ccd49-18e0-487f-89db-3504785997dd.json": (162725, "64f17572aa88ff801aa926380ce8dffca3aa7399326bbd85d82b105f8c91cc3d"),
+    "native-runs/119471bf-1989-4272-b6ed-d256e9c958c0.json": (17408, "ec9de9b593c6af86786be4b687d26c0100f64172b344c612fc7b6d44aaf17f9d"),
+    "native-runs/26622a4e-dfe0-4703-af0e-b5b29383d32c.json": (3, "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"),
+    "native-runs/be9a29bb-6d39-45c7-afc8-97c47d5209dc.json": (168301, "f7cf3084255ca3024e33c61b8ddd070ad7781b24e0b93d544e4b9ca742dda727"),
+    "native-runs/86eb9c23-f55c-4082-9eef-07abe2fafde0.json": (388565, "f2baa6e618f8081349c74c883b5a642df8760a8c910acfae5b3fd32bc30d8601"),
+    "native-runs/4e3562bf-2733-48e9-9a09-255aff4a6ed8.json": (50669, "7c83753b4a6dee32abb64b37ff4fa175d1728b240516a075dafd8569391aa67a"),
+    "native-runs/a8c80da4-5131-4d04-8bff-344a6a7711f1.json": (118114, "ff3a1f983ce6d3cb280fffb9a84112482a3ee0ed0d67067bf8ee61e7436b4e37"),
+    "native-runs/d9e97b4c-fa9e-4890-86a3-d3653397c2c8.json": (35027, "aebda65de596742a855434f61bb238e75f5d088dc72b6cfcfc673ca1107b2f47"),
+    "native-runs/a066d663-d886-4a2b-adea-215877caa0e8.json": (181751, "5bb305c7d3515e25c334e8fcf1bd0e7c3e3ef218cb2b3c7c2d6c96815d96b454"),
+    "native-runs/2b2bc2f7-0a11-46ec-9af7-5e135e153f4a.json": (738009, "5dbdedd2af7bf912c8d912388228a33ea00002194ce12e70fab896be113e4268"),
+    "native-runs/244c4292-8c1d-41c5-af30-df6939e3213f.json": (176861, "03eb9a8645632d0e48f2d72014e35f9d5cf45352267fc3f467ae4efd9571ee20"),
+    "native-runs/a8bf972c-8c46-45aa-9d5d-3e9509d69743.json": (17414, "26f78753735b87c6f5a9593484fc499c17946baee442f3e3848a86ee2e973424"),
+}
+_PRESERVED_UI_MANIFEST = "d8e360cb9cfca4a764989de19a7319e9ebb3057b5a73f751287f79dcf228ede1"
+_PRESERVED_UI_ITEM = "750212469f00645d69e9cc3657d4beb3468e9b8bd57eb0a07a8cf57794fe266e"
+_PRESERVED_OWNER_HISTORY = {
+    "76af977110f0e80c0ba0578ebc8ecb81dee3cb75aacba1008c5a153d2bad56fb": "80e8de4db258a4acd6250e1d602c92c8827f526ea99dcf518c8440ddfe48c003",
+    "d43b1570760168e5769890f5ac57821ebb220801a44714c3706bae333cfe94d1": "cd55c1845a953885ea2addde4e1d8770689cb1689f092c5a1bfa0d2f9db31963",
+}
+_OWNER_RECOVERY_MUTABLE = frozenset(["contract","contract_ref","review_generation","bounce_baseline","review_verdict","review_comment","machine_feedback","machine_feedback_ref","review_report","review_report_ref","review_subject_digest","review_obligations","review_obligations_ref","review_continuation","reviewer_run_baseline","worker_handoff","delivery_identity","decision_required","review_nits_acceptance","phase","status","reviewer","platform_assignee_id","updated_at"])
+
+
 
 def digest(value):
     return hashlib.sha256(
@@ -93,6 +149,95 @@ def terminal_runs(runtime, item_id):
     return sorted([asdict(r) for r in runs], key=lambda r: r["id"])
 
 
+def preserved_source_input(file):
+    """Read the one qualified preservation witness, without platform effects."""
+    try:
+        path = Path(file).resolve(strict=True)
+        if not path.is_file() or path.stat().st_size > 65536:
+            _invalid("Preserved-source witness must be a bounded regular JSON file")
+        raw = path.read_bytes()
+        witness = json.loads(raw)
+        if (
+            not isinstance(witness, dict)
+            or set(witness) != {"schema", "disposition", "references"}
+            or witness["schema"] != "omac.preserved-owner-source/v1"
+            or witness["disposition"] != "unresolved-product-obligation"
+            or not isinstance(witness["references"], dict)
+            or set(witness["references"]) != set(_PRESERVED_UI_DOCUMENTS)
+        ):
+            _invalid("Exact unresolved preservation witness is malformed")
+        references = {}
+        expected_item = None
+        for name, (size, sha) in _PRESERVED_UI_DOCUMENTS.items():
+            ref = witness["references"][name]
+            if (
+                not isinstance(ref, dict) or set(ref) != {"file", "bytes", "sha256"}
+                or not isinstance(ref["file"], str) or not ref["file"]
+                or type(ref["bytes"]) is not int or ref["bytes"] != size
+                or ref["sha256"] != sha
+            ):
+                _invalid("Qualified native provenance/authority identity differs")
+            source = (path.parent / ref["file"]).resolve(strict=True)
+            if not source.is_file() or source.stat().st_size != size:
+                _invalid("Full preserved-source input size or regular file changed")
+            content = source.read_bytes()
+            if len(content) != size or hashlib.sha256(content).hexdigest() != sha:
+                _invalid("Full preserved-source input bytes changed")
+            references[name] = {**ref, "file": str(source)}
+            if name == "ui-foundation.json":
+                expected_item = json.loads(content)["item"]
+        return {
+            **witness, "references": references,
+            "input": {"file": str(path), "bytes": len(raw),
+                      "sha256": hashlib.sha256(raw).hexdigest()},
+        }, expected_item
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValidationError(
+            "Cannot read exact preserved-source witness: " + str(exc)
+            + "; inspect full inputs and run omac dag amend prepare-owner --help"
+        ) from exc
+
+
+def verify_preserved_source(
+    manifest, node_id, item, qualification, *, request_sha=None, recovered=False
+):
+    """Qualify opaque history for assessment only; never retire an active hold."""
+    if not isinstance(qualification, dict) or not isinstance(qualification.get("input"), dict):
+        _invalid("Unknown persisted controls require their exact source witness")
+    current, original = preserved_source_input(qualification["input"].get("file"))
+    if digest(current) != digest(qualification):
+        _invalid("Preserved-source witness or its full inputs changed")
+    if (
+        node_id != "ui-foundation"
+        or item.id != "7873a3df-67eb-457a-90ca-1356c1253f76"
+        or item.workspace_id != "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+        or item.dag_key != node_id
+        or item.status != WorkItemStatus.TODO or item.phase != TaskPhase.AUTHORING
+        or item.decision_required not in (None, {})
+        or item.worker_handoff or item.delivery_identity or item.review_continuation
+        or item.reviewer_run_baseline or item.review_report or item.review_report_ref
+        or item.machine_feedback or item.machine_feedback_ref or item.review_subject_digest
+        or item.review_verdict not in (None, "")
+        or item.current_review_ledger is not None
+    ):
+        _invalid("Preserved source cannot authorize or retire an active control hold")
+    actual = plain(asdict(item))
+    if not recovered:
+        if digest(actual) != _PRESERVED_UI_ITEM or digest(manifest_source(manifest)) != _PRESERVED_UI_MANIFEST:
+            _invalid("Complete qualified source/manifest/budget identity changed")
+    elif (
+        digest({k: v for k, v in actual.items() if k not in _OWNER_RECOVERY_MUTABLE})
+        != digest({k: v for k, v in original.items() if k not in _OWNER_RECOVERY_MUTABLE})
+        or actual["bounce_baseline"] != original["bounce_baseline"]
+    ):
+        _invalid("Preserved opaque source, failure history or budget changed during recovery")
+    history = manifest.meta.get(JOURNAL, {})
+    if not isinstance(history, dict) or {
+        k: digest(v) for k, v in history.items() if k != request_sha
+    } != _PRESERVED_OWNER_HISTORY:
+        _invalid("Original owner resolution history changed or was replayed")
+
+
 def _attachment(store, item_id, ref):
     if (
         not isinstance(ref, dict)
@@ -125,7 +270,7 @@ def _attachment(store, item_id, ref):
     }
 
 
-def capture_source(manifest, node_id, store, runtime, *, held=False):
+def capture_source(manifest, node_id, store, runtime, *, held=False, qualification=None, request_sha=None):
     node = manifest.nodes.get(node_id)
     if node is None or node.status == "done" or node.merged:
         _invalid("Authorized target must be an existing unmerged non-DONE node")
@@ -156,7 +301,11 @@ def capture_source(manifest, node_id, store, runtime, *, held=False):
         )
     if not held:
         if item.unknown_persisted_fields:
-            _invalid("Actual affected source has unknown persisted control fields")
+            if qualification is None:
+                _invalid("Actual affected source has unknown persisted control fields")
+            verify_preserved_source(manifest, node_id, item, qualification, request_sha=request_sha)
+        elif qualification is not None:
+            _invalid("Qualified opaque source fields disappeared")
         if item.decision_required:
             from types import SimpleNamespace
             from ..pipeline.amendment import _validate_amendment_admission
@@ -358,10 +507,12 @@ def capture_source(manifest, node_id, store, runtime, *, held=False):
 
 
 def verify_request(manifest, request, store, runtime):
+    if isinstance(request, dict) and {"source_qualification", "prospective_assessment"} <= set(request):
+        _invalid("Preserved and prospective assessments require separate requests")
     if (
         not isinstance(request, dict)
         or request.get("schema") != SCHEMA
-        or set(request)
+        or set(request) - {"prospective_assessment"}
         != {
             "schema",
             "manifest",
@@ -372,7 +523,7 @@ def verify_request(manifest, request, store, runtime):
             "retry_policy",
             "remaining_budgets",
             "required_inputs",
-        }
+        } | ({"source_qualification"} if "source_qualification" in request else set())
         or not isinstance(request.get("blocked_nodes"), list)
         or not request["blocked_nodes"]
         or not isinstance(request.get("allowed_nodes"), list)
@@ -390,6 +541,21 @@ def verify_request(manifest, request, store, runtime):
         _invalid(
             "Immutable owner request or FULL manifest/DONE/history authority changed"
         )
+    if "source_qualification" in request and (
+        request["blocked_nodes"] != ["identity-local"]
+        or request["allowed_nodes"] != ["authentication-methods", "identity-local", "ui-foundation"]
+    ):
+        _invalid("Preserved assessment requires complete actual Identity/UI/AuthMethod bounds")
+    if "prospective_assessment" in request:
+        from .prospective_owner import GROUPS, qualify_prospective
+
+        qualification = request["prospective_assessment"]
+        if not isinstance(qualification, dict) or qualification.get("group") not in GROUPS:
+            _invalid("Complete prospective declaration qualification is required")
+        held, existing, _ = GROUPS[qualification["group"]]
+        if set(request["blocked_nodes"]) != {held} or set(request["allowed_nodes"]) != existing:
+            _invalid("Existing changed/derived selectors differ from the exact Root group")
+        qualify_prospective(manifest, qualification, store, runtime, request_sha=digest(request))
     from .config import load_config, resolve_retry
     from ..pipeline.owner_amendment import required_inputs
 
@@ -416,7 +582,9 @@ def verify_request(manifest, request, store, runtime):
     for key in request["allowed_nodes"]:
         if (
             capture_source(
-                manifest, key, store, runtime, held=key in request["blocked_nodes"]
+                manifest, key, store, runtime, held=key in request["blocked_nodes"],
+                qualification=request.get("source_qualification") if key == "ui-foundation" else None,
+                request_sha=digest(request),
             )
             != request["sources"][key]
         ):
@@ -475,7 +643,9 @@ def validate_affected(manifest, proposal, store, runtime):
         )
     if entry is not None and (
         proposal.get("budget_policy") != "preserve"
-        or affected - set(entry["request"]["allowed_nodes"])
+        or affected - (set(entry["request"]["allowed_nodes"]) | set(
+            entry["request"].get("prospective_assessment", {}).get("declarations", {})
+        ))
     ):
         _invalid(
             "Actual affected/derived targets exceed exact authorization or budget_policy is not preserve"
@@ -730,6 +900,11 @@ def guard_apply_resume(manifest, amendment, store, runtime, *, before_node=None)
         _invalid(
             "Required source/acceptance/configured limits changed during accepted recovery"
         )
+    # The request manifest excludes its own authorization journal. Qualified
+    # captures additionally check the pinned original entries against the live
+    # journal; this local reconstruction never changes the frozen request.
+    if "source_qualification" in request:
+        original.meta[JOURNAL] = manifest.meta[JOURNAL]
     ledger = manifest.meta.get("amendment_apply", {})
     if any(
         r.get("state") not in ("synced", "observed_progress")
@@ -772,10 +947,27 @@ def guard_apply_resume(manifest, amendment, store, runtime, *, before_node=None)
         if source.get("rejected_source"):
             terminal_runs(runtime, source["rejected_source"]["item"]["id"])
         recovery = ledger.get("nodes", {}).get(key)
+        if key == "ui-foundation" and "source_qualification" in request:
+            if recovery and recovery.get("state") in ("synced", "observed_progress") and (
+                classify_stage_recovery_observation(
+                    recovery["stage"], recovery["baseline"],
+                    recovery_control_snapshot(store.get_work_item(source["item"]["id"])),
+                    expected_contract_sha256=recovery["expected_contract_sha256"],
+                    expected_review_generation=recovery.get("expected_review_generation"),
+                    expected_bounce_baseline=recovery.get("bounce_baseline"),
+                ) != "reached"
+            ):
+                _invalid("Completed preserved-source recovery target drifted")
+            verify_preserved_source(
+                manifest, key, store.get_work_item(source["item"]["id"]),
+                request["source_qualification"], request_sha=request_digest, recovered=True,
+            )
         if recovery is None or recovery.get("state") == "pending":
             if (
                 capture_source(
-                    original, key, store, runtime, held=key in request["blocked_nodes"]
+                    original, key, store, runtime, held=key in request["blocked_nodes"],
+                    qualification=request.get("source_qualification") if key == "ui-foundation" else None,
+                    request_sha=request_digest,
                 )
                 != source
             ):
@@ -821,32 +1013,7 @@ def guard_apply_resume(manifest, amendment, store, runtime, *, before_node=None)
             # Anything outside the explicitly retired control projection must
             # still equal the complete original source; no hidden source edits.
             control = plain(asdict(item))
-            mutable = {
-                "contract",
-                "contract_ref",
-                "review_generation",
-                "bounce_baseline",
-                "review_verdict",
-                "review_comment",
-                "machine_feedback",
-                "machine_feedback_ref",
-                "review_report",
-                "review_report_ref",
-                "review_subject_digest",
-                "review_obligations",
-                "review_obligations_ref",
-                "review_continuation",
-                "reviewer_run_baseline",
-                "worker_handoff",
-                "delivery_identity",
-                "decision_required",
-                "review_nits_acceptance",
-                "phase",
-                "status",
-                "reviewer",
-                "platform_assignee_id",
-                "updated_at",
-            }
+            mutable = _OWNER_RECOVERY_MUTABLE
             if {k: v for k, v in control.items() if k not in mutable} != {
                 k: v for k, v in source["item"].items() if k not in mutable
             }:

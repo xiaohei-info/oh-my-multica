@@ -1,0 +1,1033 @@
+{
+  "at": "2026-10-06T02:38:10.022077+00:00",
+  "node": "ui-foundation",
+  "item": {
+    "id": "7873a3df-67eb-457a-90ca-1356c1253f76",
+    "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1",
+    "title": "[DAG:ui-foundation] Build reusable Console UI foundation",
+    "description": "> **OMAC 控制的执行。第一动作必须严格执行：**\n\n```bash\nOMAC_ENGINE=multica OMAC_WORKSPACE_ID=410ade5e-8ae0-4402-b975-813dea2ff3e1 OMAC_PROJECT_ID=732ce83f-5cbd-4485-850d-1b8a1bf16340 omac work show 7873a3df-67eb-457a-90ca-1356c1253f76 --output json\n```\n\n> `omac work show` 和 `omac work submit` 都可能长时间运行。任何工具调用在拿到最终 tool_result 和终态退出码前都不完整。若工具返回 running/session、缺少最终 tool_result、出现空输出或不完整输出，必须等待或轮询到终态。使用足够长的 wait/yield，或保留并恢复续接句柄；这是通用终态规则，不绑定某个具体工具 API。timeout/yield 不是空结果，也不允许据此停止。`omac work show` 只有在退出码 0 且得到可解析 JSON 后才能继续。`omac work submit` 只有在最终 tool_result 明确给出退出码 0，且 JSON 包含 `\"ok\": true`、`\"terminal\": true` 和 `\"next_action\": \"stop\"` 时才可宣称成功。结果未知时不得宣称成功或结束；validation error 必须修复后重新提交。submit 成功就是本次执行的最后动作，立即停止，不再执行任何平台写入。\n\n> 在上方精确的 `omac work show` 命令以退出码 0 成功返回可解析 JSON 前，不得执行任何其他 Issue 查询（包括 `multica issue get`、`multica issue comment list` 或 metadata 查询），也不得开始分析任务内容。work show 成功后，只能在返回上下文确有需要时使用只读 Issue 查询。禁止任何会创建、修改或删除 Issue 状态的 `multica issue` 写操作。这是语义边界，不是穷举命令清单；禁止示例包括 `multica issue status`、`multica issue assign`、`multica issue comment`、`multica issue metadata`、`multica issue rerun`、`multica issue cancel-task`、`multica issue update`、`multica issue create`、`multica issue label`、`multica issue property`、`multica issue reorder` 和 `multica issue subscriber`。只允许使用上方给出的精确 `omac work show` 命令，以及 work show 返回的精确 `omac work submit` 命令作为 OMAC 控制命令；已有手工附件或 verification 但缺少 `delivery_identity` 时也必须通过该 submit 命令封存。\n\n# Build reusable Console UI foundation\n\n## 任务摘要\n- 类型: 开发实现（`develop`）\n- 执行角色: 独立评审者（`reviewer`）\n- 目标: Deliver tokens, accessible primitives, state/evidence components, localization utilities and testing fixtures consumed by domain pages.\n- 依据: `docs/design/frontend/DESIGN.md:L199-L382`\n- 依据: `docs/design/frontend/DESIGN.md:L519-L704`\n\n## 任务详情\nSmallest independently PR-able, testable and reviewable delivery boundary for this capability.\n\n## 非目标\n- Do not change adjacent domain ownership or introduce a competing source of truth.\n- Do not bypass authorization, admission, CAS, idempotency, review or evidence gates.\n- Do not preserve unpublished prototype behavior unless the owning design explicitly requires it.\n- Do not call internal implementation packages or bypass the published Platform API.\n\n## 主要代码归属范围\n- `packages/ui/**`\n- `apps/console/src/i18n/**`\n- `apps/console/src/test/**`\n\n## 交付约束\n- PR 基线: `main`\n- 改动分支覆盖率: `≥ 90%`\n- PR 关联标识: `AITEAM-830`\n\n## 上游 issue（防跑偏）\n本任务承接以下上游 issue，用于追溯需求与决策；若与当前 contract 冲突，先请求确认：\n- 设计方案: `289a13bf-cede-4b5b-ba86-d72f0bef8164`\n- 验收文档: `8e6bd282-6039-41d2-aa00-969a0bf1554a`\n- 前置开发任务 · Bootstrap Console workspace and browser quality harness: `ea309848-059d-431a-a93a-accc090cce27`\n- 前置开发任务 · Implement deterministic release artifact packaging: `152d735a-c373-4967-8ae0-45c191de2eff`",
+    "status": "todo",
+    "dag_key": "ui-foundation",
+    "identifier": "AITEAM-830",
+    "worker": "pi-ubuntu-newapi",
+    "reviewer": "",
+    "blocked_by": [
+      "bootstrap-console",
+      "release-artifact-tooling"
+    ],
+    "wave": null,
+    "artifacts": {
+      "pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/21",
+      "head_sha": "f4b69f132b39dd114df202e803c47a7656612104"
+    },
+    "verification": {
+      "commands": [
+        {
+          "cmd": "mkdir -p artifacts/ui-foundation/ui artifacts/ui-foundation/console && pnpm --filter @oac/ui exec vitest run src --coverage --coverage.thresholds.lines=90 --coverage.include=\"src/**\" --coverage.reportsDirectory=$PWD/artifacts/ui-foundation/ui/coverage --coverage.reporter=json-summary",
+          "exit_code": 0,
+          "summary": "10 UI foundation tests passed with 95.32% line coverage, including authoritative tokens, interaction states, keyboard behavior, and dark-mode contrast."
+        },
+        {
+          "cmd": "python3 -c \"import json; d=json.load(open('artifacts/ui-foundation/ui/coverage/coverage-summary.json')); x=d['total']['lines']; assert int(x['total'])>0 and float(x['pct']) >= 90\"",
+          "exit_code": 0,
+          "summary": "UI package coverage 95.32% exceeds the 90% contract threshold."
+        },
+        {
+          "cmd": "pnpm --filter console exec vitest run src/i18n src/test --coverage --coverage.thresholds.lines=90 --coverage.include=\"src/i18n/**\" --coverage.include=\"src/test/**\" --coverage.reportsDirectory=$PWD/artifacts/ui-foundation/console/coverage --coverage.reporter=json-summary",
+          "exit_code": 0,
+          "summary": "12 localization and fixture tests passed with 94.38% line coverage, including development missing-key diagnostics and namespace isolation."
+        },
+        {
+          "cmd": "python3 -c \"import json; d=json.load(open('artifacts/ui-foundation/console/coverage/coverage-summary.json')); x=d['total']['lines']; assert int(x['total'])>0 and float(x['pct']) >= 90\"",
+          "exit_code": 0,
+          "summary": "Console localization/test coverage 94.38% exceeds the 90% contract threshold."
+        },
+        {
+          "cmd": "pnpm --filter @oac/ui exec playwright test --grep \"ui-foundation\" --reporter=junit > artifacts/ui-foundation/playwright-junit.xml",
+          "exit_code": 0,
+          "summary": "Two UI foundation browser fixtures passed, including dark action/selected-language contrast at WCAG AA contrast."
+        },
+        {
+          "cmd": "python3 -c \"import xml.etree.ElementTree as E; r=E.parse('artifacts/ui-foundation/playwright-junit.xml').getroot(); c=list(r.iter('testcase')); assert c and not any(x.find('skipped') is not None or x.find('failure') is not None or x.find('error') is not None for x in c)\"",
+          "exit_code": 0,
+          "summary": "UI JUnit output reports no skipped, failed, or errored browser tests."
+        },
+        {
+          "cmd": "pnpm --filter @oac/ui build && pnpm --filter console build",
+          "exit_code": 0,
+          "summary": "The @oac/ui package and Console application builds completed successfully."
+        },
+        {
+          "cmd": "python3 scripts/release/package_component.py --component ui-foundation --kind console-foundation-source --input packages/ui --input apps/console/src/i18n --input apps/console/src/test --bundle artifacts/ui-foundation/source-bundle.tar.zst --component-manifest artifacts/ui-foundation/component-manifest.json --digest-output artifacts/ui-foundation/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner ui-foundation --require-all-owner-sources-accounted",
+          "exit_code": 0,
+          "summary": "Ownership-aware source bundle, manifest, and digest generated from reviewed Git content; manifest source_revision=f4b69f132b39dd114df202e803c47a7656612104."
+        }
+      ],
+      "integration_gates": [
+        {
+          "name": "ui-foundation-gate",
+          "source_of_truth": [
+            "docs/design/frontend/DESIGN.md:L199-L382",
+            "docs/design/frontend/DESIGN.md:L519-L704"
+          ],
+          "delivery_goal": "Deliver tokens, accessible primitives, state/evidence components, localization utilities and testing fixtures consumed by domain pages.",
+          "commands": [
+            {
+              "cmd": "mkdir -p artifacts/ui-foundation/ui artifacts/ui-foundation/console && pnpm --filter @oac/ui exec vitest run src --coverage --coverage.thresholds.lines=90 --coverage.include=\"src/**\" --coverage.reportsDirectory=$PWD/artifacts/ui-foundation/ui/coverage --coverage.reporter=json-summary",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"import json; d=json.load(open('artifacts/ui-foundation/ui/coverage/coverage-summary.json')); x=d['total']['lines']; assert int(x['total'])>0 and float(x['pct']) >= 90\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "pnpm --filter console exec vitest run src/i18n src/test --coverage --coverage.thresholds.lines=90 --coverage.include=\"src/i18n/**\" --coverage.include=\"src/test/**\" --coverage.reportsDirectory=$PWD/artifacts/ui-foundation/console/coverage --coverage.reporter=json-summary",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"import json; d=json.load(open('artifacts/ui-foundation/console/coverage/coverage-summary.json')); x=d['total']['lines']; assert int(x['total'])>0 and float(x['pct']) >= 90\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "pnpm --filter @oac/ui exec playwright test --grep \"ui-foundation\" --reporter=junit > artifacts/ui-foundation/playwright-junit.xml",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 -c \"import xml.etree.ElementTree as E; r=E.parse('artifacts/ui-foundation/playwright-junit.xml').getroot(); c=list(r.iter('testcase')); assert c and not any(x.find('skipped') is not None or x.find('failure') is not None or x.find('error') is not None for x in c)\"",
+              "exit_code": 0
+            },
+            {
+              "cmd": "pnpm --filter @oac/ui build && pnpm --filter console build",
+              "exit_code": 0
+            },
+            {
+              "cmd": "python3 scripts/release/package_component.py --component ui-foundation --kind console-foundation-source --input packages/ui --input apps/console/src/i18n --input apps/console/src/test --bundle artifacts/ui-foundation/source-bundle.tar.zst --component-manifest artifacts/ui-foundation/component-manifest.json --digest-output artifacts/ui-foundation/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --owner ui-foundation --require-all-owner-sources-accounted",
+              "exit_code": 0
+            }
+          ],
+          "metrics": {
+            "line_coverage_percent": 94.38
+          },
+          "artifacts": [
+            "artifacts/ui-foundation/ui/coverage/coverage-summary.json",
+            "artifacts/ui-foundation/console/coverage/coverage-summary.json",
+            "artifacts/ui-foundation/playwright-junit.xml",
+            "artifacts/ui-foundation/console-clean-playwright-junit.xml",
+            "artifacts/ui-foundation/source-bundle.tar.zst",
+            "artifacts/ui-foundation/bundle-digest.txt",
+            "artifacts/ui-foundation/component-manifest.json"
+          ]
+        }
+      ],
+      "pr_base": "main",
+      "coverage": 94.38,
+      "env_setup": [
+        "pnpm install",
+        "pnpm --filter @oac/ui exec playwright install chromium",
+        "pnpm --filter console exec node scripts/run-clean-consumer-e2e.mjs -- --reporter=junit (removes packages/ui/dist before starting the Console Vite harness)",
+        "Locale persistence is the anonymous local preference only; authenticated account language visibly reports that the published account preference service is unavailable, with no false Settings affordance."
+      ]
+    },
+    "verification_ref": {
+      "comment_id": "fa1095ac-c481-4a2f-b13f-56c9d592f6e9",
+      "attachment_id": "019fe697-2667-7454-a6b5-f6c51544a7ee",
+      "sha256": "302b4fc051be359c2303f9041ffc9bc52f0c60d52c750ed9efbd6221eb1b5526",
+      "bytes": 6586,
+      "filename": "omac-verification-302b4fc051be.yaml"
+    },
+    "review_verdict": null,
+    "review_comment": null,
+    "machine_feedback": null,
+    "machine_feedback_ref": null,
+    "review_report": null,
+    "review_report_ref": null,
+    "review_subject_digest": null,
+    "review_obligations": [],
+    "review_obligations_ref": null,
+    "review_ledger": {
+      "schema": "omac.review-ledger/v1",
+      "cycles": [
+        {
+          "round": 1,
+          "subject_digest": "132a08ba6066fd895ef3a2ef42eadc79b0d0e357da9ccd00558d02bfb32c021d",
+          "report_digest": "f88cd6bf1e0a1ed44f9c04d0f6a9772c43f2589b706a0f418ececcc0c617b124",
+          "verdict": "reject",
+          "obligation_results": {
+            "dimension:authority": "fail",
+            "dimension:structure": "pass",
+            "dimension:execution": "pass",
+            "dimension:ownership": "pass",
+            "dimension:evidence": "pass",
+            "dimension:regression": "pass",
+            "integration:ui-foundation-gate": "pass"
+          },
+          "new_count": 3,
+          "fixed_count": 0,
+          "regressed_count": 0,
+          "unchanged_count": 0,
+          "open_count": 3,
+          "prior_open_blocker_ids": [],
+          "open_blocker_ids": [
+            "BLK-447d039c1c97",
+            "BLK-8a23b026f590",
+            "BLK-94808a815ee9"
+          ],
+          "reported_blocker_ids": [
+            "BLK-447d039c1c97",
+            "BLK-8a23b026f590",
+            "BLK-94808a815ee9"
+          ],
+          "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+          "blocker_facts": [
+            {
+              "blocker_id": "BLK-447d039c1c97",
+              "root_cause_key": "authenticated-account-language-settings-dead-end",
+              "obligation_id": "dimension:authority",
+              "summary": "High severity: the authenticated account menu claims that the account language preference is managed in Account settings, but its Settings link has no language-setting surface or action. This replaces the prior direct selector with a user-visible dead end rather than fulfilling the DESIGN.md account-menu language-setting contract.",
+              "evidence": "ConsoleShell.tsx:122-129 renders the claim and /settings link. The only authenticated route in ConsoleApplication.tsx:49-57 sends every path to ConsoleWorkSurface, whose only content at lines 24-26 is the generic Console heading and route description. Independent browser execution with an authenticated mocked session opened the account menu on /projects, clicked Settings, reached /settings, and observed that generic surface with zero language radios and zero Account-language entries. BrowserSessionAdapter and repository search confirm there is no published account-locale write path as an alternative.",
+              "required_fix": "Obtain the product/identity-owned published account-locale use-case decision, then implement a real account-menu Settings language action with the designed persistence, failure, and recovery semantics and prove it end-to-end. If that dependency is not available in this delivery boundary, remove the false “managed in Account settings” affordance and obtain an explicit product decision for the deferred authenticated-language experience rather than presenting a nonfunctional control. Synchronize the resulting account-settings, onboarding, and support copy with that decision.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-8a23b026f590",
+              "root_cause_key": "development-locale-missing-key-diagnostics",
+              "obligation_id": "dimension:authority",
+              "summary": "Medium severity: the localization foundation makes an unknown key visible but does not record it in development, violating the DESIGN.md missing-key diagnostic requirement and leaving future domain-page translation omissions without a reliable development signal.",
+              "evidence": "i18n.ts:263-275 defines no development-only debug/logger/missingKey handler. An independent execution of i18next with the same configured options resolved an unknown settings key to its raw key while reporting debug=false, saveMissing=false, no missingKey event, and no logger calls. The current test at i18n.test.ts:68-72 asserts the visible miss only, so it cannot detect the absent recording behavior.",
+              "required_fix": "Add a deliberate development-only missing-key diagnostic sink (for example a configured missing-key handler or logger that records namespace and key) while retaining the production en-US fallback and visible nonblank behavior. Add a regression test that an unrelated missing key reaches that diagnostic sink.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-94808a815ee9",
+              "root_cause_key": "dark-action-control-text-contrast",
+              "obligation_id": "dimension:authority",
+              "summary": "High severity: the reusable dark-mode action Button and selected language control render white text on the authoritative light-blue action token at 2.24:1 contrast, materially failing the required WCAG 2.2 AA text contrast.",
+              "evidence": "styles.css:50-59 maps --oac-color-action to #6DB1FF in dark mode, while styles.css:80 and :118 retain --oac-color-white for action Button and selected radio text. Independent Chromium execution with prefers-color-scheme: dark measured rgb(109, 177, 255) backgrounds and rgb(255, 255, 255) text for both controls. Independent WCAG contrast calculation yielded 2.24:1, below the 4.5:1 ordinary-text requirement in DESIGN.md:551-566 and contrary to the independent dark semantic-token requirement at DESIGN.md:215.",
+              "required_fix": "Define and use an accessible on-action foreground token for dark mode (a dark foreground on #6DB1FF, or an adjusted dark action background) consistently for Button and selected LanguageSegmentedControl states. Add a dark-mode browser regression asserting computed colors and at least 4.5:1 contrast.",
+              "status": "open",
+              "classification": "new"
+            }
+          ]
+        },
+        {
+          "round": 2,
+          "subject_digest": "9f80d05c84efeaf80edd67895174ca3c4cc9b2aa043c69ffa154ac50b0aa14b4",
+          "report_digest": "fe0ba5fd7418d0c7c20992373139dcf6491dfd2a7e086f4d6c072e2db53d8415",
+          "verdict": "reject",
+          "obligation_results": {
+            "dimension:authority": "fail",
+            "dimension:structure": "pass",
+            "dimension:execution": "pass",
+            "dimension:ownership": "fail",
+            "dimension:evidence": "pass",
+            "dimension:regression": "fail",
+            "integration:ui-foundation-gate": "pass"
+          },
+          "new_count": 2,
+          "fixed_count": 2,
+          "regressed_count": 0,
+          "unchanged_count": 1,
+          "open_count": 3,
+          "prior_open_blocker_ids": [
+            "BLK-447d039c1c97",
+            "BLK-8a23b026f590",
+            "BLK-94808a815ee9"
+          ],
+          "open_blocker_ids": [
+            "BLK-42df3dcd0777",
+            "BLK-447d039c1c97",
+            "BLK-aabddbd4879f"
+          ],
+          "reported_blocker_ids": [
+            "BLK-42df3dcd0777",
+            "BLK-447d039c1c97",
+            "BLK-aabddbd4879f"
+          ],
+          "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+          "blocker_facts": [
+            {
+              "blocker_id": "BLK-42df3dcd0777",
+              "root_cause_key": "unresolved-prior-authority-and-scope-regression",
+              "obligation_id": "dimension:regression",
+              "summary": "The submitted head does not close the previously recorded authenticated-locale authority blocker or the previously recorded release-tooling ownership concern; it changes their presentation/implementation but leaves the underlying boundary decisions unresolved.",
+              "evidence": "BLK-447d039c1c97 remains open under the authority result above: the current account menu has no authenticated language action or published persistence path, and no owner decision or design-copy synchronization was found. The prior issue comments also explicitly recorded the release-packager ownership decision as missing, while the current PR still changes scripts/release/package_component.py and tests/release-tooling/**. Independent current-head tests pass, but passing tests do not resolve these prior authority and ownership blockers.",
+              "required_fix": "Close the product/identity locale decision and the release-tooling ownership handoff as explicit artifacts, then rerun the review against the resulting scope and authoritative behavior.",
+              "status": "open",
+              "classification": "new"
+            },
+            {
+              "blocker_id": "BLK-447d039c1c97",
+              "root_cause_key": "authenticated-account-language-settings-dead-end",
+              "obligation_id": "dimension:authority",
+              "summary": "The submitted head removes the old Settings link but still does not deliver the authenticated account-language setting required by DESIGN.md, and it presents a deferred behavior without an owner-approved product/API decision or synchronized external copy.",
+              "evidence": "DESIGN.md:574-590 requires the saved user preference to win locale resolution and places the language setting in the authenticated account menu. Current ConsoleShell.tsx:124-127 renders only the account-language text and languageManagedInSettings notice; ConsoleSession.ts:21-23 exposes only readConsoleSession. Current browser coverage confirms the authenticated menu has no radio and no Settings link. The contract's scope_paths and source_of_truth were not updated, and no decision artifact appears in current work-show context or the reviewed comment history.",
+              "required_fix": "Obtain and record the product/identity-owned decision. If authenticated locale is in this delivery, publish the account-locale use case through the approved API, define error/concurrency/recovery semantics, and prove the account-menu action end-to-end. If it is intentionally deferred, update the owning DESIGN.md, acceptance/onboarding/support copy and contract scope to say so, and keep the account menu explicitly non-actionable without claiming that the preference is managed in an unavailable Settings surface.",
+              "status": "open",
+              "classification": "unchanged",
+              "last_evidence": "The old nonfunctional Settings link is gone and the browser regression now proves that no false link is exposed. That removes the literal dead-end control, but it does not satisfy DESIGN.md:574-590: the authenticated account menu still has no language action or persistence path, and the current unavailable notice has no product/identity decision or synchronized DESIGN.md, acceptance, onboarding, or support copy behind it. The account-language behavior is therefore still an unresolved authority/product boundary, not a confirmed pass."
+            },
+            {
+              "blocker_id": "BLK-8a23b026f590",
+              "root_cause_key": "development-locale-missing-key-diagnostics",
+              "obligation_id": "dimension:authority",
+              "summary": "Medium severity: the localization foundation makes an unknown key visible but does not record it in development, violating the DESIGN.md missing-key diagnostic requirement and leaving future domain-page translation omissions without a reliable development signal.",
+              "evidence": "i18n.ts:263-275 defines no development-only debug/logger/missingKey handler. An independent execution of i18next with the same configured options resolved an unknown settings key to its raw key while reporting debug=false, saveMissing=false, no missingKey event, and no logger calls. The current test at i18n.test.ts:68-72 asserts the visible miss only, so it cannot detect the absent recording behavior.",
+              "required_fix": "Add a deliberate development-only missing-key diagnostic sink (for example a configured missing-key handler or logger that records namespace and key) while retaining the production en-US fallback and visible nonblank behavior. Add a regression test that an unrelated missing key reaches that diagnostic sink.",
+              "status": "fixed",
+              "classification": "fixed",
+              "last_evidence": "i18n.ts:288-294 enables saveMissing and records namespace/key/locale in a development-only missing-key sink. The scoped Console tests passed 12/12 and directly observed settings:missingDomainKey in the diagnostic sink; the run also emitted the expected development warning while unrelated namespace misses stayed visible as raw keys."
+            },
+            {
+              "blocker_id": "BLK-94808a815ee9",
+              "root_cause_key": "dark-action-control-text-contrast",
+              "obligation_id": "dimension:authority",
+              "summary": "High severity: the reusable dark-mode action Button and selected language control render white text on the authoritative light-blue action token at 2.24:1 contrast, materially failing the required WCAG 2.2 AA text contrast.",
+              "evidence": "styles.css:50-59 maps --oac-color-action to #6DB1FF in dark mode, while styles.css:80 and :118 retain --oac-color-white for action Button and selected radio text. Independent Chromium execution with prefers-color-scheme: dark measured rgb(109, 177, 255) backgrounds and rgb(255, 255, 255) text for both controls. Independent WCAG contrast calculation yielded 2.24:1, below the 4.5:1 ordinary-text requirement in DESIGN.md:551-566 and contrary to the independent dark semantic-token requirement at DESIGN.md:215.",
+              "required_fix": "Define and use an accessible on-action foreground token for dark mode (a dark foreground on #6DB1FF, or an adjusted dark action background) consistently for Button and selected LanguageSegmentedControl states. Add a dark-mode browser regression asserting computed colors and at least 4.5:1 contrast.",
+              "status": "fixed",
+              "classification": "fixed",
+              "last_evidence": "styles.css:44-60 and :64-72 define dark action #6DB1FF with on-action #1D1D1F, and Button/radio selected states consume that foreground. The independent UI Playwright run passed the dark-mode computed-color assertions and the in-browser WCAG calculation at >=4.5:1; the UI suite and both builds also passed."
+            },
+            {
+              "blocker_id": "BLK-aabddbd4879f",
+              "root_cause_key": "cross-owner-scope-and-release-tooling-changes",
+              "obligation_id": "dimension:ownership",
+              "summary": "The PR crosses declared UI-foundation and ownership boundaries by modifying the console-shell surface and release-tooling implementation/tests without an approved handoff or contract amendment.",
+              "evidence": "git diff cbc0c410d211015649da485e4fb7dd862f73514b...f4b69f132b39dd114df202e803c47a7656612104 reports 50 changed files and 17 paths outside the contract scope. The source ownership catalog assigns apps/console/src/shell to console-shell and scripts/release/package_component.py plus tests/release-tooling to system-release-tooling. The PR changes all of those areas, but does not change the ownership catalog/baseline or add an ownership amendment. The release helper change is the GENERATED_SOURCE_DIRECTORIES behavior, which is not a UI-foundation source change and was explicitly called unapproved in prior issue comments.",
+              "required_fix": "Split console-shell and release-tooling changes into their owning deliveries, or obtain explicit owner-approved scope/ownership amendments and record the handoff before merging. The UI-foundation PR should not silently become the release packager owner or alter adjacent Console shell behavior.",
+              "status": "open",
+              "classification": "new"
+            }
+          ]
+        },
+        {
+          "round": 3,
+          "subject_digest": "6018b866b7d79c6e111e3dec3fc7b1c68e46cf4967a6a01493c537d336f95662",
+          "report_digest": "91322c9691be8ca198b513b00cb3a188a9332f5144adab0403f5365e116e1fd3",
+          "verdict": "reject",
+          "obligation_results": {
+            "dimension:authority": "fail",
+            "dimension:structure": "pass",
+            "dimension:execution": "pass",
+            "dimension:ownership": "fail",
+            "dimension:evidence": "pass",
+            "dimension:regression": "fail",
+            "integration:ui-foundation-gate": "pass"
+          },
+          "new_count": 1,
+          "fixed_count": 0,
+          "regressed_count": 0,
+          "unchanged_count": 3,
+          "open_count": 4,
+          "prior_open_blocker_ids": [
+            "BLK-42df3dcd0777",
+            "BLK-447d039c1c97",
+            "BLK-aabddbd4879f"
+          ],
+          "open_blocker_ids": [
+            "BLK-42df3dcd0777",
+            "BLK-447d039c1c97",
+            "BLK-aabddbd4879f",
+            "BLK-f66246869bed"
+          ],
+          "reported_blocker_ids": [
+            "BLK-42df3dcd0777",
+            "BLK-447d039c1c97",
+            "BLK-aabddbd4879f",
+            "BLK-f66246869bed"
+          ],
+          "blocker_facts_schema": "omac.review-cycle-blocker-facts/v1",
+          "blocker_facts": [
+            {
+              "blocker_id": "BLK-42df3dcd0777",
+              "root_cause_key": "unresolved-prior-authority-and-scope-regression",
+              "obligation_id": "dimension:regression",
+              "summary": "The submitted head still does not close the previously recorded authenticated-locale authority blocker or the release-tooling ownership concern; presentation changes and passing tests do not resolve either boundary decision.",
+              "evidence": "BLK-447d039c1c97 and BLK-aabddbd4879f remain unresolved in this independent review: the account menu has no language action or published persistence path, and the PR still changes system-release-tooling paths without an approved handoff.",
+              "required_fix": "Close the product/identity locale decision and release-tooling ownership handoff as explicit artifacts, then rerun review against the resulting authoritative behavior and narrowed or amended scope.",
+              "status": "open",
+              "classification": "unchanged",
+              "last_evidence": "The current head still lacks the product/identity locale decision and the release-tooling ownership handoff. Passing current-head tests do not resolve either boundary, and both affected cross-owner paths remain in the complete PR diff."
+            },
+            {
+              "blocker_id": "BLK-447d039c1c97",
+              "root_cause_key": "authenticated-account-language-settings-dead-end",
+              "obligation_id": "dimension:authority",
+              "summary": "The current head removes the dead Settings link but still does not deliver the authenticated account-language setting required by DESIGN.md; it substitutes a deferred unavailable-service notice without an owner-approved product/API decision or synchronized user-facing documentation.",
+              "evidence": "DESIGN.md:574-590 requires the saved user preference to win resolution and places a language setting in the authenticated account menu. ConsoleShell.tsx:122-128 renders only current text plus an unavailable-service notice, while ConsoleSession.ts:21-23 exposes only readConsoleSession. The complete PR diff has no owning-design, acceptance, onboarding, or support update, and current work-show context contains no product/identity decision artifact.",
+              "required_fix": "Obtain and record the product/identity-owned decision. If this delivery owns authenticated locale, publish the account-locale use case through the approved API, define failure/concurrency/recovery semantics, and prove the account-menu action end-to-end. If deferred, update DESIGN.md, acceptance/onboarding/support copy and contract scope to state the decision, keeping the account menu explicitly non-actionable without claiming an unavailable settings surface.",
+              "status": "open",
+              "classification": "unchanged",
+              "last_evidence": "The literal Settings link was removed, but DESIGN.md:574-590 still requires an authenticated account-menu language setting and saved preference. ConsoleShell.tsx now exposes an unavailable-service notice instead of an action, ConsoleSessionPort remains read-only, and no owner decision or synchronized design/acceptance/onboarding material exists."
+            },
+            {
+              "blocker_id": "BLK-aabddbd4879f",
+              "root_cause_key": "cross-owner-scope-and-release-tooling-changes",
+              "obligation_id": "dimension:ownership",
+              "summary": "The PR crosses declared UI-foundation and ownership boundaries by changing the console-shell surface and release-tooling implementation/tests without an approved handoff or contract amendment.",
+              "evidence": "The contract scope_paths contain only three UI-foundation roots, but git diff cbc0c410d211015649da485e4fb7dd862f73514b...f4b69f132b39dd114df202e803c47a7656612104 has 50 files and 17 paths outside those roots. The ownership catalog assigns apps/console/src/shell to console-shell and scripts/release/package_component.py plus tests/release-tooling to system-release-tooling. No amendment, handoff, or ownership-catalog update is present; prior review context explicitly records the release-packager decision as unapproved.",
+              "required_fix": "Split console-shell and release-tooling changes into their owning deliveries, or obtain explicit owner-approved scope and ownership amendments before merging. The UI-foundation PR must not silently take responsibility for release-packager behavior or adjacent Console-shell product behavior.",
+              "status": "open",
+              "classification": "unchanged",
+              "last_evidence": "The PR still changes the console-shell and system-release-tooling owners without an approved handoff or contract amendment. The independently calculated diff has 17 paths outside the declared scope, including the two release-tooling paths."
+            },
+            {
+              "blocker_id": "BLK-f66246869bed",
+              "root_cause_key": "dark-mode-interaction-token-contract-breaks-wcag",
+              "obligation_id": "dimension:authority",
+              "summary": "The UI foundation's dark-mode interaction tokens do not meet WCAG AA on actual Console system-dark rendering or on several hover/pressed states, despite the selected-action fixture test passing.",
+              "evidence": "packages/ui/src/styles.css:51-61 scopes dark action only in an earlier :root media rule, while apps/console/src/main.tsx:1,4 imports the UI stylesheet before the later same-specificity foundations/oac.css:1-32 declaration. The declared Console production build emitted that ordering: its dark media action declaration precedes a later base action #006EDB declaration, leaving #006EDB on #1D1D1F at 3.41:1 in system dark mode. styles.css:97-106 and 129-131 also retain light hover/subtle colors: #0058B5/#1D1D1F is 2.45:1, #E8F2FF/#6DB1FF is 1.98:1, and #E8F2FF/#F5F5F7 is 1.04:1. UI Playwright coverage switches only data-theme at ui-foundation.spec.ts:32 and does not assert dark hover/pressed or real Console prefers-color-scheme behavior.",
+              "required_fix": "Establish one cascading token source for Console so system-dark overrides cannot be overwritten by a later base :root declaration. Define compatible dark action-hover and action-subtle/foreground tokens for every rendered interaction state, then extend the existing browser fixtures to emulate prefers-color-scheme: dark in the Console consumer and assert WCAG contrast for default, hover, pressed, selected, and unselected controls.",
+              "status": "open",
+              "classification": "new"
+            }
+          ]
+        }
+      ],
+      "blockers": [
+        {
+          "blocker_id": "BLK-42df3dcd0777",
+          "root_cause_key": "unresolved-prior-authority-and-scope-regression",
+          "obligation_id": "dimension:regression",
+          "summary": "The submitted head still does not close the previously recorded authenticated-locale authority blocker or the release-tooling ownership concern; presentation changes and passing tests do not resolve either boundary decision.",
+          "evidence": "BLK-447d039c1c97 and BLK-aabddbd4879f remain unresolved in this independent review: the account menu has no language action or published persistence path, and the PR still changes system-release-tooling paths without an approved handoff.",
+          "required_fix": "Close the product/identity locale decision and release-tooling ownership handoff as explicit artifacts, then rerun review against the resulting authoritative behavior and narrowed or amended scope.",
+          "status": "open",
+          "classification": "unchanged",
+          "first_seen_round": 2,
+          "last_seen_round": 3,
+          "seen_count": 2,
+          "last_evidence": "The current head still lacks the product/identity locale decision and the release-tooling ownership handoff. Passing current-head tests do not resolve either boundary, and both affected cross-owner paths remain in the complete PR diff."
+        },
+        {
+          "blocker_id": "BLK-447d039c1c97",
+          "root_cause_key": "authenticated-account-language-settings-dead-end",
+          "obligation_id": "dimension:authority",
+          "summary": "The current head removes the dead Settings link but still does not deliver the authenticated account-language setting required by DESIGN.md; it substitutes a deferred unavailable-service notice without an owner-approved product/API decision or synchronized user-facing documentation.",
+          "evidence": "DESIGN.md:574-590 requires the saved user preference to win resolution and places a language setting in the authenticated account menu. ConsoleShell.tsx:122-128 renders only current text plus an unavailable-service notice, while ConsoleSession.ts:21-23 exposes only readConsoleSession. The complete PR diff has no owning-design, acceptance, onboarding, or support update, and current work-show context contains no product/identity decision artifact.",
+          "required_fix": "Obtain and record the product/identity-owned decision. If this delivery owns authenticated locale, publish the account-locale use case through the approved API, define failure/concurrency/recovery semantics, and prove the account-menu action end-to-end. If deferred, update DESIGN.md, acceptance/onboarding/support copy and contract scope to state the decision, keeping the account menu explicitly non-actionable without claiming an unavailable settings surface.",
+          "status": "open",
+          "classification": "unchanged",
+          "first_seen_round": 1,
+          "last_seen_round": 3,
+          "seen_count": 3,
+          "last_evidence": "The literal Settings link was removed, but DESIGN.md:574-590 still requires an authenticated account-menu language setting and saved preference. ConsoleShell.tsx now exposes an unavailable-service notice instead of an action, ConsoleSessionPort remains read-only, and no owner decision or synchronized design/acceptance/onboarding material exists."
+        },
+        {
+          "blocker_id": "BLK-8a23b026f590",
+          "root_cause_key": "development-locale-missing-key-diagnostics",
+          "obligation_id": "dimension:authority",
+          "summary": "Medium severity: the localization foundation makes an unknown key visible but does not record it in development, violating the DESIGN.md missing-key diagnostic requirement and leaving future domain-page translation omissions without a reliable development signal.",
+          "evidence": "i18n.ts:263-275 defines no development-only debug/logger/missingKey handler. An independent execution of i18next with the same configured options resolved an unknown settings key to its raw key while reporting debug=false, saveMissing=false, no missingKey event, and no logger calls. The current test at i18n.test.ts:68-72 asserts the visible miss only, so it cannot detect the absent recording behavior.",
+          "required_fix": "Add a deliberate development-only missing-key diagnostic sink (for example a configured missing-key handler or logger that records namespace and key) while retaining the production en-US fallback and visible nonblank behavior. Add a regression test that an unrelated missing key reaches that diagnostic sink.",
+          "status": "fixed",
+          "classification": "fixed",
+          "first_seen_round": 1,
+          "last_seen_round": 2,
+          "seen_count": 1,
+          "last_evidence": "i18n.ts:288-294 enables saveMissing and records namespace/key/locale in a development-only missing-key sink. The scoped Console tests passed 12/12 and directly observed settings:missingDomainKey in the diagnostic sink; the run also emitted the expected development warning while unrelated namespace misses stayed visible as raw keys."
+        },
+        {
+          "blocker_id": "BLK-94808a815ee9",
+          "root_cause_key": "dark-action-control-text-contrast",
+          "obligation_id": "dimension:authority",
+          "summary": "High severity: the reusable dark-mode action Button and selected language control render white text on the authoritative light-blue action token at 2.24:1 contrast, materially failing the required WCAG 2.2 AA text contrast.",
+          "evidence": "styles.css:50-59 maps --oac-color-action to #6DB1FF in dark mode, while styles.css:80 and :118 retain --oac-color-white for action Button and selected radio text. Independent Chromium execution with prefers-color-scheme: dark measured rgb(109, 177, 255) backgrounds and rgb(255, 255, 255) text for both controls. Independent WCAG contrast calculation yielded 2.24:1, below the 4.5:1 ordinary-text requirement in DESIGN.md:551-566 and contrary to the independent dark semantic-token requirement at DESIGN.md:215.",
+          "required_fix": "Define and use an accessible on-action foreground token for dark mode (a dark foreground on #6DB1FF, or an adjusted dark action background) consistently for Button and selected LanguageSegmentedControl states. Add a dark-mode browser regression asserting computed colors and at least 4.5:1 contrast.",
+          "status": "fixed",
+          "classification": "fixed",
+          "first_seen_round": 1,
+          "last_seen_round": 2,
+          "seen_count": 1,
+          "last_evidence": "styles.css:44-60 and :64-72 define dark action #6DB1FF with on-action #1D1D1F, and Button/radio selected states consume that foreground. The independent UI Playwright run passed the dark-mode computed-color assertions and the in-browser WCAG calculation at >=4.5:1; the UI suite and both builds also passed."
+        },
+        {
+          "blocker_id": "BLK-aabddbd4879f",
+          "root_cause_key": "cross-owner-scope-and-release-tooling-changes",
+          "obligation_id": "dimension:ownership",
+          "summary": "The PR crosses declared UI-foundation and ownership boundaries by changing the console-shell surface and release-tooling implementation/tests without an approved handoff or contract amendment.",
+          "evidence": "The contract scope_paths contain only three UI-foundation roots, but git diff cbc0c410d211015649da485e4fb7dd862f73514b...f4b69f132b39dd114df202e803c47a7656612104 has 50 files and 17 paths outside those roots. The ownership catalog assigns apps/console/src/shell to console-shell and scripts/release/package_component.py plus tests/release-tooling to system-release-tooling. No amendment, handoff, or ownership-catalog update is present; prior review context explicitly records the release-packager decision as unapproved.",
+          "required_fix": "Split console-shell and release-tooling changes into their owning deliveries, or obtain explicit owner-approved scope and ownership amendments before merging. The UI-foundation PR must not silently take responsibility for release-packager behavior or adjacent Console-shell product behavior.",
+          "status": "open",
+          "classification": "unchanged",
+          "first_seen_round": 2,
+          "last_seen_round": 3,
+          "seen_count": 2,
+          "last_evidence": "The PR still changes the console-shell and system-release-tooling owners without an approved handoff or contract amendment. The independently calculated diff has 17 paths outside the declared scope, including the two release-tooling paths."
+        },
+        {
+          "blocker_id": "BLK-f66246869bed",
+          "root_cause_key": "dark-mode-interaction-token-contract-breaks-wcag",
+          "obligation_id": "dimension:authority",
+          "summary": "The UI foundation's dark-mode interaction tokens do not meet WCAG AA on actual Console system-dark rendering or on several hover/pressed states, despite the selected-action fixture test passing.",
+          "evidence": "packages/ui/src/styles.css:51-61 scopes dark action only in an earlier :root media rule, while apps/console/src/main.tsx:1,4 imports the UI stylesheet before the later same-specificity foundations/oac.css:1-32 declaration. The declared Console production build emitted that ordering: its dark media action declaration precedes a later base action #006EDB declaration, leaving #006EDB on #1D1D1F at 3.41:1 in system dark mode. styles.css:97-106 and 129-131 also retain light hover/subtle colors: #0058B5/#1D1D1F is 2.45:1, #E8F2FF/#6DB1FF is 1.98:1, and #E8F2FF/#F5F5F7 is 1.04:1. UI Playwright coverage switches only data-theme at ui-foundation.spec.ts:32 and does not assert dark hover/pressed or real Console prefers-color-scheme behavior.",
+          "required_fix": "Establish one cascading token source for Console so system-dark overrides cannot be overwritten by a later base :root declaration. Define compatible dark action-hover and action-subtle/foreground tokens for every rendered interaction state, then extend the existing browser fixtures to emulate prefers-color-scheme: dark in the Console consumer and assert WCAG contrast for default, hover, pressed, selected, and unselected controls.",
+          "status": "open",
+          "classification": "new",
+          "first_seen_round": 3,
+          "last_seen_round": 3,
+          "seen_count": 1
+        }
+      ]
+    },
+    "review_ledger_ref": {
+      "comment_id": "43a2a32c-dd55-48d7-9d83-569058353654",
+      "attachment_id": "019fe6ab-7917-7c88-8cc3-802017e9b493",
+      "sha256": "e9cb60fbaf11b0e0f3b3c3ea01aae55b92f567079f96c686bd412380fb84c2a3",
+      "bytes": 31324,
+      "filename": "omac-review-ledger-e9cb60fbaf11.yaml"
+    },
+    "review_generation": "amendment-0d5dce7a53ee0486504ae3cf",
+    "review_ledger_generation": "authoring-7fc357f65b5f7d2ceb2a6b77",
+    "review_continuation": null,
+    "reviewer_run_baseline": null,
+    "worker_handoff": null,
+    "delivery_identity": null,
+    "decision_required": null,
+    "amendment_attempt": null,
+    "contract": {
+      "objective": "Deliver reusable localization, WCAG 2.2 AA tokens and accessible primitives, register @oac/ui in the pnpm workspace, and wire the Console stylesheet cascade, while removing every console-shell and release-tooling path from the preserved UI PR; authenticated account-locale persistence and API behavior remain with the identity chain.",
+      "non_goals": [
+        "Do not modify apps/console/src/shell/**, scripts/release/**, tests/release-tooling/**, or source outside the three UI-owned roots plus pnpm-workspace.yaml, pnpm-lock.yaml, apps/console/package.json, apps/console/src/main.tsx, and apps/console/src/foundations/**.",
+        "Do not implement authenticated preference persistence, the northbound account-locale API, or account-menu integration in this node.",
+        "Do not weaken WCAG 2.2 AA contrast, keyboard, focus, locale fallback, or missing-key behavior to preserve the rejected PR.",
+        "Do not change adjacent domain ownership or introduce a competing source of truth."
+      ],
+      "verification_commands": [
+        "python3 -c \"from pathlib import Path; import hashlib; p=Path('account-locale-ownership-decision.md'); assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()=='2ee85c6551db299f14f4903e5b0086e678208b38c6a3cba276c8a32a5f1a5be6'\"",
+        "OMAC_PYTHON=\"$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).read_text().splitlines()[0][2:])' \"$(command -v omac)\")\" && \"$OMAC_PYTHON\" -c 'from pathlib import Path; import hashlib,json,subprocess,tempfile; from omac.core.acceptance import load_acceptance_doc_file; from omac.core.amendment import validate_proposal; from omac.core.manifest import load_manifest; lp=Path(\"aiteam-906-delivery-lock.json\"); lock=json.loads(lp.read_text()); assert lock[\"schema\"]==\"omac.amendment-delivery-lock/v1\"; keys=(\"proposal\",\"authority\",\"base_manifest\",\"acceptance\"); sha=lambda b: hashlib.sha256(b).hexdigest(); head=subprocess.check_output([\"git\",\"rev-parse\",\"HEAD\"],text=True).strip(); base=lock[\"immutable_base\"]; assert subprocess.check_output([\"git\",\"rev-parse\",base[\"ref\"]],text=True).strip()==base[\"commit\"]; assert subprocess.check_output([\"git\",\"rev-parse\",base[\"commit\"]+\"^{tree}\"],text=True).strip()==base[\"tree\"]; show=lambda r,p: subprocess.check_output([\"git\",\"show\",r+\":\"+p]); blobs={\"proposal\":show(head,lock[\"proposal\"][\"path\"]),\"authority\":show(base[\"commit\"],lock[\"authority\"][\"path\"]),\"base_manifest\":show(base[\"commit\"],lock[\"base_manifest\"][\"path\"]),\"acceptance\":show(base[\"commit\"],lock[\"acceptance\"][\"path\"])}; lock_blob=show(head,lp.as_posix()); assert all(sha(blobs[k])==lock[k][\"sha256\"] for k in keys); assert all(Path(lock[k][\"path\"]).read_bytes()==blobs[k] for k in keys) and lp.read_bytes()==lock_blob; td=tempfile.TemporaryDirectory(); root=Path(td.name); put=lambda p,b: ((q:=root/p).parent.mkdir(parents=True,exist_ok=True),q.write_bytes(b)); [put(lock[k][\"path\"],blobs[k]) for k in keys]; mp=root/lock[\"base_manifest\"][\"path\"]; m=load_manifest(str(mp)); ap=root/lock[\"acceptance\"][\"path\"]; assert (Path(lock[\"base_manifest\"][\"path\"]).parent/str(m.meta[\"acceptance_file\"])).as_posix()==lock[\"acceptance\"][\"path\"]; acceptance=load_acceptance_doc_file(str(ap)); pool={n.worker for n in m.nodes.values()}|{n.reviewer for n in m.nodes.values() if n.reviewer}; errors=validate_proposal(m,blobs[\"proposal\"].decode(),pool,acceptance=acceptance); report={\"schema\":\"omac.amendment-candidate-validation-evidence/v1\",\"applied_source_revision\":head,\"immutable_base_ref\":base[\"ref\"],\"immutable_base_commit\":base[\"commit\"],\"immutable_base_tree\":base[\"tree\"],\"proposal_sha256\":sha(blobs[\"proposal\"]),\"authority_sha256\":sha(blobs[\"authority\"]),\"base_manifest_sha256\":sha(blobs[\"base_manifest\"]),\"acceptance_sha256\":sha(blobs[\"acceptance\"]),\"delivery_lock_sha256\":sha(lock_blob),\"validation_errors\":len(errors),\"manifest_node_count\":len(m.nodes),\"agent_pool_size\":len(pool)}; out=Path(\"artifacts/aiteam-906/candidate-validation.json\"); out.parent.mkdir(parents=True,exist_ok=True); out.write_text(json.dumps(report,sort_keys=True)+\"\\n\"); print(json.dumps(report,sort_keys=True)); td.cleanup(); raise SystemExit(bool(errors))'",
+        "mkdir -p artifacts/ui-foundation/ui artifacts/ui-foundation/console && pnpm --filter @oac/ui exec vitest run src --coverage --coverage.thresholds.lines=90 --coverage.include=\"src/**\" --coverage.reportsDirectory=$PWD/artifacts/ui-foundation/ui/coverage --coverage.reporter=json-summary",
+        "python3 -c \"import json; d=json.load(open('artifacts/ui-foundation/ui/coverage/coverage-summary.json')); x=d['total']['lines']; assert int(x['total'])>0 and float(x['pct']) >= 90\"",
+        "pnpm --filter console exec vitest run src/i18n src/test --coverage --coverage.thresholds.lines=90 --coverage.include=\"src/i18n/**\" --coverage.include=\"src/test/**\" --coverage.reportsDirectory=$PWD/artifacts/ui-foundation/console/coverage --coverage.reporter=json-summary",
+        "python3 -c \"import json; d=json.load(open('artifacts/ui-foundation/console/coverage/coverage-summary.json')); x=d['total']['lines']; assert int(x['total'])>0 and float(x['pct']) >= 90\"",
+        "pnpm --filter @oac/ui exec playwright test --grep \"ui-foundation|system dark|hover contrast|keyboard language\" --reporter=junit > artifacts/ui-foundation/playwright-junit.xml",
+        "python3 -c \"import xml.etree.ElementTree as E; r=E.parse('artifacts/ui-foundation/playwright-junit.xml').getroot(); c=list(r.iter('testcase')); names=' '.join(x.attrib.get('name','') for x in c).lower(); assert c and all(k in names for k in ('system dark','hover contrast','keyboard language')) and not any(x.find('skipped') is not None or x.find('failure') is not None or x.find('error') is not None for x in c)\"",
+        "pnpm --filter @oac/ui build && pnpm --filter console build",
+        "python3 -c \"from pathlib import Path; import json; w=Path('pnpm-workspace.yaml').read_text(); p=json.loads(Path('apps/console/package.json').read_text()); m=Path('apps/console/src/main.tsx').read_text(); assert '- packages/*' in w; assert p['dependencies'].get('@oac/ui')=='workspace:*'; assert '@oac/ui' in m and './foundations/oac.css' in m and m.index('./foundations/oac.css') < m.index('@oac/ui')\"",
+        "python3 -c \"import subprocess; base=subprocess.check_output(['git','merge-base','HEAD','origin/main'],text=True).strip(); paths=[p for p in subprocess.check_output(['git','diff','--name-only',base+'...HEAD'],text=True).splitlines() if p]; prefixes=('packages/ui/','apps/console/src/i18n/','apps/console/src/test/','apps/console/src/foundations/'); exact={'pnpm-workspace.yaml','pnpm-lock.yaml','apps/console/package.json','apps/console/src/main.tsx','verification.yaml'}; bad=[p for p in paths if p not in exact and not p.startswith(prefixes)]; assert not bad, f'cross-owner paths remain: {bad}'\"",
+        "python3 scripts/release/package_component.py --component ui-foundation --kind console-foundation-source --input packages/ui --input apps/console/src/i18n --input apps/console/src/test --input pnpm-workspace.yaml --input pnpm-lock.yaml --input apps/console/package.json --input apps/console/src/main.tsx --input apps/console/src/foundations --generated-input artifacts/identity-local/component-manifest.json --require-generated-input-digest --bundle artifacts/ui-foundation/source-bundle.tar.zst --component-manifest artifacts/ui-foundation/component-manifest.json --digest-output artifacts/ui-foundation/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --ownership-catalog contracts/release/source-ownership-catalog.yaml --ownership-amendment contracts/release/system-release-tooling-ownership.yaml --owner ui-foundation --require-all-owner-sources-accounted --require-existing-owner-root ui-foundation=pnpm-workspace.yaml --require-existing-owner-root ui-foundation=pnpm-lock.yaml --require-existing-owner-root ui-foundation=apps/console/package.json --require-existing-owner-root ui-foundation=apps/console/src/main.tsx --require-existing-owner-root 'ui-foundation=apps/console/src/foundations/**'",
+        "python3 -c \"from pathlib import Path; import hashlib,json; p=Path('artifacts/identity-local/component-manifest.json'); m=json.loads(Path('artifacts/ui-foundation/component-manifest.json').read_text()); rows={x['path']:x for x in m['files']}; r=rows['artifacts/identity-local/component-manifest.json']; assert r['sha256']==hashlib.sha256(p.read_bytes()).hexdigest()\""
+      ],
+      "integration_gates": [
+        {
+          "name": "ui-foundation-gate",
+          "layer": "L1",
+          "source_of_truth": [
+            "docs/design/frontend/DESIGN.md:L199-L382",
+            "docs/design/frontend/DESIGN.md:L519-L704",
+            "account-locale-ownership-decision.md",
+            "aiteam-906-delivery-lock.json"
+          ],
+          "delivery_goal": "Deliver reusable localization, WCAG 2.2 AA tokens and accessible primitives, register @oac/ui in the pnpm workspace, and wire the Console stylesheet cascade, while removing every console-shell and release-tooling path from the preserved UI PR; authenticated account-locale persistence and API behavior remain with the identity chain.",
+          "covers": [
+            "ui-foundation"
+          ],
+          "acceptance_refs": [
+            "UJ-PUBLIC-ENTRY-001"
+          ],
+          "commands": [
+            "python3 -c \"from pathlib import Path; import hashlib; p=Path('account-locale-ownership-decision.md'); assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()=='2ee85c6551db299f14f4903e5b0086e678208b38c6a3cba276c8a32a5f1a5be6'\"",
+            "OMAC_PYTHON=\"$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).read_text().splitlines()[0][2:])' \"$(command -v omac)\")\" && \"$OMAC_PYTHON\" -c 'from pathlib import Path; import hashlib,json,subprocess,tempfile; from omac.core.acceptance import load_acceptance_doc_file; from omac.core.amendment import validate_proposal; from omac.core.manifest import load_manifest; lp=Path(\"aiteam-906-delivery-lock.json\"); lock=json.loads(lp.read_text()); assert lock[\"schema\"]==\"omac.amendment-delivery-lock/v1\"; keys=(\"proposal\",\"authority\",\"base_manifest\",\"acceptance\"); sha=lambda b: hashlib.sha256(b).hexdigest(); head=subprocess.check_output([\"git\",\"rev-parse\",\"HEAD\"],text=True).strip(); base=lock[\"immutable_base\"]; assert subprocess.check_output([\"git\",\"rev-parse\",base[\"ref\"]],text=True).strip()==base[\"commit\"]; assert subprocess.check_output([\"git\",\"rev-parse\",base[\"commit\"]+\"^{tree}\"],text=True).strip()==base[\"tree\"]; show=lambda r,p: subprocess.check_output([\"git\",\"show\",r+\":\"+p]); blobs={\"proposal\":show(head,lock[\"proposal\"][\"path\"]),\"authority\":show(base[\"commit\"],lock[\"authority\"][\"path\"]),\"base_manifest\":show(base[\"commit\"],lock[\"base_manifest\"][\"path\"]),\"acceptance\":show(base[\"commit\"],lock[\"acceptance\"][\"path\"])}; lock_blob=show(head,lp.as_posix()); assert all(sha(blobs[k])==lock[k][\"sha256\"] for k in keys); assert all(Path(lock[k][\"path\"]).read_bytes()==blobs[k] for k in keys) and lp.read_bytes()==lock_blob; td=tempfile.TemporaryDirectory(); root=Path(td.name); put=lambda p,b: ((q:=root/p).parent.mkdir(parents=True,exist_ok=True),q.write_bytes(b)); [put(lock[k][\"path\"],blobs[k]) for k in keys]; mp=root/lock[\"base_manifest\"][\"path\"]; m=load_manifest(str(mp)); ap=root/lock[\"acceptance\"][\"path\"]; assert (Path(lock[\"base_manifest\"][\"path\"]).parent/str(m.meta[\"acceptance_file\"])).as_posix()==lock[\"acceptance\"][\"path\"]; acceptance=load_acceptance_doc_file(str(ap)); pool={n.worker for n in m.nodes.values()}|{n.reviewer for n in m.nodes.values() if n.reviewer}; errors=validate_proposal(m,blobs[\"proposal\"].decode(),pool,acceptance=acceptance); report={\"schema\":\"omac.amendment-candidate-validation-evidence/v1\",\"applied_source_revision\":head,\"immutable_base_ref\":base[\"ref\"],\"immutable_base_commit\":base[\"commit\"],\"immutable_base_tree\":base[\"tree\"],\"proposal_sha256\":sha(blobs[\"proposal\"]),\"authority_sha256\":sha(blobs[\"authority\"]),\"base_manifest_sha256\":sha(blobs[\"base_manifest\"]),\"acceptance_sha256\":sha(blobs[\"acceptance\"]),\"delivery_lock_sha256\":sha(lock_blob),\"validation_errors\":len(errors),\"manifest_node_count\":len(m.nodes),\"agent_pool_size\":len(pool)}; out=Path(\"artifacts/aiteam-906/candidate-validation.json\"); out.parent.mkdir(parents=True,exist_ok=True); out.write_text(json.dumps(report,sort_keys=True)+\"\\n\"); print(json.dumps(report,sort_keys=True)); td.cleanup(); raise SystemExit(bool(errors))'",
+            "mkdir -p artifacts/ui-foundation/ui artifacts/ui-foundation/console && pnpm --filter @oac/ui exec vitest run src --coverage --coverage.thresholds.lines=90 --coverage.include=\"src/**\" --coverage.reportsDirectory=$PWD/artifacts/ui-foundation/ui/coverage --coverage.reporter=json-summary",
+            "python3 -c \"import json; d=json.load(open('artifacts/ui-foundation/ui/coverage/coverage-summary.json')); x=d['total']['lines']; assert int(x['total'])>0 and float(x['pct']) >= 90\"",
+            "pnpm --filter console exec vitest run src/i18n src/test --coverage --coverage.thresholds.lines=90 --coverage.include=\"src/i18n/**\" --coverage.include=\"src/test/**\" --coverage.reportsDirectory=$PWD/artifacts/ui-foundation/console/coverage --coverage.reporter=json-summary",
+            "python3 -c \"import json; d=json.load(open('artifacts/ui-foundation/console/coverage/coverage-summary.json')); x=d['total']['lines']; assert int(x['total'])>0 and float(x['pct']) >= 90\"",
+            "pnpm --filter @oac/ui exec playwright test --grep \"ui-foundation|system dark|hover contrast|keyboard language\" --reporter=junit > artifacts/ui-foundation/playwright-junit.xml",
+            "python3 -c \"import xml.etree.ElementTree as E; r=E.parse('artifacts/ui-foundation/playwright-junit.xml').getroot(); c=list(r.iter('testcase')); names=' '.join(x.attrib.get('name','') for x in c).lower(); assert c and all(k in names for k in ('system dark','hover contrast','keyboard language')) and not any(x.find('skipped') is not None or x.find('failure') is not None or x.find('error') is not None for x in c)\"",
+            "pnpm --filter @oac/ui build && pnpm --filter console build",
+            "python3 -c \"from pathlib import Path; import json; w=Path('pnpm-workspace.yaml').read_text(); p=json.loads(Path('apps/console/package.json').read_text()); m=Path('apps/console/src/main.tsx').read_text(); assert '- packages/*' in w; assert p['dependencies'].get('@oac/ui')=='workspace:*'; assert '@oac/ui' in m and './foundations/oac.css' in m and m.index('./foundations/oac.css') < m.index('@oac/ui')\"",
+            "python3 -c \"import subprocess; base=subprocess.check_output(['git','merge-base','HEAD','origin/main'],text=True).strip(); paths=[p for p in subprocess.check_output(['git','diff','--name-only',base+'...HEAD'],text=True).splitlines() if p]; prefixes=('packages/ui/','apps/console/src/i18n/','apps/console/src/test/','apps/console/src/foundations/'); exact={'pnpm-workspace.yaml','pnpm-lock.yaml','apps/console/package.json','apps/console/src/main.tsx','verification.yaml'}; bad=[p for p in paths if p not in exact and not p.startswith(prefixes)]; assert not bad, f'cross-owner paths remain: {bad}'\"",
+            "python3 scripts/release/package_component.py --component ui-foundation --kind console-foundation-source --input packages/ui --input apps/console/src/i18n --input apps/console/src/test --input pnpm-workspace.yaml --input pnpm-lock.yaml --input apps/console/package.json --input apps/console/src/main.tsx --input apps/console/src/foundations --generated-input artifacts/identity-local/component-manifest.json --require-generated-input-digest --bundle artifacts/ui-foundation/source-bundle.tar.zst --component-manifest artifacts/ui-foundation/component-manifest.json --digest-output artifacts/ui-foundation/bundle-digest.txt --ownership-baseline contracts/release/source-ownership-baseline.yaml --ownership-catalog contracts/release/source-ownership-catalog.yaml --ownership-amendment contracts/release/system-release-tooling-ownership.yaml --owner ui-foundation --require-all-owner-sources-accounted --require-existing-owner-root ui-foundation=pnpm-workspace.yaml --require-existing-owner-root ui-foundation=pnpm-lock.yaml --require-existing-owner-root ui-foundation=apps/console/package.json --require-existing-owner-root ui-foundation=apps/console/src/main.tsx --require-existing-owner-root 'ui-foundation=apps/console/src/foundations/**'",
+            "python3 -c \"from pathlib import Path; import hashlib,json; p=Path('artifacts/identity-local/component-manifest.json'); m=json.loads(Path('artifacts/ui-foundation/component-manifest.json').read_text()); rows={x['path']:x for x in m['files']}; r=rows['artifacts/identity-local/component-manifest.json']; assert r['sha256']==hashlib.sha256(p.read_bytes()).hexdigest()\""
+          ],
+          "required_metrics": {
+            "line_coverage_percent": 90,
+            "cross_owner_changed_path_count": 0,
+            "required_contrast_ratio": 4.5,
+            "workspace_registration_gap_count": 0,
+            "console_consumer_wiring_gap_count": 0,
+            "account_locale_input_digest_match_count": 1
+          },
+          "artifacts": [
+            "artifacts/ui-foundation/ui/coverage/coverage-summary.json",
+            "artifacts/ui-foundation/console/coverage/coverage-summary.json",
+            "artifacts/ui-foundation/playwright-junit.xml",
+            "artifacts/ui-foundation/source-bundle.tar.zst",
+            "artifacts/ui-foundation/bundle-digest.txt",
+            "artifacts/ui-foundation/component-manifest.json",
+            "artifacts/identity-local/component-manifest.json",
+            "artifacts/aiteam-906/candidate-validation.json"
+          ]
+        }
+      ],
+      "pr_base": "main",
+      "acceptance_refs": [
+        "UJ-PUBLIC-ENTRY-001"
+      ],
+      "source_of_truth": [
+        "docs/design/frontend/DESIGN.md:L199-L382",
+        "docs/design/frontend/DESIGN.md:L519-L704",
+        "account-locale-ownership-decision.md",
+        "aiteam-906-delivery-lock.json"
+      ],
+      "required_contracts": [
+        "docs/design/frontend/DESIGN.md",
+        "account-locale-ownership-decision.md"
+      ],
+      "scope_paths": [
+        "packages/ui/**",
+        "apps/console/src/i18n/**",
+        "apps/console/src/test/**",
+        "pnpm-workspace.yaml",
+        "pnpm-lock.yaml",
+        "apps/console/package.json",
+        "apps/console/src/main.tsx",
+        "apps/console/src/foundations/**"
+      ],
+      "evidence_mode": "artifact",
+      "produces": [
+        {
+          "artifact_id": "ui-foundation-component"
+        }
+      ],
+      "consumes": [
+        {
+          "artifact_id": "identity-local-account-locale-component",
+          "producer": "identity-local",
+          "evidence_mode": "artifact"
+        }
+      ]
+    },
+    "contract_ref": {
+      "comment_id": "01a0fbbe-1d2c-7946-abe1-623d6bf8a98e",
+      "attachment_id": "01a0fbbe-1bab-7018-8674-73b9c36135ec",
+      "sha256": "d85f2d446be291ceab8cc1c345a9262efbdd2809ea311f0c299b51eb316bd123",
+      "bytes": 18158,
+      "filename": "omac-contract-d85f2d446be2.yaml"
+    },
+    "source_refs": [
+      {
+        "issue_id": "289a13bf-cede-4b5b-ba86-d72f0bef8164",
+        "label": "设计方案"
+      },
+      {
+        "issue_id": "8e6bd282-6039-41d2-aa00-969a0bf1554a",
+        "label": "验收文档"
+      },
+      {
+        "issue_id": "ea309848-059d-431a-a93a-accc090cce27",
+        "label": "前置开发任务 · Bootstrap Console workspace and browser quality harness"
+      },
+      {
+        "issue_id": "152d735a-c373-4967-8ae0-45c191de2eff",
+        "label": "前置开发任务 · Implement deterministic release artifact packaging"
+      }
+    ],
+    "kind": "develop",
+    "phase": "authoring",
+    "bounces": {
+      "worker": 8,
+      "ci": 0,
+      "review": 7,
+      "merge": 0
+    },
+    "bounce_baseline": {
+      "merge": 0,
+      "review": 7,
+      "worker": 8
+    },
+    "deliverable": null,
+    "deliverable_ref": null,
+    "project_rules": null,
+    "project_rules_ref": null,
+    "agent_run_finished_without_submit": false,
+    "agent_run_failed": false,
+    "created_at": "2026-07-29T17:41:57Z",
+    "updated_at": "2026-10-02T08:32:20Z",
+    "platform_assignee_id": null,
+    "unknown_persisted_fields": {
+      "metadata.blocked_reason": "Authenticated locale persistence uses an unpublished mocked API with collapsed errors and race conditions; release-tooling ownership is unapproved",
+      "metadata.pr_number": 21,
+      "metadata.pr_url": "https://github.com/xiaohei-info/open-agent-cluster/pull/21"
+    },
+    "review_nits_acceptance": null
+  },
+  "runs": [
+    {
+      "id": "8ed9071c-2b20-45c8-b959-3db4d85948f2",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-09T13:01:49Z",
+      "updated_at": "2026-08-09T13:26:09Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "2b2bc2f7-0a11-46ec-9af7-5e135e153f4a",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "4c7d9069-108e-400b-8469-16994c468e21",
+      "created_at": "2026-08-09T12:17:26Z",
+      "updated_at": "2026-08-09T12:55:03Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "244c4292-8c1d-41c5-af30-df6939e3213f",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-09T11:49:35Z",
+      "updated_at": "2026-08-09T12:15:31Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "eaf069a4-3673-4db3-80b2-618176e8a825",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "4c7d9069-108e-400b-8469-16994c468e21",
+      "created_at": "2026-08-09T11:07:12Z",
+      "updated_at": "2026-08-09T11:46:18Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "06db789d-648f-4474-a744-e3fe30f8dc1e",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-09T10:36:57Z",
+      "updated_at": "2026-08-09T11:02:28Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "320964e0-4cb4-4a1f-8f39-1d19dbd57d6f",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "4c7d9069-108e-400b-8469-16994c468e21",
+      "created_at": "2026-08-09T10:04:25Z",
+      "updated_at": "2026-08-09T10:33:26Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "c75e2458-f357-429f-8c56-022932af7700",
+      "kind": "direct",
+      "status": "failed",
+      "agent_id": "4c7d9069-108e-400b-8469-16994c468e21",
+      "created_at": "2026-08-09T04:15:23Z",
+      "updated_at": "2026-08-09T04:15:35Z",
+      "error": "pi exited with error: exit status 1",
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "c92ccd49-18e0-487f-89db-3504785997dd",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-09T03:49:59Z",
+      "updated_at": "2026-08-09T04:11:28Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "4e3562bf-2733-48e9-9a09-255aff4a6ed8",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-09T03:39:19Z",
+      "updated_at": "2026-08-09T03:47:47Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "86eb9c23-f55c-4082-9eef-07abe2fafde0",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "4c7d9069-108e-400b-8469-16994c468e21",
+      "created_at": "2026-08-09T03:07:41Z",
+      "updated_at": "2026-08-09T03:37:10Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "1eaf0d63-2435-4711-976a-b4bd7e9d643b",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-09T02:39:21Z",
+      "updated_at": "2026-08-09T03:07:16Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "27ceda4a-e533-40a5-b703-ade677dbb8e5",
+      "kind": "direct",
+      "status": "failed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-09T02:27:34Z",
+      "updated_at": "2026-08-09T02:32:44Z",
+      "error": "hermes provider error: ⚠️  API call failed (attempt 3/8): InternalServerError [HTTP 503]",
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "2990b72a-bb0e-4f71-b422-5dba3bd37671",
+      "kind": "direct",
+      "status": "failed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-09T00:46:33Z",
+      "updated_at": "2026-08-09T00:50:32Z",
+      "error": "hermes provider error: ⚠️  API call failed (attempt 3/8): RateLimitError [HTTP 429]",
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "eb6eb138-f0eb-4cad-8653-cb1cc83d0ad4",
+      "kind": "direct",
+      "status": "failed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-08-09T00:41:25Z",
+      "updated_at": "2026-08-09T00:45:39Z",
+      "error": "hermes provider error: ⚠️  API call failed (attempt 3/8): RateLimitError [HTTP 429]",
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "0da5271c-25dc-4a9f-b314-36bb664d929b",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "4c7d9069-108e-400b-8469-16994c468e21",
+      "created_at": "2026-08-09T00:37:47Z",
+      "updated_at": "2026-08-09T00:38:42Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "a9847017-cda1-4f19-8c93-0f253864d6bc",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "4c7d9069-108e-400b-8469-16994c468e21",
+      "created_at": "2026-08-09T00:23:34Z",
+      "updated_at": "2026-08-09T00:30:06Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "31424c0e-59f6-4788-b222-79531d88c85b",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "4c7d9069-108e-400b-8469-16994c468e21",
+      "created_at": "2026-08-09T00:08:06Z",
+      "updated_at": "2026-08-09T00:15:10Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "e1e9aa18-3cbb-4be0-a5a7-3cf73d7c4ef9",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "4c7d9069-108e-400b-8469-16994c468e21",
+      "created_at": "2026-08-08T22:23:30Z",
+      "updated_at": "2026-08-08T22:32:33Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "a8c80da4-5131-4d04-8bff-344a6a7711f1",
+      "kind": "direct",
+      "status": "failed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-08-08T10:18:28Z",
+      "updated_at": "2026-08-08T10:22:35Z",
+      "error": "unexpected status 503 Service Unavailable: system cpu overloaded (current: 98.5%, threshold: 90%), url: https://newapi.xiaohei.tech/v1/responses, cf-ray: a27dccfdee3b3f37-LAX",
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "65b7a77d-71c1-4aa1-8117-74a65ff1e79c",
+      "kind": "direct",
+      "status": "failed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-08-08T01:09:56Z",
+      "updated_at": "2026-08-08T01:10:52Z",
+      "error": "{\"error\":{\"message\":\"The `reasoning_text` in the thinking mode must be passed back to the API.\",\"type\":\"invalid_request_error\",\"param\":\"\",\"code\":\"invalid_request_error\"}}",
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "6a260679-124f-495f-aacd-c307818f301b",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-07-31T15:29:50Z",
+      "updated_at": "2026-07-31T15:30:27Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "119471bf-1989-4272-b6ed-d256e9c958c0",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-07-31T15:17:53Z",
+      "updated_at": "2026-07-31T15:18:31Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "d9e97b4c-fa9e-4890-86a3-d3653397c2c8",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-07-31T15:12:57Z",
+      "updated_at": "2026-07-31T15:14:33Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "2bf1ac36-3b92-4a4f-8d72-dacadde64cdb",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-07-31T14:54:10Z",
+      "updated_at": "2026-07-31T15:10:16Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "1625120b-53d4-4c7f-95c5-f61a1ca57b4b",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-07-31T13:19:44Z",
+      "updated_at": "2026-07-31T13:32:23Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "a066d663-d886-4a2b-adea-215877caa0e8",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-07-31T12:07:19Z",
+      "updated_at": "2026-07-31T12:18:22Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "a8bf972c-8c46-45aa-9d5d-3e9509d69743",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-07-31T09:11:47Z",
+      "updated_at": "2026-07-31T09:12:30Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "9cf82942-1198-43e9-8aa8-5d72d5c6e654",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-07-30T13:31:28Z",
+      "updated_at": "2026-07-30T13:32:06Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "39de8503-d5d9-4fb7-8262-d9ae819b77d5",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-07-30T13:03:59Z",
+      "updated_at": "2026-07-30T13:22:58Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "20ab00ff-a96d-41f2-b3a9-447fbb8a03d4",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-07-30T12:44:09Z",
+      "updated_at": "2026-07-30T12:47:00Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "e44b5582-8217-42cf-9144-3cb35301f9d4",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-07-30T01:29:00Z",
+      "updated_at": "2026-07-30T01:41:58Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "89813039-ed41-4a87-8fbc-2e64c3b64c70",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-07-30T01:03:49Z",
+      "updated_at": "2026-07-30T01:25:57Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "26622a4e-dfe0-4703-af0e-b5b29383d32c",
+      "kind": "direct",
+      "status": "failed",
+      "agent_id": "94f847b9-c10f-4d64-88b2-e90cb5c03ffc",
+      "created_at": "2026-07-29T18:07:49Z",
+      "updated_at": "2026-07-29T18:08:47Z",
+      "error": "hermes provider error: HTTP 401: Missing Authentication header",
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    },
+    {
+      "id": "be9a29bb-6d39-45c7-afc8-97c47d5209dc",
+      "kind": "direct",
+      "status": "completed",
+      "agent_id": "8dc91607-6825-41c6-b0de-45c001afc58d",
+      "created_at": "2026-07-29T17:42:23Z",
+      "updated_at": "2026-07-29T18:00:18Z",
+      "error": null,
+      "retry_of_run_id": null,
+      "trigger_kind": "issue_assignment"
+    }
+  ]
+}

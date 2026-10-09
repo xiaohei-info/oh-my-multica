@@ -1,0 +1,43 @@
+[
+  {
+    "agent_id": "6077c018-7330-4a46-9439-bb156b5aae07",
+    "attempt": 1,
+    "attribution": {
+      "evidence": {
+        "kind": "issue_assignment",
+        "ref_id": "01a10f4d-e786-71ed-ab8c-bfe2b5676096"
+      },
+      "initiator": {
+        "avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+        "email": "xiaohei.info@gmail.com",
+        "id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+        "name": "Guantik Chiang"
+      },
+      "originator": {
+        "avatar_url": "https://lh3.googleusercontent.com/a/ACg8ocIstT9NJr1gy5UpWP-h-xTnHmspBzFey7pgi8kNbmlgUvAIPQ=s96-c",
+        "email": "xiaohei.info@gmail.com",
+        "id": "39190534-56cf-4e74-b2e0-4a0decd10054",
+        "name": "Guantik Chiang"
+      },
+      "precise": true,
+      "source": "direct_human"
+    },
+    "completed_at": null,
+    "created_at": "2026-10-06T03:42:57Z",
+    "delivered_comment_ids": [],
+    "dispatched_at": "2026-10-06T03:42:57Z",
+    "error": null,
+    "id": "01a10f4e-ae89-796a-9b27-0df36fce530e",
+    "issue_id": "01a10f4d-e786-71ed-ab8c-bfe2b5676096",
+    "kind": "direct",
+    "max_attempts": 2,
+    "priority": 0,
+    "relative_work_dir": "guantik-ait-813dea2ff3e1/aiteam-1079-0df36fce530e/workdir",
+    "result": null,
+    "runtime_id": "fd30a34a-7e03-410d-b45d-ceb40dcda4e4",
+    "started_at": "2026-10-06T03:42:57Z",
+    "status": "running",
+    "work_dir": "/home/ubuntu/multica_workspaces/guantik-ait-813dea2ff3e1/aiteam-1079-0df36fce530e/workdir",
+    "workspace_id": "410ade5e-8ae0-4402-b975-813dea2ff3e1"
+  }
+]

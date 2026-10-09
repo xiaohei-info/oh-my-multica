@@ -68,14 +68,28 @@ def prepare_owner_amendment(
     report_file,
     docs,
     output_file,
+    source_witness_file=None,
+    prospective_source_file=None,
 ):
     from .amendment import _write_yaml_atomic
+    from ..core.owner_amendment import preserved_source_input
 
+    if source_witness_file is not None and prospective_source_file is not None:
+        raise ValidationError("Preserved and prospective assessments require separate requests; run `omac dag amend prepare-owner --help`")
+    qualification = preserved_source_input(source_witness_file)[0] if source_witness_file is not None else None
     if not blocked_nodes or set(blocked_nodes) - set(allowed_nodes):
         raise ValidationError(
             "Explicit blocked and allowed targets are required; run `omac dag amend prepare-owner --help`"
         )
     manifest = load_manifest(manifest_path)
+    prospective_qualification = None
+    if prospective_source_file is not None:
+        from ..core.prospective_owner import GROUPS, prospective_input, qualify_prospective
+
+        prospective_qualification, _ = prospective_input(prospective_source_file)
+        held, existing, _ = GROUPS[prospective_qualification["group"]]
+        if set(blocked_nodes) != {held} or set(allowed_nodes) != existing:
+            raise ValidationError("Exact Root-decided existing/derived selectors are required; run `omac dag amend prepare-owner --help`")
     request = {
         "schema": SCHEMA,
         "manifest": manifest_source(manifest),
@@ -83,12 +97,19 @@ def prepare_owner_amendment(
         "allowed_nodes": sorted(set(allowed_nodes)),
         "sources": {
             key: capture_source(
-                manifest, key, engine.store, engine.runtime, held=key in blocked_nodes
+                manifest, key, engine.store, engine.runtime, held=key in blocked_nodes,
+                qualification=qualification if key == "ui-foundation" else None,
             )
             for key in sorted(set(allowed_nodes))
         },
         "inputs": request_inputs(manifest_path, report_file, docs, blocked_nodes),
     }
+    if qualification is not None:
+        request["source_qualification"] = qualification
+    if prospective_qualification is not None:
+        request["prospective_assessment"] = qualify_prospective(
+            manifest, prospective_qualification, engine.store, engine.runtime
+        )
     request["required_inputs"] = required_inputs(manifest, manifest_path)
     request["retry_policy"] = retry_policy(manifest_path)
     request["remaining_budgets"] = {
@@ -109,6 +130,7 @@ def prepare_owner_amendment(
         "request_sha256": digest(request),
         "next_action": f"omac dag amend resolve-owner {manifest_path} {output_file} --request-sha256 {digest(request)} --authority <coordinator> --reason <assessment-resolution>",
     }
+
 
 
 def load_request(path):

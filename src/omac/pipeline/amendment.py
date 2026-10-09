@@ -591,6 +591,33 @@ def propose_amendment(
                         "\nExact owner_resolution_approval: " + manifest.meta["owner_amendment_resolutions"][owner_digest]["approval_sha256"])
         payload["description"] = description
         payload["contract"].source_of_truth.append(owner_request_file)
+        qualification = manifest.meta["owner_amendment_resolutions"][owner_digest]["request"].get("source_qualification")
+        if qualification is not None:
+            description += ("\n\nThe qualified opaque fields and all original native failures remain "
+                            "unresolved product obligations. Read the full preservation witness and "
+                            "every referenced native history. Do not classify fields as harmless, "
+                            "retire an active hold, replay old authority or change budgets. "
+                            "The failed call-correlation proof is retained failure history, never authority; "
+                            "absent call IDs and original truncated output remain unknown/incomplete. "
+                            "Explicitly assess these retained obligations in independent Review.")
+            payload["contract"].acceptance.append(
+                "Independent assessment retains all opaque fields and original failures as unresolved "
+                "obligations, without active-hold retirement, budget grant, old-authority replay or product PASS"
+            )
+            payload["description"] = description
+            payload["contract"].source_of_truth.extend(
+                [qualification["input"]["file"]]
+                + [v["file"] for v in qualification["references"].values()]
+            )
+        prospective = manifest.meta["owner_amendment_resolutions"][owner_digest]["request"].get("prospective_assessment")
+        if prospective:
+            description += ("\n\nProspective assessment-only declarations: " + json.dumps(prospective["declarations"], sort_keys=True) +
+                            "\nThese candidates are not-created and not-allocated. No consumed usage, native baseline, remaining budget or default 20 grant is asserted. "
+                            "The complete original terminal scope request is coordination input, not a submitted proposal or Reviewer PASS. Preserve all failed helper results and original rejected reports/ledgers, both held sources and derived api-mcp. "
+                            "Assess the exact supplied publication boundary and unresolved compatibility obligations. Do not redefine DONE producers. Independent draft Review does not authorize allocation, application or Worker dispatch; a separate typed authority is required.")
+            payload["description"] = description
+            payload["contract"].acceptance.append("Prospective declarations remain assessment-only/not-created/not-allocated; Reviewer PASS is not allocation/application/dispatch permission.")
+            payload["contract"].source_of_truth.extend(ref["file"] for ref in [prospective["input"], *prospective["references"].values()])
     attempt = None
     source_refs = None
     dag_key = f"amend-{Path(manifest_path).stem}"
