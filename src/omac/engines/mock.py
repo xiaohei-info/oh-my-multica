@@ -982,6 +982,23 @@ class MockStore(WorkItemStore):
             item.description = description
         return item
 
+
+    def publish_source_artifact(self, item_id: str, content: bytes) -> Dict[str, Any]:
+        if not isinstance(content, bytes) or not 0 < len(content) <= 1024 * 1024:
+            raise PlatformError("Invalid bounded owner source chunk")
+        sha = hashlib.sha256(content).hexdigest()
+        key = f"owner-source-{item_id}-{sha}"
+        _shared_attachment_bodies[key] = content
+        return {"issue_id": item_id, "attachment_id": key, "sha256": sha, "bytes": len(content)}
+
+    def read_source_artifact(self, ref: Dict[str, Any]) -> bytes:
+        body = _shared_attachment_bodies.get(ref.get("attachment_id"))
+        if (body is None or len(body) != ref.get("bytes")
+                or hashlib.sha256(body).hexdigest() != ref.get("sha256")
+                or ref.get("attachment_id") != f"owner-source-{ref.get('issue_id')}-{ref.get('sha256')}"):
+            raise PlatformError("Owner source artifact identity or bytes changed")
+        return body
+
     def restore_authoring_generation(
         self,
         item_id: str,

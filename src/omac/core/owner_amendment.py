@@ -90,6 +90,37 @@ def digest(value):
     ).hexdigest()
 
 
+
+def owner_request(entry):
+    """Resolve a full immutable request; legacy journal bodies stay untouched."""
+    if not isinstance(entry, dict) or ("request" in entry and "request_ref" in entry):
+        _invalid("Owner request journal is missing or ambiguous")
+    if "request" in entry:
+        return entry["request"]
+    from .state_transport import DECODED_MAX
+    ref = entry.get("request_ref")
+    approval = entry.get("approval", {})
+    if (not isinstance(ref, dict) or set(ref) != {"file", "bytes", "sha256"}
+            or type(ref["bytes"]) is not int or not 0 < ref["bytes"] <= DECODED_MAX
+            or not isinstance(approval, dict) or approval.get("request_input") != ref
+            or digest(approval) != entry.get("approval_sha256")):
+        _invalid("Complete immutable owner request reference or approval changed")
+    try:
+        path = Path(ref["file"])
+        if not path.is_file() or path.stat().st_size != ref["bytes"]:
+            _invalid("Complete owner request referenced bytes are missing")
+        raw = path.read_bytes()
+        if len(raw) != ref["bytes"] or hashlib.sha256(raw).hexdigest() != ref["sha256"]:
+            _invalid("Complete owner request referenced raw bytes changed")
+        request = json.loads(raw)
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValidationError("Full immutable owner request cannot be read; restore its exact bytes before continuing") from exc
+    if (not isinstance(request, dict) or request.get("schema") != SCHEMA
+            or digest(request) != approval.get("request_sha256")):
+        _invalid("Full referenced owner request logical identity changed")
+    return request
+
+
 def plain(value):
     return json.loads(
         json.dumps(
@@ -117,6 +148,10 @@ def manifest_source(manifest):
     for value, node in zip(result["nodes"], manifest.nodes.values()):
         value["recovery_marker"] = node.recovery_marker
     return result
+
+def owner_history_sha(manifest, request_digest):
+    return digest({key: value for key, value in manifest.meta.get(JOURNAL, {}).items()
+                   if key != request_digest})
 
 
 def retry_policy(manifest_path):
@@ -199,7 +234,8 @@ def preserved_source_input(file):
 
 
 def verify_preserved_source(
-    manifest, node_id, item, qualification, *, request_sha=None, recovered=False
+    manifest, node_id, item, qualification, *, request_sha=None, recovered=False,
+    current_source=None
 ):
     """Qualify opaque history for assessment only; never retire an active hold."""
     if not isinstance(qualification, dict) or not isinstance(qualification.get("input"), dict):
@@ -223,7 +259,10 @@ def verify_preserved_source(
         _invalid("Preserved source cannot authorize or retire an active control hold")
     actual = plain(asdict(item))
     if not recovered:
-        if digest(actual) != _PRESERVED_UI_ITEM or digest(manifest_source(manifest)) != _PRESERVED_UI_MANIFEST:
+        if digest(actual) != _PRESERVED_UI_ITEM or (
+            current_source is None
+            and digest(manifest_source(manifest)) != _PRESERVED_UI_MANIFEST
+        ):
             _invalid("Complete qualified source/manifest/budget identity changed")
     elif (
         digest({k: v for k, v in actual.items() if k not in _OWNER_RECOVERY_MUTABLE})
@@ -231,6 +270,11 @@ def verify_preserved_source(
         or actual["bounce_baseline"] != original["bounce_baseline"]
     ):
         _invalid("Preserved opaque source, failure history or budget changed during recovery")
+    if current_source is not None:
+        from .current_owner_source import historical_current_binding
+        historical_current_binding(manifest, current_source, _PRESERVED_OWNER_HISTORY,
+                                   request_sha=request_sha, recovered=recovered)
+        return
     history = manifest.meta.get(JOURNAL, {})
     if not isinstance(history, dict) or {
         k: digest(v) for k, v in history.items() if k != request_sha
@@ -270,7 +314,7 @@ def _attachment(store, item_id, ref):
     }
 
 
-def capture_source(manifest, node_id, store, runtime, *, held=False, qualification=None, request_sha=None):
+def capture_source(manifest, node_id, store, runtime, *, held=False, qualification=None, request_sha=None, current_source=None, historical_identity=None):
     node = manifest.nodes.get(node_id)
     if node is None or node.status == "done" or node.merged:
         _invalid("Authorized target must be an existing unmerged non-DONE node")
@@ -303,7 +347,8 @@ def capture_source(manifest, node_id, store, runtime, *, held=False, qualificati
         if item.unknown_persisted_fields:
             if qualification is None:
                 _invalid("Actual affected source has unknown persisted control fields")
-            verify_preserved_source(manifest, node_id, item, qualification, request_sha=request_sha)
+            verify_preserved_source(manifest, node_id, item, qualification, request_sha=request_sha,
+                                    current_source=current_source)
         elif qualification is not None:
             _invalid("Qualified opaque source fields disappeared")
         if item.decision_required:
@@ -462,6 +507,16 @@ def capture_source(manifest, node_id, store, runtime, *, held=False, qualificati
             )
     if errors:
         _invalid("Full historical failed report is malformed: " + "; ".join(errors))
+    if cycles and cycles[-1].get("subject_digest") != result["subject_digest"]:
+        from .historical_review_source import qualify_subject
+        try:
+            subject, identity_qualification = qualify_subject(
+                manifest, node_id, item, result, request_sha=request_sha, capture=historical_identity)
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            raise ValidationError("Historical source qualification is malformed or unavailable; inspect the exact source and prepare-review-source --help") from exc
+        result["subject_digest"] = subject
+        if identity_qualification is not None:
+            result["historical_identity_qualification"] = identity_qualification
     if (
         not cycles
         or cycles[-1].get("subject_digest") != result["subject_digest"]
@@ -501,7 +556,7 @@ def capture_source(manifest, node_id, store, runtime, *, held=False, qualificati
         or terminal_runs(runtime, source_item.id) != result["rejected_source"]["runs"]
     ):
         _invalid("Original rejected Package source changed during evidence observation")
-    if plain(asdict(store.get_work_item(item.id))) != result["item"]:
+    if digest(plain(asdict(store.get_work_item(item.id)))) != digest(result["item"]):
         _invalid("Source control changed during full evidence observation")
     return result
 
@@ -512,7 +567,7 @@ def verify_request(manifest, request, store, runtime):
     if (
         not isinstance(request, dict)
         or request.get("schema") != SCHEMA
-        or set(request) - {"prospective_assessment"}
+        or set(request) - {"prospective_assessment", "current_source_qualification"}
         != {
             "schema",
             "manifest",
@@ -536,11 +591,28 @@ def verify_request(manifest, request, store, runtime):
         or set(request["blocked_nodes"]) - set(request["allowed_nodes"])
         or len(set(request["allowed_nodes"])) != len(request["allowed_nodes"])
         or set(request["sources"]) != set(request["allowed_nodes"])
-        or request["manifest"] != manifest_source(manifest)
+        or digest(request["manifest"]) != digest(manifest_source(manifest))
     ):
         _invalid(
             "Immutable owner request or FULL manifest/DONE/history authority changed"
         )
+    if "current_source_qualification" in request:
+        from types import SimpleNamespace
+        from .current_owner_source import approved_current_source, recapture_current_source
+        qualification = request["current_source_qualification"]
+        source = approved_current_source(manifest, qualification, request_sha=digest(request))
+        if (digest(source["historical_source"]) != digest(request.get("source_qualification"))
+                or digest(source["prospective_assessment"]) != digest(request.get("prospective_assessment"))
+                or source["blocked_nodes"] != request["blocked_nodes"]
+                or source["allowed_nodes"] != request["allowed_nodes"]
+                or digest(source["sources"]) != digest(request["sources"])
+                or digest(source["inputs"]) != digest(request["inputs"])
+                or digest(source["required_inputs"]) != digest(request["required_inputs"])
+                or digest(source["retry_policy"]) != digest(request["retry_policy"])
+                or digest(source["remaining_budgets"]) != digest(request["remaining_budgets"])):
+            _invalid("Current source approval differs from complete request authority")
+        recapture_current_source(SimpleNamespace(store=store, runtime=runtime),
+                                 manifest, source, request_sha=digest(request))
     if "source_qualification" in request and (
         request["blocked_nodes"] != ["identity-local"]
         or request["allowed_nodes"] != ["authentication-methods", "identity-local", "ui-foundation"]
@@ -555,7 +627,8 @@ def verify_request(manifest, request, store, runtime):
         held, existing, _ = GROUPS[qualification["group"]]
         if set(request["blocked_nodes"]) != {held} or set(request["allowed_nodes"]) != existing:
             _invalid("Existing changed/derived selectors differ from the exact Root group")
-        qualify_prospective(manifest, qualification, store, runtime, request_sha=digest(request))
+        qualify_prospective(manifest, qualification, store, runtime, request_sha=digest(request),
+                            current_source=request.get("current_source_qualification"))
     from .config import load_config, resolve_retry
     from ..pipeline.owner_amendment import required_inputs
 
@@ -566,6 +639,13 @@ def verify_request(manifest, request, store, runtime):
         or required_inputs(manifest, required["manifest_path"]) != required
     ):
         _invalid("Full required-contract/authoritative acceptance input bytes changed")
+    for source in request["sources"].values():
+        qualification = source.get("historical_identity_qualification")
+        if qualification is not None:
+            from ..pipeline.owner_amendment import load_request
+            historical = load_request(qualification["input"]["file"])
+            if historical.get("manifest_path") != required["manifest_path"]:
+                _invalid("Historical source qualification belongs to another canonical manifest path")
     policy = request["retry_policy"]
     if (
         not isinstance(policy, dict)
@@ -581,12 +661,13 @@ def verify_request(manifest, request, store, runtime):
         _invalid("Exact configured retry limits or derived remaining budgets changed")
     for key in request["allowed_nodes"]:
         if (
-            capture_source(
+            digest(capture_source(
                 manifest, key, store, runtime, held=key in request["blocked_nodes"],
                 qualification=request.get("source_qualification") if key == "ui-foundation" else None,
                 request_sha=digest(request),
-            )
-            != request["sources"][key]
+                current_source=request.get("current_source_qualification"),
+            ))
+            != digest(request["sources"][key])
         ):
             _invalid(
                 "Full decision/report/ledger/source/handoff/Run/budget CAS changed"
@@ -601,7 +682,7 @@ def authorized_request(manifest, request_digest, store, runtime):
     if (
         not isinstance(entry, dict)
         or not isinstance(entry.get("approval"), dict)
-        or digest(entry.get("request")) != request_digest
+        or digest(owner_request(entry)) != request_digest
         or entry.get("approval", {}).get("request_sha256") != request_digest
         or entry.get("approval_sha256") != digest(entry.get("approval"))
         or not entry.get("approval", {}).get("authority")
@@ -609,7 +690,10 @@ def authorized_request(manifest, request_digest, store, runtime):
         or entry.get("state") not in ("approved", "assessment_started", "reviewed")
     ):
         _invalid("Fresh exact operator resolution approval is missing or malformed")
-    verify_request(manifest, entry["request"], store, runtime)
+    verify_request(manifest, owner_request(entry), store, runtime)
+    authority = entry.get("portable_authority")
+    if authority is not None and authority.get("owner_history_sha256") != owner_history_sha(manifest, request_digest):
+        _invalid("Complete prior owner history changed from authenticated portable Source")
     return entry
 
 
@@ -643,8 +727,8 @@ def validate_affected(manifest, proposal, store, runtime):
         )
     if entry is not None and (
         proposal.get("budget_policy") != "preserve"
-        or affected - (set(entry["request"]["allowed_nodes"]) | set(
-            entry["request"].get("prospective_assessment", {}).get("declarations", {})
+        or affected - (set(owner_request(entry)["allowed_nodes"]) | set(
+            owner_request(entry).get("prospective_assessment", {}).get("declarations", {})
         ))
     ):
         _invalid(
@@ -663,11 +747,11 @@ def validate_affected(manifest, proposal, store, runtime):
                 "worker-decision-required",
                 PACKAGE_REASON,
             ):
-                if entry is None or node_id not in entry["request"]["blocked_nodes"]:
+                if entry is None or node_id not in owner_request(entry)["blocked_nodes"]:
                     _invalid(
                         "Actual affected held decision requires its exact source-bound resolution"
                     )
-                capture_source(manifest, node_id, store, runtime, held=True)
+                capture_source(manifest, node_id, store, runtime, held=True, request_sha=request_digest)
     return entry
 
 
@@ -675,7 +759,7 @@ def verify_reviewed_resolution(manifest, amendment, store, runtime, manifest_pat
     entry = validate_affected(manifest, amendment, store, runtime)
     if entry is None:
         return
-    if entry["request"]["required_inputs"]["manifest_path"] != str(
+    if owner_request(entry)["required_inputs"]["manifest_path"] != str(
         Path(manifest_path).resolve()
     ):
         _invalid("Reviewed resolution belongs to a different canonical manifest path")
@@ -786,6 +870,12 @@ def fresh_review_source(store, runtime, item, reviewer):
 
 
 def planner_source(store, runtime, item, entry):
+    if entry.get("portable_source") is not None:
+        ref = next((r for r in item.source_refs if r.get("label") == "owner-source"), None)
+        if ref != entry["portable_source"]:
+            _invalid("Canonical Planner/Reviewer portable Source identity changed")
+        from ..pipeline.portable_owner import verify_approved_source
+        verify_approved_source(store, ref, entry)
     approved = entry.get("assessment", {})
     baselines = entry.get("authoring_dispatches", [])
     if (
@@ -852,14 +942,14 @@ def guard_apply_resume(manifest, amendment, store, runtime, *, before_node=None)
     if (
         not isinstance(entry, dict)
         or entry.get("state") != "reviewed"
-        or digest(entry.get("request")) != request_digest
+        or digest(owner_request(entry)) != request_digest
         or entry.get("approval_sha256") != amendment.get("owner_resolution_approval")
         or digest(entry.get("approval")) != entry.get("approval_sha256")
     ):
         _invalid(
             "Accepted recovery lost its exact original request/resolution authority"
         )
-    request = entry["request"]
+    request = owner_request(entry)
     from .manifest import loads_manifest
     from .amendment import _node_dict
     from .stage_recovery import (
@@ -903,9 +993,36 @@ def guard_apply_resume(manifest, amendment, store, runtime, *, before_node=None)
     # The request manifest excludes its own authorization journal. Qualified
     # captures additionally check the pinned original entries against the live
     # journal; this local reconstruction never changes the frozen request.
-    if "source_qualification" in request:
+    if ("source_qualification" in request or "current_source_qualification" in request
+            or any(s.get("historical_identity_qualification") for s in request["sources"].values())):
         original.meta[JOURNAL] = manifest.meta[JOURNAL]
+    if "current_source_qualification" in request:
+        from .current_owner_source import approved_current_source
+        approved_current_source(original, request["current_source_qualification"],
+                                request_sha=request_digest)
+        approved_current_source(manifest, request["current_source_qualification"],
+                                request_sha=request_digest, check_manifest=False)
+        if set(manifest.meta) - set(original.meta) - {
+            "amendment_apply", "last_amendment_id", "amendment_revision", JOURNAL,
+        }:
+            _invalid("Foreign current-source metadata appeared during recovery")
     ledger = manifest.meta.get("amendment_apply", {})
+    if ("current_source_qualification" in request
+            or any(s.get("historical_identity_qualification") for s in request["sources"].values())):
+        from .amendment import _apply_definition
+        expected = _apply_definition(original, amendment)
+        if set(manifest.nodes) != set(expected.nodes):
+            _invalid("Current Source node identities changed outside the reviewed definition")
+        owned = set(ledger.get("nodes", {}))
+        if owned - set(request["allowed_nodes"]):
+            _invalid("Recovery journal includes a target outside exact current Source authority")
+        for key, baseline in expected.nodes.items():
+            actual = manifest.nodes[key]
+            if _node_dict(actual, include_runtime=False) != _node_dict(baseline, include_runtime=False):
+                _invalid("Whole current Source definition changed outside its reviewed operations")
+            if key not in owned and (_node_dict(actual, include_runtime=True) != _node_dict(baseline, include_runtime=True)
+                                     or actual.recovery_marker != baseline.recovery_marker):
+                _invalid("Foreign current Source runtime progress requires fresh Root qualification")
     if any(
         r.get("state") not in ("synced", "observed_progress")
         for r in ledger.get("nodes", {}).values()
@@ -961,6 +1078,7 @@ def guard_apply_resume(manifest, amendment, store, runtime, *, before_node=None)
             verify_preserved_source(
                 manifest, key, store.get_work_item(source["item"]["id"]),
                 request["source_qualification"], request_sha=request_digest, recovered=True,
+                current_source=request.get("current_source_qualification"),
             )
         if recovery is None or recovery.get("state") == "pending":
             if (
@@ -968,6 +1086,7 @@ def guard_apply_resume(manifest, amendment, store, runtime, *, before_node=None)
                     original, key, store, runtime, held=key in request["blocked_nodes"],
                     qualification=request.get("source_qualification") if key == "ui-foundation" else None,
                     request_sha=request_digest,
+                    current_source=request.get("current_source_qualification"),
                 )
                 != source
             ):

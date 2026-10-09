@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+from pathlib import Path
 
 from ._stub import not_implemented
 from ...core import config as config_mod
@@ -62,6 +63,7 @@ def register(parser):
     read.add_argument("issue_id")
     read.add_argument("--source", required=True)
     read.add_argument("--output-file", required=True)
+    read.add_argument("--entry", help="Exact entry label inside an attached owner-source index")
 
     block = sub.add_parser("block", help="Report a structured Worker blocker requiring an operator decision")
     block._work_action = "block"
@@ -369,6 +371,19 @@ def _run_read(args) -> int:
             f"无法读取上游 issue '{source_issue_id}' —— {exc}"))
 
     delivery_key = ref.get("delivery_key") or args.source
+    if ref.get("kind") == "amendment-source" and args.source == "owner-source":
+        from ...pipeline.portable_owner import read_source
+        body = read_source(store, ref, entry=getattr(args, "entry", None))
+        try:
+            Path(args.output_file).write_bytes(body)
+        except OSError as exc:
+            raise ValidationError("Could not write exact source output: " + str(exc)) from exc
+        print_json({"ok": True, "issue_id": args.issue_id, "source": args.source,
+                    "entry": getattr(args, "entry", None), "bytes": len(body),
+                    "sha256": hashlib.sha256(body).hexdigest(), "output_file": args.output_file})
+        return exit_codes.OK
+    if getattr(args, "entry", None) is not None:
+        raise ValidationError("--entry requires an attached owner-source index")
     content = (
         upstream.project_rules
         if delivery_key in {"project-rules", "project_rules"}

@@ -13,6 +13,7 @@ from ..errors import ValidationError
 
 
 GROUPS = {
+    "credential": ("credential-store", {"credential-store"}, {"credential-rotation-wire-publication"}),
     "agent-api": ("api-agent", {"api-agent"}, {"agent-catalog-production-commands"}),
     "mcp": ("mcp-catalog-governed-hardening", {"mcp-catalog-governed-hardening", "api-mcp"}, {"mcp-platform-transaction-composition", "agentrun-mcp-consumption-evidence"}),
 }
@@ -56,6 +57,10 @@ def prospective_input(file):
         if len(raw) > 65536:
             _invalid("Prospective source witness exceeds its byte bound")
         witness = json.loads(raw)
+        if (isinstance(witness, dict) and set(witness) == {"schema", "group", "references"}
+                and witness["schema"] == "omac.prospective-owner-assessment/v1" and witness["group"] == "credential"):
+            from .credential_prospective import credential_input
+            return credential_input(path, witness, raw)
         if (set(witness) != {"schema", "group", "references"}
                 or witness["schema"] != "omac.prospective-owner-assessment/v1"
                 or witness["group"] not in GROUPS
@@ -96,17 +101,23 @@ def prospective_input(file):
         _invalid("Complete prospective assessment qualification is malformed: " + str(exc))
 
 
-def qualify_prospective(manifest, qualification, store, runtime, *, request_sha=None):
+def qualify_prospective(manifest, qualification, store, runtime, *, request_sha=None, current_source=None):
     """Keep existing-node history/budgets and both original held sources strict."""
     from .owner_amendment import JOURNAL, capture_source, digest, manifest_source
 
+    if qualification.get("group") == "credential":
+        from .credential_prospective import qualify_credential
+        return qualify_credential(manifest, qualification, store, runtime, current_source=current_source, request_sha=request_sha)
     observed, bodies = prospective_input(qualification.get("input", {}).get("file"))
     if observed != {k: v for k, v in qualification.items() if k != "global_held_sources"}:
         _invalid("Prospective declarations or exact publication boundaries changed")
-    if digest(manifest_source(manifest)) != _MANIFEST:
+    if current_source is None and digest(manifest_source(manifest)) != _MANIFEST:
         _invalid("Full manifest/DONE/history/recovery source changed")
     history = {k: digest(v) for k, v in manifest.meta.get(JOURNAL, {}).items() if k != request_sha}
-    if history != _HISTORY or CANDIDATES & set(manifest.nodes):
+    if current_source is not None:
+        from .current_owner_source import historical_current_binding
+        historical_current_binding(manifest, current_source, _HISTORY, request_sha=request_sha)
+    if (current_source is None and history != _HISTORY) or CANDIDATES & set(manifest.nodes):
         _invalid("Original owner history changed or a prospective candidate already exists")
     for candidate in CANDIDATES:
         if store.find_work_item_by_dag_key(store.config.workspace_id, candidate) is not None:
@@ -138,8 +149,9 @@ def reject_unallocated_application(proposal):
     operations = proposal.get("operations")
     if not isinstance(operations, list):
         return  # Existing structural validation owns malformed operations.
-    if any(isinstance(op, dict) and op.get("op") == "add"
-           and isinstance(op.get("value"), dict)
-           and op["value"].get("id") in CANDIDATES
+    if any(isinstance(op, dict) and (
+           (op.get("op") == "add" and isinstance(op.get("value"), dict)
+            and op["value"].get("id") in CANDIDATES)
+           or op.get("node") in CANDIDATES)
            for op in operations):
         _invalid("Prospective node application requires separate typed allocation/application authority; assessment or Reviewer PASS is insufficient")

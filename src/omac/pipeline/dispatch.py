@@ -583,6 +583,10 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
         template = blocker_template(item)
         if template is not None:
             output["control"]["blocker_report_template"] = template
+    if kind == TaskKind.AMENDMENT and phase == TaskPhase.AUTHORING and not historical:
+        from .amendment_scope_gap import scope_gap_template
+        output["control"]["report_blocker"] = f"omac work block {item.id} --report-file <scope-gap.yaml>"
+        output["control"]["blocker_report_template"] = scope_gap_template(item)
     resolution.apply_to_show(output, context)
     if historical:
         output["submit"] = None
@@ -1068,6 +1072,9 @@ def report_worker_blocker(store: WorkItemStore, issue_id: str, report_file: str,
     """Persist a typed prerequisite failure; never interpret Agent final prose."""
     from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, review_context_binding
     report = _parse_structured(report_file)
+    if isinstance(report, dict) and report.get("schema") == "omac.amendment-scope-gap/v1":
+        from .amendment_scope_gap import report_scope_gap
+        return report_scope_gap(store, runtime, issue_id, report)
     if isinstance(report, dict) and report.get("schema") == "omac.worker-blocker/v2":
         from .worker_decision import report_decision
         return report_decision(store, runtime, issue_id, report)
@@ -1315,8 +1322,19 @@ def submit(
 
     # ---------- amendment × authoring ----------
     if kind == TaskKind.AMENDMENT and phase == TaskPhase.AUTHORING:
-        content = _validate_amendment_authoring(amendment_file)
-        advance_authoring_to_review(deliverable=content)
+        with store.worker_control_lock(issue_id):
+            current = store.get_work_item(issue_id)
+            if current.decision_required:
+                raise NeedsDecision("Resolve the terminal amendment decision before submitting", report=current.decision_required)
+            if (current.kind != kind or current.phase != item.phase
+                    or current.worker != item.worker or current.review_generation != item.review_generation
+                    or current.contract_ref != item.contract_ref):
+                raise ValidationError("Amendment control changed before submission; read work show again")
+            content = _validate_amendment_authoring(amendment_file)
+            fresh = store.get_work_item(issue_id)
+            if fresh != current:
+                raise ValidationError("Amendment control changed during submission; read work show again")
+            advance_authoring_to_review(deliverable=content)
         return SubmitResult(
             kind, phase, "amendment", WorkItemStatus.IN_REVIEW,
             next_phase=TaskPhase.REVIEW,

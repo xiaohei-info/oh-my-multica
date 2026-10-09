@@ -442,6 +442,11 @@ def test_show_output_structure(kind, phase):
     assert "submit" in out
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
         assert out["control"].pop("report_blocker") == f"omac work block {item.id} --report-file <blocker.yaml>"
+    if kind == TaskKind.AMENDMENT and phase == TaskPhase.AUTHORING:
+        assert out["control"].pop("report_blocker") == f"omac work block {item.id} --report-file <scope-gap.yaml>"
+        template = out["control"].pop("blocker_report_template")
+        assert template["schema"] == "omac.amendment-scope-gap/v1"
+        assert template["issue_id"] == item.id
     assert out["control"] == {
         "platform_writes": "omac-only",
         "submit_is_terminal": True,

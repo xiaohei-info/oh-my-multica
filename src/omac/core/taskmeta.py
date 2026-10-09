@@ -275,6 +275,39 @@ def build_worker_rework_feedback(current, prior_handoff=None, recovered_context=
     return feedback if len(feedback) > 1 else None
 
 
+def retained_review_subject(current, prior_handoff, feedback, *, store=None):
+    """Retain the subject only with the same causally bound rejected feedback."""
+    if prior_handoff is None or not feedback:
+        return None
+    prior = prior_handoff.source_review_feedback
+    if not isinstance(prior, dict) or not any(prior.get(k) for k in ("report_ref", "ledger_ref")):
+        return None
+    if not any(feedback.get(k) == prior.get(k) and prior.get(k)
+               for k in ("report_ref", "ledger_ref")):
+        return None
+    if (not review_feedback_is_current(current, prior_handoff)
+            or not prior_handoff.is_causally_bound()
+            or prior_handoff.source_review_round != max(1, current.bounces.review)
+            or feedback.get("verdict") != prior_handoff.source_review_verdict
+            or any(feedback.get(k) != prior.get(k) for k in ("report_ref", "ledger_ref"))
+            or (current.review_subject_digest and current.review_subject_digest
+                != prior_handoff.source_review_subject_digest)):
+        raise ValueError("Retained review source conflicts with current feedback; inspect work show before retry")
+    if store is not None and prior.get("ledger_ref"):
+        from .owner_amendment import _attachment
+        from .review_convergence import validate_review_ledger, _review_report_digest
+        ledger = _attachment(store, current.id, prior["ledger_ref"])["body"]
+        report = _attachment(store, current.id, prior.get("report_ref"))["body"]
+        validate_review_ledger(ledger)
+        cycles = ledger["cycles"]
+        if (not cycles or cycles[-1]["subject_digest"] != prior_handoff.source_review_subject_digest
+                or cycles[-1]["round"] != prior_handoff.source_review_round
+                or cycles[-1]["verdict"] != prior_handoff.source_review_verdict
+                or cycles[-1]["report_digest"] != _review_report_digest(report)):
+            raise ValueError("Retained review subject/report/ledger conflict; qualify the original historical source before retry")
+    return prior_handoff.source_review_subject_digest
+
+
 @dataclass(frozen=True)
 class WorkerHandoffIntent:
     """持久化的 review→worker 交接意图；只引用源评审，不复制完整报告。"""

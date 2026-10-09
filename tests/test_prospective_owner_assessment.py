@@ -270,8 +270,12 @@ def test_real_public_assessment_context_preserves_full_source_before_actor_effec
     with pytest.raises(NoActorEffect):
         pipeline.propose_amendment(c.engine, c.path, report_file=c.report, docs=c.docs, blocked_nodes=[blocked], owner_request_file=c.output, orchestrator="offline-planner", reviewers=["offline-reviewer"], max_revisions=1, output_file=str(tmp_path / "reviewed.yaml"))
     q = json.loads(Path(c.output).read_text())["prospective_assessment"]
-    assert {ref["file"] for ref in q["references"].values()} <= set(observed["contract"].source_of_truth)
-    assert q["input"]["file"] in observed["contract"].source_of_truth
+    from omac.pipeline.portable_owner import assessment_files
+    request = json.loads(Path(c.output).read_bytes())
+    files = assessment_files(c.path, c.output, request, c.report, c.docs)
+    assert {ref["file"] for ref in q["references"].values()} <= {str(p) for p in files.values()}
+    assert q["input"]["file"] in {str(p) for p in files.values()}
+    assert all("omac work read" in source for source in observed["contract"].source_of_truth)
     assert "not-created and not-allocated" in observed["description"]
     assert "not a submitted proposal or Reviewer PASS" in observed["description"]
     assert any("not-created/not-allocated" in text for text in observed["contract"].acceptance)
