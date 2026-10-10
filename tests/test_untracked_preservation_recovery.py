@@ -6,6 +6,9 @@ from omac.errors import ValidationError
 from test_full_state_git_recovery import private_case,git
 
 
+pytestmark = pytest.mark.integration
+
+
 def test_full_captured_preservation_public_prepare_resolve_keeps_unknown_files(tmp_path,capsys):
     from omac.core.state_sync_recovery import prepare_preservation,prepare,resolve,digest
     from omac.core.state_transport import decode

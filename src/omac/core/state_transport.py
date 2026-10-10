@@ -115,7 +115,8 @@ def encode(body):
     value = {"schema": SCHEMA, "encoding": ENCODING, "decoded_bytes": len(body),
              "decoded_sha256": hashlib.sha256(body).hexdigest(),
              "payload": base64.b64encode(gzip.compress(body, mtime=0)).decode("ascii")}
-    physical = yaml.safe_dump(value, allow_unicode=True, sort_keys=False).encode("utf-8")
+    physical = yaml.dump(value, Dumper=getattr(yaml, "CSafeDumper", yaml.SafeDumper),
+                         allow_unicode=True, sort_keys=False).encode("utf-8")
     if len(physical) > ENCODED_MAX:
         fail("Encoded complete state exceeds90MiB; no chunking or truncation permitted")
     return physical

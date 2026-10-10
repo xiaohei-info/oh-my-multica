@@ -18,6 +18,9 @@ FIXTURES = Path(__file__).parent / "fixtures/prospective_owner_assessment"
 OLD = Path(__file__).parent / "fixtures/owner_amendment_admission"
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def captured(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

@@ -115,6 +115,7 @@ def _configure_mock(tmp_path, monkeypatch, *, reviewers=("alice",)):
     monkeypatch.chdir(tmp_path)
     assert main(["config", "set", "engine", "mock"]) == exit_codes.OK
     assert main(["config", "set", "workspace", "mock-workspace"]) == exit_codes.OK
+    assert main(["config", "set", "engine_extra.MOCK_AUTO_COMPLETE_DELAY", "0"]) == exit_codes.OK
     assert main(["config", "set", "roles.workers", '["alice", "bob"]']) == exit_codes.OK
     reviewers_list = "[" + ", ".join(f'"{r}"' for r in reviewers) + "]"
     assert main(["config", "set", "roles.reviewers", reviewers_list]) == exit_codes.OK
@@ -518,6 +519,7 @@ def _configure_create_mock(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert main(["config", "set", "engine", "mock"]) == exit_codes.OK
     assert main(["config", "set", "workspace", "mock-workspace"]) == exit_codes.OK
+    assert main(["config", "set", "engine_extra.MOCK_AUTO_COMPLETE_DELAY", "0"]) == exit_codes.OK
     assert main(["config", "set", "roles.planner", "alice"]) == exit_codes.OK
     assert main(["config", "set", "roles.orchestrator", "bob"]) == exit_codes.OK
     assert main(["config", "set", "roles.workers", '["alice", "bob"]']) == exit_codes.OK
@@ -1235,6 +1237,7 @@ def test_plan_continue_review_refuses_active_agent_without_cancelling(
     item = _create_exhausted_decompose_issue(engine)
     engine.store.assign_work_item(item.id, "bob", "reviewer")
     monkeypatch.setenv("MOCK_AUTO_COMPLETE", "false")
+    assert main(["config", "set", "engine_extra.MOCK_AUTO_COMPLETE", "false"]) == exit_codes.OK
 
     def fail_cancel(self, item_id):
         pytest.fail("continue-review must never cancel an active Agent")

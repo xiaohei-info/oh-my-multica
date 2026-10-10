@@ -22,6 +22,9 @@ TOKEN = "33d055c04a9f98cd61460ad4ffeba449513381cfbc63340827c5fc70338e9576"
 OLD = Path(__file__).parent / "fixtures/owner_amendment_admission"
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def captured(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

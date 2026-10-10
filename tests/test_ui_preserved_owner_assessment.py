@@ -23,6 +23,9 @@ OLD = Path(__file__).parent / "fixtures/owner_amendment_admission"
 ALLOWED = ["authentication-methods", "identity-local", "ui-foundation"]
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def captured(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

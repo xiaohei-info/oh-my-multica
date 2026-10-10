@@ -16,6 +16,9 @@ from omac.engines.multica import MulticaRuntime
 FIXTURES = Path(__file__).parent / 'fixtures/credential_prospective_source'
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def credential(captured):
     c = captured

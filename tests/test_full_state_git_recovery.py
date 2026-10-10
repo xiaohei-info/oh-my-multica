@@ -12,6 +12,9 @@ from omac.errors import ValidationError, NeedsDecision
 from test_full_state_transport import captured_bytes
 
 
+pytestmark = pytest.mark.integration
+
+
 def git(repo, *args, data=None):
     return subprocess.check_output(["git", "-C", str(repo), *args], input=data)
 

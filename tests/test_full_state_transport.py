@@ -35,6 +35,7 @@ def alternate_root(header, form):
 
 
 @pytest.mark.parametrize("form", ["tagged", "anchored", "explicit", "escaped"])
+@pytest.mark.integration
 def test_full_original_alternate_root_roundtrip_and_public_model(tmp_path, form):
     from omac.core.state_transport import encode, decode
 
@@ -120,6 +121,7 @@ def test_safe_reader_rejects_unsafe_python_tags(monkeypatch, fallback):
         loads_manifest('meta: !!python/object/apply:builtins.str [unsafe]\nnodes: []\n')
 
 
+@pytest.mark.integration
 def test_full_original_native_and_safe_fallback_models_and_raw_identities(tmp_path, monkeypatch):
     from omac.core.state_transport import encode, identity
 
@@ -141,6 +143,7 @@ def test_full_original_native_and_safe_fallback_models_and_raw_identities(tmp_pa
     assert len(native.nodes) == 183 and len(native.meta) == 23
 
 
+@pytest.mark.integration
 def test_real_capture_explicit_transport_roundtrip(tmp_path):
     from omac.core.state_transport import encode, decode
 
@@ -282,6 +285,7 @@ def root_merge(header, form):
 
 @pytest.mark.parametrize("form", ["inline", "block", "after-meta", "after-nodes", "anchor-sequence",
                                   "explicit", "explicit-after-meta", "escaped-after-meta"])
+@pytest.mark.integration
 def test_full_original_root_merge_rejects_before_legacy_success_and_overwrite(tmp_path, form):
     from omac.core.state_transport import encode, decode, FIELDS
     from omac.core.manifest import Manifest, save_manifest

@@ -15,6 +15,9 @@ from omac.engines.multica import MulticaRuntime
 FIXTURES = Path(__file__).parent / "fixtures/current_owner_source"
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def current(captured):
     c = captured

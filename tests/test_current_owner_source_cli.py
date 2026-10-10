@@ -9,6 +9,9 @@ from test_current_owner_source import public_args, bind_cli
 from omac.cli.main import main
 
 
+pytestmark = pytest.mark.integration
+
+
 def approve_public(c, monkeypatch, capsys):
     bind_cli(c, monkeypatch)
     args = public_args(c)

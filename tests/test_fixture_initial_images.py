@@ -4,6 +4,10 @@ from omac.core.manifest import load_manifest, save_manifest
 from fixture_initial_images import seed_manifest
 
 
+import pytest
+
+
+@pytest.mark.integration
 def test_full_capture_images_have_independent_files_and_models(tmp_path):
     source = Path(__file__).parent / "fixtures/evidence_handoff/current79.yaml"
     first, second = tmp_path / "first.yaml", tmp_path / "second.yaml"
@@ -37,6 +41,7 @@ def test_initial_image_key_preserves_referenced_environment(tmp_path, monkeypatc
     assert load_manifest(str(second)).meta["value"] == "second"
 
 
+@pytest.mark.integration
 def test_private_git_seed_never_shares_mutable_refs_index_or_lock(tmp_path):
     from test_full_state_git_recovery import private_case, git
 

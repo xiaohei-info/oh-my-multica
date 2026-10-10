@@ -28,6 +28,9 @@ held = _held_fixture
 FOLDER = Path(__file__).parent / "fixtures/operator_reservation_dispatch"
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture(params=["model-catalog", "agentrun-malformed-marker-fixture"])
 def reservation(held, request, tmp_path, monkeypatch):
     raw_case = next(

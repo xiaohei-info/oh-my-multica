@@ -16,6 +16,9 @@ from omac.pipeline.reconcile_audit import META_KEY, SCHEMA
 from test_operator_reservation_dispatch import held as held, reservation as reservation
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture(params=["deferred", "complete"])
 def scheduled(reservation, request, monkeypatch):
     c = reservation

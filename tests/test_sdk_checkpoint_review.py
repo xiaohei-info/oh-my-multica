@@ -32,6 +32,9 @@ INDEX = (
 )
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def successor(tmp_path):
     folder = Path(__file__).parent / "fixtures/sdk_command18_checkpoint"

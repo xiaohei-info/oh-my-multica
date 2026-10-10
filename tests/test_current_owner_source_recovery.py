@@ -17,6 +17,9 @@ from omac.pipeline.owner_amendment import (
 )
 
 
+pytestmark = pytest.mark.integration
+
+
 def test_current_root_qualified_pending_recovery_rechecks_full_history_and_opaque_source(captured, monkeypatch):
     c = captured
     source_file = str(Path(c.output).with_name("current-source.json"))
