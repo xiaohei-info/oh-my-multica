@@ -35,6 +35,9 @@ from omac.errors import ValidationError
 FIXTURES = Path(__file__).parent / "fixtures/evidence_handoff"
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def captured(tmp_path, monkeypatch):
     from omac.engines import mock

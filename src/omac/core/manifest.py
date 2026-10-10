@@ -389,12 +389,13 @@ def save_manifest(manifest: Manifest, path: str):
             os.chmod(temporary, stat.S_IMODE(os.stat(target).st_mode))
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             if selected_transport:
-                body = yaml.dump(data, default_flow_style=False,
-                                 allow_unicode=True, sort_keys=False).encode("utf-8")
+                body = yaml.dump(data, Dumper=getattr(yaml, "CDumper", yaml.Dumper),
+                                 default_flow_style=False, allow_unicode=True,
+                                 sort_keys=False).encode("utf-8")
                 f.write(encode(body).decode("utf-8"))
             else:
-                yaml.dump(data, f, default_flow_style=False,
-                          allow_unicode=True, sort_keys=False)
+                yaml.dump(data, f, Dumper=getattr(yaml, "CDumper", yaml.Dumper),
+                          default_flow_style=False, allow_unicode=True, sort_keys=False)
                 if f.tell() > DECODED_MAX:
                     fail("Complete legacy state exceeds256MiB; preserve last valid state")
             f.flush()

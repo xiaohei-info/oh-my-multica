@@ -18,6 +18,9 @@ from omac.pipeline.owner_amendment import (
 )
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture(scope="module")
 def approved(tmp_path_factory):
     patch = pytest.MonkeyPatch()

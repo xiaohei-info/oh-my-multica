@@ -26,6 +26,9 @@ KEY = "harness-sdk-production-build-repair"
 INDEX = "https://github.com/xiaohei-info/open-agent-cluster/blob/8bbf89abc19d1e9d77aa6a4d97375a43ef9f1c96/artifacts/harness-sdk-build-repair-evidence/evidence-index.json"
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def sdk(tmp_path):
     folder = Path(__file__).parent / "fixtures/sdk_native_publication"

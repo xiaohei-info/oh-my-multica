@@ -14,6 +14,9 @@ from omac.errors import ValidationError
 FIXTURES = Path(__file__).parent / "fixtures/system_historical_source"
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def system(current):
     c = current

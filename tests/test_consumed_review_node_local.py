@@ -11,6 +11,9 @@ from omac.errors import ValidationError
 CAPTURE = Path(__file__).parent / "fixtures/consumed_review_node_local"
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def local_complete(complete,monkeypatch):
     from omac.pipeline.evidence_handoff import completed_review_recovery_decision

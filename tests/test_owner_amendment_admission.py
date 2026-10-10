@@ -47,6 +47,9 @@ CASES = (
 )
 
 
+pytestmark = pytest.mark.integration
+
+
 def api():
     from omac.pipeline.owner_amendment import (
         prepare_owner_amendment,

@@ -1759,6 +1759,7 @@ _OAC_MANIFEST = Path(
 
 
 @pytest.mark.skipif(not _OAC_MANIFEST.exists(), reason="local OAC regression input is unavailable")
+@pytest.mark.integration
 def test_real_oac_done_node_historical_responsibility_correction_is_facts_only(tmp_path, monkeypatch):
     from omac.core.state_transport import decode
 

@@ -14,6 +14,9 @@ from omac.errors import ValidationError
 from omac.pipeline.historical_review_source import prepare_review_source, resolve_review_source
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture(scope='module')
 def prepared(tmp_path_factory):
     monkeypatch = pytest.MonkeyPatch()

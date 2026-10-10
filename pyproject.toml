@@ -38,6 +38,9 @@ dependencies = [
     "structlog>=24",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-xdist>=3.8,<4"]
+
 [project.urls]
 Homepage = "https://github.com/xiaohei-info/oh-my-multica"
 Documentation = "https://github.com/xiaohei-info/oh-my-multica#readme"
@@ -60,6 +63,7 @@ where = ["src"]
 testpaths = ["tests"]
 addopts = "-q"
 markers = [
+    "integration: complete captured Source, native-boundary or recovery workflows; included by default, excluded only with an explicit marker selector.",
     "live: tests that hit a real platform (Multica/GitHub). Skipped by default in CI; run locally with `-m live`.",
     "e2e: CLI 子进程级端到端验收(mock 引擎)。稳定回归护栏,无 sleep 竞态(mock delay=0)。",
 ]

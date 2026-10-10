@@ -15,6 +15,9 @@ from omac.pipeline.owner_amendment import (
 )
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.mark.parametrize("group", ["agent-api", "mcp"])
 def test_current_prospective_approval_preserves_full_existing_sources_and_blocks_candidates(captured, group):
     c = captured
