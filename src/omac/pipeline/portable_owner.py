@@ -1,19 +1,21 @@
 """Exact owner context carried by the existing managed project-rules payload."""
 import hashlib
 import json
+import zlib
 from pathlib import Path
 
 from ..core.state_transport import DECODED_MAX
 from ..errors import ValidationError
 
 SCHEMA = "omac.portable-owner-source/v1"
+COMPRESSED_SCHEMA = "omac.portable-owner-source/v2"
 
 
 def _sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
-def source_frame(store, item_id, files, *, owner_resolution, approval, expected=None, contents=None):
+def source_frame(store, item_id, files, *, owner_resolution, approval, expected=None, contents=None, schema=COMPRESSED_SCHEMA, existing=None):
     entries = {}
     # Validate the entire local corpus before the first publication effect.
     for label, file in sorted(files.items()):
@@ -21,22 +23,41 @@ def source_frame(store, item_id, files, *, owner_resolution, approval, expected=
         if not path.is_file() or path.stat().st_size > DECODED_MAX:
             raise ValidationError("Required portable source is missing or exceeds the existing source bound")
         raw = contents[label] if contents is not None else path.read_bytes()
+        if not isinstance(raw, bytes) or len(raw) > DECODED_MAX:
+            raise ValidationError("Required portable source exceeds the existing source bound")
         entries[label] = {"provenance": str(file), "bytes": len(raw), "sha256": _sha(raw)}
     header = {"owner_resolution": owner_resolution, "approval_sha256": approval}
     if expected is not None and "owner_history_sha256" in expected:
         header["owner_history_sha256"] = expected["owner_history_sha256"]
     if expected is not None and expected != {**header, "files": entries}:
         raise ValidationError("Source differs from authenticated approved corpus; do not publish")
+    if existing:
+        index_raw = existing.encode()
+        old = json.loads(read_source(store, {"issue_id": item_id, "content_bytes": len(index_raw),
+                                            "content_sha256": _sha(index_raw)}))
+        excluded = {"chunks", "transport"} if old["schema"] == COMPRESSED_SCHEMA else {"chunks"}
+        old_entries = {label: {k: v for k, v in value.items() if k not in excluded}
+                       for label, value in old["files"].items()}
+        old_header = {k: v for k, v in old.items() if k not in {"schema", "files"}}
+        if old_header != header or old_entries != entries:
+            raise ValidationError("Existing portable owner context differs; inspect work show before dispatch")
+        return existing
     for label, file in sorted(files.items()):
         raw = contents[label] if contents is not None else Path(file).read_bytes()
         if len(raw) != entries[label]["bytes"] or _sha(raw) != entries[label]["sha256"]:
             raise ValidationError("Owner source changed before publication; do not dispatch")
-        chunks = [store.publish_source_artifact(item_id, raw[i:i + 1024 * 1024])
-                  for i in range(0, len(raw), 1024 * 1024)]
-        if b"".join(store.read_source_artifact(ref) for ref in chunks) != raw:
+        wire = raw
+        if schema == COMPRESSED_SCHEMA:
+            compressed = zlib.compress(raw)
+            encoding = "zlib" if len(compressed) < len(raw) else "identity"
+            wire = compressed if encoding == "zlib" else raw
+            entries[label]["transport"] = {"encoding": encoding, "bytes": len(wire), "sha256": _sha(wire)}
+        chunks = [store.publish_source_artifact(item_id, wire[i:i + 1024 * 1024])
+                  for i in range(0, len(wire), 1024 * 1024)]
+        if b"".join(store.read_source_artifact(ref) for ref in chunks) != wire:
             raise ValidationError("Published owner source cannot be independently retrieved exactly")
         entries[label]["chunks"] = chunks
-    frame = json.dumps({"schema": SCHEMA, **header, "files": entries},
+    frame = json.dumps({"schema": schema, **header, "files": entries},
                        ensure_ascii=False, sort_keys=True)
     if len(frame.encode()) > DECODED_MAX:
         raise ValidationError("Portable owner index exceeds the existing source bound; do not dispatch")
@@ -44,7 +65,17 @@ def source_frame(store, item_id, files, *, owner_resolution, approval, expected=
 
 
 def publish_sources(store, item_id, files, *, owner_resolution="", approval="", expected=None, contents=None):
-    frame = source_frame(store, item_id, files, owner_resolution=owner_resolution, approval=approval, expected=expected, contents=contents)
+    item = store.get_work_item(item_id)
+    schema = COMPRESSED_SCHEMA
+    if item.project_rules:
+        try:
+            schema = json.loads(item.project_rules)["schema"]
+            if schema not in (SCHEMA, COMPRESSED_SCHEMA):
+                raise ValueError("unsupported existing frame")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValidationError("Existing portable owner context differs; inspect work show before dispatch") from exc
+    frame = source_frame(store, item_id, files, owner_resolution=owner_resolution, approval=approval,
+                         expected=expected, contents=contents, schema=schema, existing=item.project_rules)
     raw = frame.encode()
     ref = {"issue_id": item_id, "label": "owner-source", "kind": "amendment-source",
            "delivery_key": "project-rules", "content_sha256": _sha(raw),
@@ -70,7 +101,7 @@ def read_source(store, ref, *, entry=None):
         raise ValidationError("Portable owner source index differs from the attached exact reference")
     try:
         frame = json.loads(raw)
-        if frame["schema"] != SCHEMA or not isinstance(frame["files"], dict):
+        if frame["schema"] not in (SCHEMA, COMPRESSED_SCHEMA) or not isinstance(frame["files"], dict):
             raise ValueError("unsupported source frame")
         labels = [entry] if entry is not None else list(frame["files"])
         selected = None
@@ -78,26 +109,44 @@ def read_source(store, ref, *, entry=None):
             value = frame["files"][label]
             if type(value["bytes"]) is not int or not 0 <= value["bytes"] <= DECODED_MAX:
                 raise ValueError("source entry exceeds its bound")
+            transport = value
+            encoding = "identity"
+            if frame["schema"] == COMPRESSED_SCHEMA:
+                transport = value["transport"]
+                if not isinstance(transport, dict) or set(transport) != {"encoding", "bytes", "sha256"}:
+                    raise ValueError("invalid source transport")
+                encoding = transport["encoding"]
+                if encoding not in ("identity", "zlib"):
+                    raise ValueError("unsupported source encoding")
+                if type(transport["bytes"]) is not int or not 0 <= transport["bytes"] <= DECODED_MAX:
+                    raise ValueError("source transport exceeds its bound")
             chunks = value["chunks"]
-            if not isinstance(chunks, list) or len(chunks) != (value["bytes"] + 1024 * 1024 - 1) // (1024 * 1024):
+            if not isinstance(chunks, list) or len(chunks) != (transport["bytes"] + 1024 * 1024 - 1) // (1024 * 1024):
                 raise ValueError("source chunk count differs from its exact bounded frame")
             body = bytearray()
             for index, chunk in enumerate(chunks):
                 if chunk.get("issue_id") != item.id:
                     raise ValueError("source locator belongs to another issue")
                 part = store.read_source_artifact(chunk)
-                expected_size = min(1024 * 1024, value["bytes"] - index * 1024 * 1024)
+                expected_size = min(1024 * 1024, transport["bytes"] - index * 1024 * 1024)
                 if not isinstance(part, bytes) or len(part) != expected_size:
                     raise ValueError("invalid source chunk")
                 body.extend(part)
-                if len(body) > value["bytes"]:
+                if len(body) > transport["bytes"]:
                     raise ValueError("source entry overflows its declared bound")
+            if len(body) != transport["bytes"] or _sha(body) != transport["sha256"]:
+                raise ValueError("source transport bytes differ")
+            if encoding == "zlib":
+                decoder = zlib.decompressobj()
+                body = decoder.decompress(body, value["bytes"] + 1)
+                if not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+                    raise ValueError("source compressed stream is incomplete or has trailing data")
             if len(body) != value["bytes"] or _sha(body) != value["sha256"]:
                 raise ValueError("source entry bytes differ")
             if entry is not None:
                 selected = bytes(body)
         return selected if entry is not None else raw
-    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+    except (KeyError, TypeError, ValueError, AttributeError, zlib.error) as exc:
         raise ValidationError("Invalid complete portable owner source; inspect work show and exact source label") from exc
 
 
@@ -224,7 +273,8 @@ def verify_approved_source(store, reference, entry, *, authority=None):
     actual = {key: frame.get(key) for key in ("owner_resolution", "approval_sha256")}
     if "owner_history_sha256" in expected:
         actual["owner_history_sha256"] = frame.get("owner_history_sha256")
-    actual["files"] = {label: {k: v for k, v in value.items() if k != "chunks"}
+    excluded = {"chunks", "transport"} if frame["schema"] == COMPRESSED_SCHEMA else {"chunks"}
+    actual["files"] = {label: {k: v for k, v in value.items() if k not in excluded}
                        for label, value in frame["files"].items()}
     request = owner_request(entry)
     if (digest(actual) != digest(expected) or actual["owner_resolution"] != digest(request)
