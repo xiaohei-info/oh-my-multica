@@ -11,6 +11,8 @@ from ..core.taskmeta import (
 )
 from ..core.workitem import WorkItemStatus, WorkItemPayload
 from ..errors import NeedsDecision, PlatformError, ValidationError
+from .apply import Ports, apply
+from .decide_effects import UpdateMetadata, UpdateStatus
 
 SCHEMA = "omac.worker-blocker/v2"
 REASONS = {"quality-gate-failed", "owner-decision-required"}
@@ -223,8 +225,12 @@ def report_decision(store, runtime, issue_id, report):
                 raise ValidationError(
                     "Worker control changed while reporting; re-read work show before retrying"
                 )
-            store.update_work_item_metadata(issue_id, decision_required=decision)
-        store.update_status(issue_id, WorkItemStatus.BLOCKED)
+            apply([
+                UpdateMetadata(issue_id, {'decision_required': decision}),
+            ], Ports(store=store))
+        apply([
+            UpdateStatus(issue_id, WorkItemStatus.BLOCKED),
+        ], Ports(store=store))
         current = _read_context(store, issue_id)
         if (
             current.decision_required != decision

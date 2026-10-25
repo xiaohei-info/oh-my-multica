@@ -14,6 +14,8 @@ from ...pipeline.plan import (
     plan_resume,
 )
 from ..output import print_json
+from ...pipeline.apply import Ports, apply
+from ...pipeline.decide_effects import UpdateStatus
 
 def resolve_review_rounds(cfg: dict | None = None) -> int:
     """plan 流水线评审修订轮次上界,与 dag run 节点评审共用 config.retry.review。
@@ -258,7 +260,9 @@ def _confirm(args) -> int:
             "请改用 --dag-key plan-p-xxxx / acceptance-p-xxxx 精确定位。"))
 
     it = waiting[0]
-    engine.store.mark_done(it.id)
+    apply([
+        UpdateStatus(it.id, WorkItemStatus.DONE),
+    ], Ports(store=engine.store))
     print(ui(
         f"Confirmed: {it.title} (issue {it.id}) → DONE. OMAC will continue the review flow.",
         f"已确认:{it.title}(issue {it.id})→ DONE,omac 将继续评审流程"))

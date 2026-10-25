@@ -36,7 +36,6 @@ CI 在显式配置 ``config.ci.check_command`` 或检测到 ``.github/workflows`
 from __future__ import annotations
 
 from dataclasses import dataclass
-import shlex
 
 from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
 from ..core.retry_budget import consumed_bounces

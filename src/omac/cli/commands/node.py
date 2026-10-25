@@ -28,6 +28,8 @@ from ...engines import engine_from_config
 from ...core.workitem import PullRequestState, WorkItemStatus
 from ...errors import NeedsDecision, OmacError, ValidationError, WorkItemNotFoundError
 from ...i18n import ui
+from ...pipeline.apply import Ports, apply, apply_one
+from ...pipeline.decide_effects import UpdateMetadata, UpdateStatus
 
 NAME = "node"
 SUMMARY = "exit 20 后的决策工具(show/retry/accept-nits/accept/abandon)"
@@ -327,13 +329,11 @@ def _recover_delayed_reviewer_submission(
         # the caller redispatches the Reviewer exactly once.
         return False
 
-    engine.store.update_work_item_metadata(
-        current.id,
-        reviewer_run_baseline=replace(
-            baseline, target_run_id=observed.target_run_id),
-        phase=TaskPhase.REVIEW,
-    )
-    engine.store.update_status(current.id, WorkItemStatus.IN_REVIEW)
+    apply([
+        UpdateMetadata(current.id, {'reviewer_run_baseline': replace(
+            baseline, target_run_id=observed.target_run_id), 'phase': TaskPhase.REVIEW}),
+        UpdateStatus(current.id, WorkItemStatus.IN_REVIEW),
+    ], Ports(store=engine.store))
     return True
 
 
@@ -706,8 +706,7 @@ def _accept_nits_apply(args, engine, item, marker: dict) -> None:
     # read-after-write verified, so a restart can safely resume this sequence.
     if item.review_nits_acceptance in (None, {}):
         ensure_no_active_direct_run()
-        updated = engine.store.update_work_item_metadata(
-            item.id, review_nits_acceptance=marker)
+        updated = apply_one(UpdateMetadata(item.id, {'review_nits_acceptance': marker}), Ports(store=engine.store))
         if updated.review_nits_acceptance != marker:
             raise ValidationError(ui(
                 "The operator acceptance marker was not persisted; refusing to clear decision_required.",
@@ -716,8 +715,7 @@ def _accept_nits_apply(args, engine, item, marker: dict) -> None:
 
     if item.decision_required not in (None, {}):
         ensure_no_active_direct_run()
-        updated = engine.store.update_work_item_metadata(
-            item.id, decision_required={})
+        updated = apply_one(UpdateMetadata(item.id, {'decision_required': {}}), Ports(store=engine.store))
         if updated.decision_required not in (None, {}):
             raise ValidationError(ui(
                 "decision_required was not cleared; the WorkItem remains blocked.",
@@ -726,7 +724,9 @@ def _accept_nits_apply(args, engine, item, marker: dict) -> None:
 
     ensure_no_active_direct_run()
     if item.status != WorkItemStatus.IN_REVIEW:
-        engine.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+        apply([
+            UpdateStatus(item.id, WorkItemStatus.IN_REVIEW),
+        ], Ports(store=engine.store))
     final = engine.store.get_work_item(item.id)
     if not (
         final.status == WorkItemStatus.IN_REVIEW
@@ -811,11 +811,10 @@ def _cmd_accept(args) -> int:
                 "否则等待远端确认合入。"))
         node.merged = True
         node.merged_at = observation.merged_at
-    engine.store.update_work_item_metadata(
-        node.work_item_id,
-        decision_required={},
-    )
-    engine.store.update_status(node.work_item_id, WorkItemStatus.DONE)
+    apply([
+        UpdateMetadata(node.work_item_id, {'decision_required': {}}),
+        UpdateStatus(node.work_item_id, WorkItemStatus.DONE),
+    ], Ports(store=engine.store))
 
     node.status = "done"
     save_manifest(manifest, args.manifest)

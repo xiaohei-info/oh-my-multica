@@ -38,6 +38,20 @@ from .convergence import ResolutionState, persist_decision, resolve_convergence
 from .dispatch import (
     normalize_source_refs, render_issue_body, reviewer_dispatch_stopped,
 )
+from .apply import Ports, apply, apply_one
+from .decide_effects import (
+    Assign,
+    ClearAssignment,
+    CreateWorkItem,
+    DispatchReviewer,
+    PrepareReviewCycle,
+    ResetReview,
+    SetAuthoringIdentity,
+    SetNodeContract,
+    UpdateMetadata,
+    UpdateStatus,
+    Wake,
+)
 
 log = logsetup.get_logger(__name__)
 
@@ -92,7 +106,9 @@ def _raise_if_reviewer_dispatch_stopped(
     if not reviewer_dispatch_stopped(current):
         return
     if current.status != WorkItemStatus.BLOCKED:
-        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        apply([
+            UpdateStatus(item_id, WorkItemStatus.BLOCKED),
+        ], Ports(store=store))
     raise NeedsDecision(
         ui(
             "Reviewer dispatch is blocked by the existing decision or platform status.",
@@ -250,9 +266,10 @@ def _resume_amendment_nits_confirmation(
                 "run_ids": [run.id for run in unsafe_runs],
             },
         )
-    engine.store.clear_assignment(item.id)
-    engine.store.update_work_item_metadata(
-        item.id, phase=TaskPhase.CONFIRMATION)
+    apply([
+        ClearAssignment(item.id),
+        UpdateMetadata(item.id, {'phase': TaskPhase.CONFIRMATION}),
+    ], Ports(store=engine.store))
     return engine.store.get_work_item(item.id)
 
 
@@ -263,14 +280,15 @@ def _restart_invalid_review(
     errors: List[str],
 ) -> WorkItem:
     """清除无效 verdict/report，并在同一评审对象上重新派审。"""
-    store.reset_review(item_id)
-    store.prepare_review_cycle(item_id, subject_digest)
+    apply([
+        ResetReview(item_id),
+    ], Ports(store=store))
+    apply_one(PrepareReviewCycle(item_id, subject_digest), Ports(store=store))
     feedback = build_machine_feedback("review-evidence", errors)
-    return store.update_work_item_metadata(
-        item_id,
-        machine_feedback=feedback,
-        review_comment=machine_feedback_summary(item_id, feedback),
-    )
+    return apply_one(UpdateMetadata(item_id, {
+        'machine_feedback': feedback,
+        'review_comment': machine_feedback_summary(item_id, feedback),
+    }), Ports(store=store))
 
 
 def _review_opinion(item: WorkItem) -> Optional[str]:
@@ -540,14 +558,14 @@ def _engine_env(engine) -> Dict[str, str]:
 def create_authoring_task(engine, spec: AuthoringTaskSpec) -> WorkItem:
     """创建并填充一个可直接执行的 authoring issue。"""
     store = engine.store
-    item = store.create_work_item(
-        workspace_id=store.config.workspace_id,
-        title=spec.title,
-        description=spec.title,
-        dag_key=spec.dag_key,
-        worker=spec.assignee,
-        kind=spec.kind,
-    )
+    item = apply_one(CreateWorkItem({
+        'workspace_id': store.config.workspace_id,
+        'title': spec.title,
+        'description': spec.title,
+        'dag_key': spec.dag_key,
+        'worker': spec.assignee,
+        'kind': spec.kind,
+    }), Ports(store=store))
     if spec.amendment_attempt is not None:
         return finalize_authoring_shell(
             engine, item, spec, allow_created_platform_assignee=True)
@@ -787,21 +805,25 @@ def finalize_authoring_shell(
             },
         )
     store = engine.store
-    store.set_authoring_identity(
-        item.id, dag_key=spec.dag_key, kind=TaskKind.AMENDMENT)
+    apply_one(SetAuthoringIdentity(item.id, spec.dag_key, TaskKind.AMENDMENT), Ports(store=store))
     if spec.contract is not None and item.contract is None:
-        store.set_node_contract(item.id, spec.contract)
-    store.update_work_item_metadata(
-        item.id,
-        worker=spec.assignee,
-        description=body,
-        source_refs=refs,
-        amendment_attempt=spec.amendment_attempt,
-        phase=TaskPhase.AUTHORING,
-    )
+        apply([
+            SetNodeContract(item.id, spec.contract),
+        ], Ports(store=store))
+    apply([
+        UpdateMetadata(item.id, {
+            'worker': spec.assignee,
+            'description': body,
+            'source_refs': refs,
+            'amendment_attempt': spec.amendment_attempt,
+            'phase': TaskPhase.AUTHORING,
+        }),
+    ], Ports(store=store))
     finalized = store.get_work_item(item.id)
     if allow_created_platform_assignee and finalized.platform_assignee_id:
-        store.clear_assignment(item.id)
+        apply([
+            ClearAssignment(item.id),
+        ], Ports(store=store))
         finalized = store.get_work_item(item.id)
     if _observe_attempt_active(engine, item.id, spec.dag_key):
         _reject_active_attempt(finalized, spec.dag_key)
@@ -840,14 +862,15 @@ def refresh_authoring_task(
     body, refs = _authoring_materialization(
         engine, item_id, spec, item_snapshot)
     if spec.contract is not None:
-        store.set_node_contract(item_id, spec.contract)
-    return store.update_work_item_metadata(
-        item_id,
-        worker=spec.assignee,
-        description=body,
-        source_refs=refs,
-        amendment_attempt=spec.amendment_attempt,
-    )
+        apply([
+            SetNodeContract(item_id, spec.contract),
+        ], Ports(store=store))
+    return apply_one(UpdateMetadata(item_id, {
+        'worker': spec.assignee,
+        'description': body,
+        'source_refs': refs,
+        'amendment_attempt': spec.amendment_attempt,
+    }), Ports(store=store))
 
 
 def _resume_reviewer_completed_without_verdict(
@@ -883,8 +906,7 @@ def _resume_reviewer_completed_without_verdict(
                 "next_action": f"omac work show {item.id} --output json",
             },
         )
-    cleared = engine.store.update_work_item_metadata(
-        item.id, decision_required={})
+    cleared = apply_one(UpdateMetadata(item.id, {'decision_required': {}}), Ports(store=engine.store))
     if cleared.requires_decision:
         raise NeedsDecision(
             "The reviewer no-submit decision could not be cleared safely.",
@@ -895,7 +917,9 @@ def _resume_reviewer_completed_without_verdict(
             },
         )
     if cleared.status != WorkItemStatus.IN_REVIEW:
-        engine.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+        apply([
+            UpdateStatus(item.id, WorkItemStatus.IN_REVIEW),
+        ], Ports(store=engine.store))
     verified = engine.store.get_work_item(item.id)
     if (
         verified.decision_required not in (None, {})
@@ -983,9 +1007,10 @@ def _guard_resume_authoring_terminal_run(
         "run_id": latest.id,
         "next_action": f"omac node retry <manifest> <node>",
     }
-    engine.store.update_work_item_metadata(
-        item.id, decision_required=decision, phase=TaskPhase.AUTHORING)
-    engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    apply([
+        UpdateMetadata(item.id, {'decision_required': decision, 'phase': TaskPhase.AUTHORING}),
+        UpdateStatus(item.id, WorkItemStatus.BLOCKED),
+    ], Ports(store=engine.store))
     raise NeedsDecision(
         "The previous authoring Run ended without submitting a deliverable; "
         "no duplicate Run was started.",
@@ -1239,12 +1264,10 @@ class _TaskRun:
             "phase": decision_phase.value,
             "resume_issue_id": self.item_id,
         }
-        self.store.update_work_item_metadata(
-            self.item_id,
-            decision_required=decision,
-            phase=decision_phase,
-        )
-        self.store.mark_blocked(self.item_id)
+        apply([
+            UpdateMetadata(self.item_id, {'decision_required': decision, 'phase': decision_phase}),
+            UpdateStatus(self.item_id, WorkItemStatus.BLOCKED),
+        ], Ports(store=self.store))
         log.info(
             logsetup.EVT_NEEDS_DECISION,
             kind=self.kind.value,
@@ -1394,9 +1417,11 @@ class _TaskRun:
                 run.id for run in self.runtime.list_runs(self.item_id)
                 if run.kind == "direct"
             }
-        self.store.mark_in_progress(self.item_id)
-        self.store.assign_work_item(self.item_id, self.assignee, "worker")
-        self.runtime.wake(self.item_id, self.assignee, "worker")
+        apply([
+            UpdateStatus(self.item_id, WorkItemStatus.IN_PROGRESS),
+            Assign(self.item_id, self.assignee, "worker"),
+            Wake(self.item_id, self.assignee, "worker"),
+        ], Ports(store=self.store, runtime=self.runtime))
         log.info(
             logsetup.EVT_DISPATCH,
             kind=self.kind.value,
@@ -1468,22 +1493,21 @@ class _TaskRun:
 
     def _persist_machine_feedback(self, errors: List[str]) -> None:
         feedback = build_machine_feedback("machine-gate", errors)
-        self.store.update_work_item_metadata(
-            self.item_id,
-            machine_feedback=feedback,
-            review_comment=machine_feedback_summary(self.item_id, feedback),
-        )
+        apply([
+            UpdateMetadata(self.item_id, {
+                'machine_feedback': feedback,
+                'review_comment': machine_feedback_summary(self.item_id, feedback),
+            }),
+        ], Ports(store=self.store))
 
     def _block_for_budget_decision(self, gate: str, rounds: int) -> WorkItem:
         current = self.store.get_work_item(self.item_id)
         decision = _budget_exhausted_decision(
             self.kind, current, gate=gate, rounds=rounds)
-        self.store.update_work_item_metadata(
-            self.item_id,
-            decision_required=decision,
-            phase=TaskPhase.REVIEW,
-        )
-        self.store.mark_blocked(self.item_id)
+        apply([
+            UpdateMetadata(self.item_id, {'decision_required': decision, 'phase': TaskPhase.REVIEW}),
+            UpdateStatus(self.item_id, WorkItemStatus.BLOCKED),
+        ], Ports(store=self.store))
         return self.store.get_work_item(self.item_id)
 
     def _amendment_review_evidence(self, candidate: WorkItem) -> dict[str, str]:
@@ -1525,8 +1549,10 @@ class _TaskRun:
             and _rejected_verdict_was_counted(self.kind, self.delivered)
             and self.delivered.bounces.review < initial_review_limit
         ):
-            self.store.reset_review(self.item_id)
-            self.store.update_status(self.item_id, WorkItemStatus.TODO)
+            apply([
+                ResetReview(self.item_id),
+                UpdateStatus(self.item_id, WorkItemStatus.TODO),
+            ], Ports(store=self.store))
             self.delivered = self._produce()
             self.delivery = _delivery_of(self.kind, self.delivered)
         return None
@@ -1542,7 +1568,9 @@ class _TaskRun:
                     break
                 log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
                          gate="guard", round=guard_round, max=self.max_revisions)
-                self.store.reset_review(self.item_id)
+                apply([
+                    ResetReview(self.item_id),
+                ], Ports(store=self.store))
                 self.delivered = self._produce(hint=guard_errors)
                 self.delivery = _delivery_of(self.kind, self.delivered)
             else:
@@ -1568,20 +1596,22 @@ class _TaskRun:
     ) -> Dict[str, Any]:
         current = self.store.get_work_item(self.item_id)
         if current.review_comment or current.machine_feedback_ref:
-            self.store.update_work_item_metadata(
-                self.item_id, review_comment="", machine_feedback={})
+            apply([
+                UpdateMetadata(self.item_id, {'review_comment': "", 'machine_feedback': {}}),
+            ], Ports(store=self.store))
         if not self.confirm:
-            self.store.mark_done(self.item_id)
+            apply([
+                UpdateStatus(self.item_id, WorkItemStatus.DONE),
+            ], Ports(store=self.store))
             log.info(logsetup.EVT_NODE_DONE, kind=self.kind.value, id=self.item_id)
             return {"item_id": self.item_id, "delivery": current_delivery,
                     "rounds": rounds, "verdict": verdict, "kind": self.kind.value}
 
         if prepare_confirmation:
-            self.store.clear_assignment(self.item_id)
-            # unassign 在真实平台上可能触发 issue 状态写；阶段必须最后落盘，
-            # 否则会出现 loop 已等待人工门、metadata 却仍停在 review 的竞态。
-            self.store.update_work_item_metadata(
-                self.item_id, phase=TaskPhase.CONFIRMATION)
+            apply([
+                ClearAssignment(self.item_id),
+                UpdateMetadata(self.item_id, {'phase': TaskPhase.CONFIRMATION}),
+            ], Ports(store=self.store))
         log.info(logsetup.EVT_HUMAN_GATE_WAIT, kind=self.kind.value, id=self.item_id)
         if self.pause_at_confirmation:
             return {
@@ -1641,7 +1671,9 @@ class _TaskRun:
             else:
                 # confirmation 只能消费仍绑定当前交付的评审结论。若产出者在
                 # pass-with-nits 后提交了新交付，旧 verdict 不能替新交付背书。
-                self.store.update_work_item_metadata(self.item_id, phase=TaskPhase.REVIEW)
+                apply([
+                    UpdateMetadata(self.item_id, {'phase': TaskPhase.REVIEW}),
+                ], Ports(store=self.store))
                 self.delivered = self.store.get_work_item(self.item_id)
 
         if not self.reviewers:
@@ -1664,15 +1696,14 @@ class _TaskRun:
             subject_digest = _review_subject_digest(self.kind, self.delivered, round_index)
             current = self.store.get_work_item(self.item_id)
             if current.review_subject_digest != subject_digest:
-                self.store.update_work_item_metadata(
-                    self.item_id,
-                    review_obligations=build_review_obligations(
+                apply([
+                    UpdateMetadata(self.item_id, {'review_obligations': build_review_obligations(
                         current,
                         acceptance_doc=self.review_acceptance_doc,
                         amendment_manifest=self.review_amendment_manifest,
-                        amendment_evidence=self._amendment_review_evidence(current)),
-                )
-            reviewed = self.store.prepare_review_cycle(self.item_id, subject_digest)
+                        amendment_evidence=self._amendment_review_evidence(current))}),
+                ], Ports(store=self.store))
+            reviewed = apply_one(PrepareReviewCycle(self.item_id, subject_digest), Ports(store=self.store))
             while True:
                 if _has_review_verdict(reviewed):
                     evidence_errors = _review_evidence_errors(self.contract, reviewed)
@@ -1684,7 +1715,9 @@ class _TaskRun:
                     reviewed = _restart_invalid_review(
                         self.store, self.item_id, subject_digest, evidence_errors)
 
-                self.store.mark_in_review(self.item_id)
+                apply([
+                    UpdateStatus(self.item_id, WorkItemStatus.IN_REVIEW),
+                ], Ports(store=self.store))
                 _raise_if_reviewer_dispatch_stopped(self.store, self.item_id, self.kind)
                 reviewer_baseline = None
                 if self.runtime.capabilities.stable_direct_run_identity:
@@ -1693,7 +1726,7 @@ class _TaskRun:
                         if run.kind == "direct"
                     }
                 _raise_if_reviewer_dispatch_stopped(self.store, self.item_id, self.kind)
-                dispatched = self.runtime.dispatch_reviewer(self.store, self.item_id, reviewer)
+                dispatched = apply_one(DispatchReviewer(self.item_id, reviewer), Ports(store=self.store, runtime=self.runtime))
                 if not dispatched:
                     _raise_if_reviewer_dispatch_stopped(self.store, self.item_id, self.kind)
                 log.info(logsetup.EVT_REVIEW_DISPATCH, kind=self.kind.value, id=self.item_id,
@@ -1748,11 +1781,15 @@ class _TaskRun:
                         "pass-with-nits", round_index, self.delivery)
                 log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
                          gate="review-nits", round=round_index, max=review_limit)
-                self.store.update_work_item_metadata(
-                    self.item_id, phase=TaskPhase.AUTHORING,
-                    review_comment="", machine_feedback={},
-                    review_bounce=round_index)
-                self.store.update_status(self.item_id, WorkItemStatus.TODO)
+                apply([
+                    UpdateMetadata(self.item_id, {
+                        'phase': TaskPhase.AUTHORING,
+                        'review_comment': "",
+                        'machine_feedback': {},
+                        'review_bounce': round_index,
+                    }),
+                    UpdateStatus(self.item_id, WorkItemStatus.TODO),
+                ], Ports(store=self.store))
                 self.delivered = self._produce()
                 self.delivery = _delivery_of(self.kind, self.delivered)
                 if round_index >= review_limit:
@@ -1774,16 +1811,19 @@ class _TaskRun:
             last_opinion = _review_opinion(reviewed)
             log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
                      gate="review", round=round_index, max=review_limit)
-            self.store.update_work_item_metadata(
-                self.item_id, review_bounce=round_index)
+            apply([
+                UpdateMetadata(self.item_id, {'review_bounce': round_index}),
+            ], Ports(store=self.store))
             if round_index >= review_limit:
                 log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id,
                          gate="review", rounds=round_index)
                 reviewed = self._block_for_budget_decision("review", round_index)
                 raise _review_exhausted_error(
                     self.kind, reviewed, round_index, last_opinion)
-            self.store.reset_review(self.item_id)
-            self.store.update_status(self.item_id, WorkItemStatus.TODO)
+            apply([
+                ResetReview(self.item_id),
+                UpdateStatus(self.item_id, WorkItemStatus.TODO),
+            ], Ports(store=self.store))
             self.delivered = self._produce()
             self.delivery = _delivery_of(self.kind, self.delivered)
 

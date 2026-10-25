@@ -576,14 +576,15 @@ def test_run_task_rechecks_reviewer_control_before_assignment(monkeypatch):
         "phase": "review",
         "gate": "review-convergence",
     }
-    original_mark_in_review = eng.store.mark_in_review
+    original_update_status = eng.store.update_status
 
-    def mark_in_review(item_id):
-        original_mark_in_review(item_id)
-        eng.store.update_work_item_metadata(
-            item_id, decision_required=decision)
+    def update_status(item_id, status):
+        original_update_status(item_id, status)
+        if status is WorkItemStatus.IN_REVIEW:
+            eng.store.update_work_item_metadata(
+                item_id, decision_required=decision)
 
-    monkeypatch.setattr(eng.store, "mark_in_review", mark_in_review)
+    monkeypatch.setattr(eng.store, "update_status", update_status)
     monkeypatch.setattr(
         eng.store,
         "assign_work_item",

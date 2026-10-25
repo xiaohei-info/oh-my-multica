@@ -81,6 +81,21 @@ from ..core.taskmeta import (
     review_nits_feedback_is_complete, review_nits_acceptance_is_valid,
     current_review_ledger,
 )
+from .apply import Ports, apply, apply_one
+from .decide_effects import (
+    AddComment,
+    Assign,
+    ClearAssignment,
+    CreateWorkItem,
+    DispatchReviewer,
+    NormalizeConfirmedMerge,
+    PrepareReviewCycle,
+    ResetReview,
+    SetNodeContract,
+    UpdateMetadata,
+    UpdateStatus,
+    Wake,
+)
 
 log = logsetup.get_logger(__name__)
 
@@ -1426,7 +1441,9 @@ def _resume_reviewer_run(
         current = store.observe_work_item_control(item_id).work_item
         if reviewer_dispatch_stopped(current):
             return False
-    store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+    apply([
+        UpdateStatus(item_id, WorkItemStatus.IN_REVIEW),
+    ], Ports(store=store))
     if manifest is not None and key is not None:
         if _guard_reviewer_dispatch_control(
             store, manifest, key, item_id) is not None:
@@ -1435,7 +1452,7 @@ def _resume_reviewer_run(
         current = store.observe_work_item_control(item_id).work_item
         if reviewer_dispatch_stopped(current):
             return False
-    resumed = runtime.dispatch_reviewer(store, item_id, node.reviewer)
+    resumed = apply_one(DispatchReviewer(item_id, node.reviewer), Ports(store=store, runtime=runtime))
     if not resumed and manifest is not None and key is not None:
         _guard_reviewer_dispatch_control(store, manifest, key, item_id)
     return resumed
@@ -1488,8 +1505,10 @@ def _block_runtime_failure(
         "next_action": retry,
     }
     _mark_recovery_pending(manifest, key)
-    store.update_work_item_metadata(item.id, decision_required=decision)
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    apply([
+        UpdateMetadata(item.id, {'decision_required': decision}),
+        UpdateStatus(item.id, WorkItemStatus.BLOCKED),
+    ], Ports(store=store))
     set_node(manifest, key, status="blocked")
     return reason
 
@@ -1515,8 +1534,10 @@ def _block_reviewer(
         manifest_path, key, item, reason_code, run_id=run_id)
     manifest._recovery_manifest_path = manifest_path
     _mark_recovery_pending(manifest, key)
-    store.update_work_item_metadata(item.id, decision_required=decision)
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    apply([
+        UpdateMetadata(item.id, {'decision_required': decision}),
+        UpdateStatus(item.id, WorkItemStatus.BLOCKED),
+    ], Ports(store=store))
     set_node(manifest, key, status="blocked")
     return reason
 
@@ -1531,7 +1552,9 @@ def _block_existing_reviewer_decision(
     set_node(manifest, key, status="blocked")
     _mark_recovery_pending(manifest, key)
     if item.status != WorkItemStatus.BLOCKED:
-        store.update_status(item.id, WorkItemStatus.BLOCKED)
+        apply([
+            UpdateStatus(item.id, WorkItemStatus.BLOCKED),
+        ], Ports(store=store))
     return ui(
         "Reviewer dispatch is blocked by the existing decision or platform status.",
         "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
@@ -1598,11 +1621,15 @@ def _block_review_nits_acceptance(
     }
     if item.decision_required != decision:
         _mark_recovery_pending(manifest, key)
-        store.update_work_item_metadata(item.id, decision_required=decision)
+        apply([
+            UpdateMetadata(item.id, {'decision_required': decision}),
+        ], Ports(store=store))
     else:
         _mark_recovery_pending(manifest, key)
     if item.status != WorkItemStatus.BLOCKED:
-        store.update_status(item.id, WorkItemStatus.BLOCKED)
+        apply([
+            UpdateStatus(item.id, WorkItemStatus.BLOCKED),
+        ], Ports(store=store))
     set_node(manifest, key, status="blocked")
     return ui(
         "Reviewer returned pass-with-nits; caller acceptance is required before merge. "
@@ -1643,12 +1670,14 @@ def _block_review_rework_budget(
         if isinstance(value, dict) and value:
             decision[field] = value
     _mark_recovery_pending(manifest, key)
-    store.update_work_item_metadata(item.id, decision_required=decision)
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
-    store.add_comment(item.id, ui(
+    apply([
+        UpdateMetadata(item.id, {'decision_required': decision}),
+        UpdateStatus(item.id, WorkItemStatus.BLOCKED),
+        AddComment(item.id, ui(
         f"Review retry limit ({budget.authorized_through_round}) exhausted: {reason}",
         f"评审回退上界({budget.authorized_through_round})已耗尽: {reason}",
-    ))
+    )),
+    ], Ports(store=store))
     set_node(manifest, key, status="blocked")
     log.info(
         logsetup.EVT_NEEDS_DECISION,
@@ -1774,8 +1803,9 @@ def _reviewer_run_baseline_for_observation(
                     baseline, cutoff_created_at=identity.verification_created_at,
                     generation=f"review-{secrets.token_hex(8)}")
                 _mark_recovery_pending(manifest, key)
-                store.update_work_item_metadata(
-                    item.id, reviewer_run_baseline=baseline)
+                apply([
+                    UpdateMetadata(item.id, {'reviewer_run_baseline': baseline}),
+                ], Ports(store=store))
             cutoff = _parse_platform_time(baseline.cutoff_created_at)
             if cutoff is None or cutoff.tzinfo is None or cutoff != identity_cutoff:
                 return None, (
@@ -1826,8 +1856,9 @@ def _reviewer_run_baseline_for_observation(
         baseline_direct_run_ids=tuple(sorted(historical_ids)),
     )
     _mark_recovery_pending(manifest, key)
-    store.update_work_item_metadata(
-        item.id, reviewer_run_baseline=baseline)
+    apply([
+        UpdateMetadata(item.id, {'reviewer_run_baseline': baseline}),
+    ], Ports(store=store))
     return baseline, None
 
 
@@ -1856,7 +1887,9 @@ def _retry_reviewer_attempt(
         _mark_recovery_pending(manifest, key)
     else:
         node.recovery_marker = True
-    store.update_work_item_metadata(item.id, reviewer_run_baseline=retry)
+    apply([
+        UpdateMetadata(item.id, {'reviewer_run_baseline': retry}),
+    ], Ports(store=store))
     wake_error = None
     try:
         resumed = _resume_reviewer_run(
@@ -1872,9 +1905,10 @@ def _retry_reviewer_attempt(
             cutoff_created_at=retry.cutoff_created_at,
             attempt=retry.attempt)
         if observed.state in {"active", "terminal"}:
-            store.update_work_item_metadata(
-                item.id, reviewer_run_baseline=replace(
-                    retry, target_run_id=observed.target_run_id))
+            apply([
+                UpdateMetadata(item.id, {'reviewer_run_baseline': replace(
+                    retry, target_run_id=observed.target_run_id)}),
+            ], Ports(store=store))
             return None
         if observed.state == "unexpected":
             return observed.detail
@@ -1908,14 +1942,17 @@ def _prepare_new_review_subject(store, manifest, key, item_id, current, subject_
         return None
     # 先解除旧 subject 的 assignment；若随后崩溃，reviewer metadata 为空，
     # restart 不会把旧 active Run 误认成新 subject 已派发。
-    store.clear_assignment(item_id)
+    apply([
+        ClearAssignment(item_id),
+    ], Ports(store=store))
     if guard():
         return None
-    store.update_work_item_metadata(
-        item_id, review_obligations=build_review_obligations(current))
+    apply([
+        UpdateMetadata(item_id, {'review_obligations': build_review_obligations(current)}),
+    ], Ports(store=store))
     if guard():
         return None
-    prepared = store.prepare_review_cycle(item_id, subject_digest)
+    prepared = apply_one(PrepareReviewCycle(item_id, subject_digest), Ports(store=store))
     if guard():
         return None
     return prepared
@@ -1961,9 +1998,10 @@ def _observe_prepared_reviewer_assignment(store, runtime, item_id, reviewer_id, 
             _target, target_error = _formal_dispatch_target(runs, observed)
             if target_error is not None:
                 raise _ReviewerDispatchUnresolved(target_error)
-            store.update_work_item_metadata(
-                item_id, reviewer_run_baseline=replace(
-                    baseline, target_run_id=observed.target_run_id))
+            apply([
+                UpdateMetadata(item_id, {'reviewer_run_baseline': replace(
+                    baseline, target_run_id=observed.target_run_id)}),
+            ], Ports(store=store))
             return
         if observed.state == "unexpected":
             raise _ReviewerDispatchUnresolved(observed.detail)
@@ -2013,7 +2051,9 @@ def _dispatch_reviewer_for_current_subject_locked(
         _mark_recovery_pending(manifest, key)
         if _guard_reviewer_dispatch_control(store, manifest, key, item_id) is not None:
             return False
-        store.update_work_item_metadata(item_id, reviewer_run_baseline=baseline)
+        apply([
+            UpdateMetadata(item_id, {'reviewer_run_baseline': baseline}),
+        ], Ports(store=store))
         if _guard_reviewer_dispatch_control(store, manifest, key, item_id) is not None:
             return False
         current = store.get_work_item(item_id)
@@ -2045,7 +2085,9 @@ def _dispatch_prepared_reviewer(store, runtime, code_host, manifest, key, node, 
     assignment = (current.reviewer, current.platform_assignee_id)
     _, body_metadata = _develop_issue_body_metadata(store, manifest, key, phase=TaskPhase.REVIEW)
     _refresh_develop_issue_body(store, manifest, key, phase=TaskPhase.REVIEW)
-    store.update_status(item_id, WorkItemStatus.IN_REVIEW)
+    apply([
+        UpdateStatus(item_id, WorkItemStatus.IN_REVIEW),
+    ], Ports(store=store))
     if _guard_reviewer_dispatch_control(store, manifest, key, item_id) is not None:
         return False
     current = store.get_work_item(item_id)
@@ -2058,7 +2100,7 @@ def _dispatch_prepared_reviewer(store, runtime, code_host, manifest, key, node, 
         or (current.reviewer, current.platform_assignee_id) != assignment
     ):
         raise PlatformError("Reviewer source or Run baseline changed before dispatch")
-    if not runtime.dispatch_reviewer(store, item_id, node.reviewer):
+    if not apply_one(DispatchReviewer(item_id, node.reviewer), Ports(store=store, runtime=runtime)):
         _guard_reviewer_dispatch_control(store, manifest, key, item_id)
         return False
     return True
@@ -2262,7 +2304,7 @@ def _new_handoff_intent(run: _HandoffRun, review_bounce: int | None, gate: str |
     preparation = _apply_observed_handoff_preparation_write(
         run.store,
         item_id,
-        lambda: run.store.update_work_item_metadata(item_id, worker_handoff=intent),
+        lambda: apply_one(UpdateMetadata(item_id, {'worker_handoff': intent}), Ports(store=run.store)),
         lambda item: (
             item.worker_handoff is not None
             and item.worker_handoff.generation == intent.generation
@@ -2305,7 +2347,7 @@ def _retire_source_identity(run: _HandoffRun) -> _WorkerHandoffResult | None:
     ):
         raise PlatformError(f"Worker handoff source changed before retirement for {item_id}")
     return run.prepare(
-        lambda: run.store.update_work_item_metadata(item_id, delivery_identity={}),
+        lambda: apply_one(UpdateMetadata(item_id, {'delivery_identity': {}}), Ports(store=run.store)),
         lambda item: item.delivery_identity is None,
     )
 
@@ -2316,7 +2358,7 @@ def _prepare_bounce(run: _HandoffRun, attr: str, target: int, mismatch: str
     store, item_id = run.store, run.item_id
     if getattr(run.current.bounces, attr) < target:
         pending = run.prepare(
-            lambda: store.update_work_item_metadata(item_id, **{f"{attr}_bounce": target}),
+            lambda: apply_one(UpdateMetadata(item_id, {**{f"{attr}_bounce": target}}), Ports(store=store)),
             lambda item: getattr(item.bounces, attr) == target,
         )
         if pending is not None:
@@ -2377,12 +2419,12 @@ def _reset_to_authoring(run: _HandoffRun) -> _WorkerHandoffResult | None:
     # reset_review 的接口契约负责一次性清除当前 review projection 并回 AUTHORING。
     # handoff 不制造瞬时 review cycle，避免新增可崩溃的持久化中间态。
     if not _worker_handoff_review_is_reset(run.current):
-        pending = run.prepare(lambda: store.reset_review(item_id), _worker_handoff_review_is_reset)
+        pending = run.prepare(lambda: apply_one(ResetReview(item_id), Ports(store=store)), _worker_handoff_review_is_reset)
         if pending is not None:
             return pending
     if run.current.status != WorkItemStatus.IN_PROGRESS:
         pending = run.prepare(
-            lambda: store.update_status(item_id, WorkItemStatus.IN_PROGRESS),
+            lambda: apply_one(UpdateStatus(item_id, WorkItemStatus.IN_PROGRESS), Ports(store=store)),
             lambda item: item.status == WorkItemStatus.IN_PROGRESS,
         )
         if pending is not None:
@@ -2401,7 +2443,7 @@ def _write_authoring_body(run: _HandoffRun) -> _WorkerHandoffResult | None:
     body_item_id, body_metadata = _develop_issue_body_metadata(
         store, run.manifest, run.key, phase=TaskPhase.AUTHORING, item=run.current)
     pending = run.prepare(
-        lambda: store.update_work_item_metadata(body_item_id, **body_metadata),
+        lambda: apply_one(UpdateMetadata(body_item_id, {**body_metadata}), Ports(store=store)),
         lambda item: _develop_issue_body_matches(item, body_metadata),
         item_id=body_item_id,
     )
@@ -2426,8 +2468,8 @@ def _assign_and_wake(run: _HandoffRun) -> _WorkerHandoffResult:
     身份由后续只读观察绑定到持久 handoff，而不是由 assignment 成功猜测。"""
     store, runtime, item_id, intent = run.store, run.runtime, run.item_id, run.intent
     for action, kind_label in (
-        (lambda: store.assign_work_item(item_id, intent.target_worker, "worker"), "assign"),
-        (lambda: runtime.wake(item_id, intent.target_worker, "worker"), "wake"),
+        (lambda: apply_one(Assign(item_id, intent.target_worker, "worker"), Ports(store=store)), "assign"),
+        (lambda: apply_one(Wake(item_id, intent.target_worker, "worker"), Ports(runtime=runtime)), "wake"),
     ):
         decided = run.needs_decision_if_any()
         if decided is not None:
@@ -2597,9 +2639,13 @@ def _retry_worker_handoff(
         if fresh.work_item.worker_handoff != current.worker_handoff:
             raise PlatformError(f"Worker retry generation changed for {item.id}")
         if consume_business_bounce:
-            store.clear_assignment(item.id)
+            apply([
+                ClearAssignment(item.id),
+            ], Ports(store=store))
         _mark_recovery_pending(manifest, key)
-        store.update_work_item_metadata(item.id, worker_handoff=retry_intent)
+        apply([
+            UpdateMetadata(item.id, {'worker_handoff': retry_intent}),
+        ], Ports(store=store))
         return _dispatch_worker_handoff(store, runtime, code_host, manifest, key)
 
 
@@ -2687,7 +2733,9 @@ def _observe_terminal_without_submit(
     if observed_at is None:
         intent = replace(
             intent, terminal_observed_at=_utcnow().isoformat())
-        store.update_work_item_metadata(item_id, worker_handoff=intent)
+        apply([
+            UpdateMetadata(item_id, {'worker_handoff': intent}),
+        ], Ports(store=store))
         return "pending-submit", intent
     if (_utcnow() - observed_at).total_seconds() < _HANDOFF_TERMINAL_GRACE_SECONDS:
         return "pending-submit", intent
@@ -2915,14 +2963,18 @@ def _commit_worker_handoff_delivery(
             f"Persisted delivery identity does not match platform facts for "
             f"handoff {result.intent.generation}")
     if existing is None:
-        store.update_work_item_metadata(item_id, delivery_identity=identity)
+        apply([
+            UpdateMetadata(item_id, {'delivery_identity': identity}),
+        ], Ports(store=store))
     persisted = _delivery_identity(
         store.observe_work_item_control(item_id).work_item)
     if persisted is None or persisted.as_dict() != identity.as_dict():
         raise PlatformError(
             f"Controller-sealed delivery identity did not persist for "
             f"handoff {result.intent.generation}")
-    store.update_work_item_metadata(item_id, worker_handoff={})
+    apply([
+        UpdateMetadata(item_id, {'worker_handoff': {}}),
+    ], Ports(store=store))
     return replace(
         projection,
         work_item=replace(
@@ -2954,7 +3006,9 @@ def _finalize_worker_handoff_delivery(
         # the Worker already submitted this causally bound delivery. Once the
         # delivery is sealed and its evidence passes, restore the platform
         # status to the submitted terminal state before routing Reviewer.
-        store.update_status(node.work_item_id, WorkItemStatus.DONE)
+        apply([
+            UpdateStatus(node.work_item_id, WorkItemStatus.DONE),
+        ], Ports(store=store))
         projection = replace(
             projection,
             work_item=replace(
@@ -3060,7 +3114,9 @@ def _observe_worker_handoff(
         raise PlatformError(observed.detail)
     if observed.target_run_id and observed.target_run_id != intent.target_run_id:
         intent = replace(intent, target_run_id=observed.target_run_id)
-        store.update_work_item_metadata(item_id, worker_handoff=intent)
+        apply([
+            UpdateMetadata(item_id, {'worker_handoff': intent}),
+        ], Ports(store=store))
     if observed.state == "active":
         return _WorkerHandoffResult("waiting", intent, projection)
     if observed.state == "terminal":
@@ -3156,20 +3212,24 @@ def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path):
             target_agent_id=worker_id, target_run_id=observed.target_run_id,
             target_worker_bounce=0)
         _mark_recovery_pending(manifest, key)
-        store.update_work_item_metadata(item.id, worker_handoff=intent)
+        apply([
+            UpdateMetadata(item.id, {'worker_handoff': intent}),
+        ], Ports(store=store))
         return store.observe_work_item_control(item.id).work_item, None
     retry = f"omac node retry {path} {key}"
     reason = ui(
         f"Legacy Worker Run causality is unsafe; inspect Runs, then use `{retry}`.",
         f"旧版 Worker Run 因果关系不安全；请检查 Runs 后执行 `{retry}`。")
     _mark_recovery_pending(manifest, key)
-    store.update_work_item_metadata(item.id, decision_required={
+    apply([
+        UpdateMetadata(item.id, {'decision_required': {
         "schema": DECISION_REQUIRED_SCHEMA,
         "reason_code": "legacy-worker-handoff-migration-unproven",
         "kind": TaskKind.DEVELOP.value, "phase": TaskPhase.AUTHORING.value,
         "gate": "worker", "resume_issue_id": item.id, "node_id": key,
-        "next_action": retry})
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
+        "next_action": retry}}),
+        UpdateStatus(item.id, WorkItemStatus.BLOCKED),
+    ], Ports(store=store))
     set_node(manifest, key, status="blocked")
     return item, reason
 
@@ -3223,7 +3283,9 @@ def _complete_merge_if_confirmed(
     action = run_merge_delivery(
         config, manifest, key, store, runtime, code_host, retry_limits, manifest_path)
     if action == "pass":
-        store.update_status(node.work_item_id, WorkItemStatus.DONE)
+        apply([
+            UpdateStatus(node.work_item_id, WorkItemStatus.DONE),
+        ], Ports(store=store))
         set_node(manifest, key, status="done")
         log.info(logsetup.EVT_NODE_DONE, kind=_DAG_KIND, node=key,
                  id=node.work_item_id)
@@ -3430,7 +3492,7 @@ def _reconcile_confirmed_merge(store: WorkItemStore, manifest: Manifest, key: st
         node.recovery_marker = False
         changed = True
     if item.status != WorkItemStatus.DONE or item.platform_assignee_id is not None:
-        store.normalize_confirmed_merge(node.work_item_id)
+        apply_one(NormalizeConfirmedMerge(node.work_item_id), Ports(store=store))
     if node.status != "done":
         set_node(manifest, key, status="done")
         changed = True
@@ -3441,10 +3503,12 @@ def _reconcile_done_develop(store: WorkItemStore, manifest: Manifest, manifest_p
                             node, item, pull_requests: Dict[str, Any]) -> bool:
     """A historical `done` develop node must still prove a confirmed remote merge."""
     if not _pull_request_url(item):
-        store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-        store.add_comment(node.work_item_id, ui(
+        apply([
+            UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+            AddComment(node.work_item_id, ui(
             "⚠️ Develop done requires a PR with confirmed remote merge facts.",
-            "⚠️ develop done 必须有带远端合入确认事实的 PR。"))
+            "⚠️ develop done 必须有带远端合入确认事实的 PR。")),
+        ], Ports(store=store))
         set_node(manifest, key, status="blocked")
         return True
     if not merge_request_state_is_valid(node.merge_request_state):
@@ -3454,7 +3518,9 @@ def _reconcile_done_develop(store: WorkItemStore, manifest: Manifest, manifest_p
         return True
     if confirmed_merge_is_closed(node):
         if item.status != WorkItemStatus.DONE:
-            store.update_status(node.work_item_id, WorkItemStatus.DONE)
+            apply([
+                UpdateStatus(node.work_item_id, WorkItemStatus.DONE),
+            ], Ports(store=store))
         return False
     pull_request = pull_requests[key]  # observed only for nodes that still need the merge proof
     state = _pull_request_state(pull_request)
@@ -3463,25 +3529,33 @@ def _reconcile_done_develop(store: WorkItemStore, manifest: Manifest, manifest_p
         node.merged_at = pull_request.merged_at
         node.merge_request_state = None
         if item.status != WorkItemStatus.DONE:
-            store.update_status(node.work_item_id, WorkItemStatus.DONE)
+            apply([
+                UpdateStatus(node.work_item_id, WorkItemStatus.DONE),
+            ], Ports(store=store))
         return True
     if state in {PullRequestState.OPEN, PullRequestState.PENDING}:
-        store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
+        apply([
+            UpdateStatus(node.work_item_id, WorkItemStatus.IN_REVIEW),
+        ], Ports(store=store))
         if state == PullRequestState.PENDING:
             node.merge_request_state = "requested"
         set_node(manifest, key, status="merging")
         return True
     if state == PullRequestState.UNKNOWN:
-        store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
+        apply([
+            UpdateStatus(node.work_item_id, WorkItemStatus.IN_REVIEW),
+        ], Ports(store=store))
         set_node(manifest, key, status="merging")
         return True
     detail = getattr(pull_request, "detail", "") or ui(
         "PR closed without merge or merge facts are unavailable",
         "PR 未合入即关闭，或无法获得合入事实")
-    store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-    store.add_comment(node.work_item_id, ui(
+    apply([
+        UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+        AddComment(node.work_item_id, ui(
         f"⚠️ Historical done state lacks confirmed merge; refusing closure. {detail}",
-        f"⚠️ 历史 done 状态缺少已确认的合入事实；拒绝收口。{detail}"))
+        f"⚠️ 历史 done 状态缺少已确认的合入事实；拒绝收口。{detail}")),
+    ], Ports(store=store))
     set_node(manifest, key, status="blocked")
     return True
 
@@ -3499,9 +3573,13 @@ def _reconcile_done_node(store: WorkItemStore, manifest: Manifest, manifest_path
         return _reconcile_done_develop(
             store, manifest, manifest_path, key, node, item, pull_requests)
     if item.review_verdict == "pass-with-nits":
-        store.reset_review(node.work_item_id)
+        apply([
+            ResetReview(node.work_item_id),
+        ], Ports(store=store))
     if item.status != WorkItemStatus.DONE:
-        store.update_status(node.work_item_id, WorkItemStatus.DONE)
+        apply([
+            UpdateStatus(node.work_item_id, WorkItemStatus.DONE),
+        ], Ports(store=store))
     return False
 
 
@@ -3631,7 +3709,9 @@ def _collect_worker_blocker(c: _Collect, n: _Node) -> bool:
     # Structured worker blockers are operator decisions, not no-submit failures.
     if n.item.phase == TaskPhase.AUTHORING and n.item.decision_required:
         if n.item.status != WorkItemStatus.BLOCKED:
-            c.store.update_status(n.item.id, WorkItemStatus.BLOCKED)
+            apply([
+                UpdateStatus(n.item.id, WorkItemStatus.BLOCKED),
+            ], Ports(store=c.store))
         set_node(c.manifest, key, status="blocked")
         c.failures[key] = str(n.item.decision_required.get("reason_code", "worker-decision-required"))
         return True
@@ -3684,11 +3764,14 @@ def _collect_legacy_delivery(c: _Collect, n: _Node) -> bool:
         }
         if n.item.decision_required != decision:
             _mark_recovery_pending(c.manifest, key)
-            c.store.update_work_item_metadata(
-                node.work_item_id, decision_required=decision)
-            c.store.add_comment(node.work_item_id, reason)
+            apply([
+                UpdateMetadata(node.work_item_id, {'decision_required': decision}),
+                AddComment(node.work_item_id, reason),
+            ], Ports(store=c.store))
         if n.item.status != WorkItemStatus.BLOCKED:
-            c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+            apply([
+                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+            ], Ports(store=c.store))
         set_node(c.manifest, key, status="blocked")
         c.failures[key] = reason
         return True
@@ -3783,8 +3866,7 @@ def _collect_worker_handoff(c: _Collect, n: _Node) -> bool:
                 agent_run_finished_without_submit=True,
             )
         elif n.handoff.state == "complete-unsealed":
-            cleared = c.store.update_work_item_metadata(
-                node.work_item_id, worker_handoff={})
+            cleared = apply_one(UpdateMetadata(node.work_item_id, {'worker_handoff': {}}), Ports(store=c.store))
             _clear_recovery_pending(c.manifest, key, cleared)
             n.item = n.handoff.projection.work_item
             set_node(c.manifest, key, status="in_progress")
@@ -3820,7 +3902,9 @@ def _collect_stale_review(c: _Collect, n: _Node) -> bool:
                 c.failures[key] = _block_existing_reviewer_decision(
                     c.store, c.manifest, key, n.item)
                 return True
-            c.store.reset_review(node.work_item_id)
+            apply([
+                ResetReview(node.work_item_id),
+            ], Ports(store=c.store))
             _dispatch_reviewer_for_current_subject(
                 c.store, c.runtime, c.code_host, c.manifest, key)
             if c.manifest.nodes[key].status == "blocked":
@@ -3895,10 +3979,12 @@ def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
         }
         if n.item.decision_required != decision:
             _mark_recovery_pending(c.manifest, key)
-            c.store.update_work_item_metadata(
-                node.work_item_id, decision_required=decision)
-        c.store.update_status(
-            node.work_item_id, WorkItemStatus.BLOCKED)
+            apply([
+                UpdateMetadata(node.work_item_id, {'decision_required': decision}),
+            ], Ports(store=c.store))
+        apply([
+            UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+        ], Ports(store=c.store))
         set_node(c.manifest, key, status="blocked")
         c.failures[key] = reason
         return True
@@ -3916,11 +4002,14 @@ def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
         n.item, n.worker_gate_errors = late_delivery
         set_node(c.manifest, key, status="in_progress")
     elif limit_exhausted:
-        c.store.clear_assignment(node.work_item_id)
-        cleared = c.store.update_work_item_metadata(
-            node.work_item_id, worker_handoff={})
+        apply([
+            ClearAssignment(node.work_item_id),
+        ], Ports(store=c.store))
+        cleared = apply_one(UpdateMetadata(node.work_item_id, {'worker_handoff': {}}), Ports(store=c.store))
         _clear_recovery_pending(c.manifest, key, cleared)
-        c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+        apply([
+            UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+        ], Ports(store=c.store))
         set_node(c.manifest, key, status="blocked")
         c.failures[key] = ui(
             f"Worker did not deliver; retry limit {worker_limit} exhausted: {reason}",
@@ -3972,16 +4061,14 @@ def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
                          absolute_count=cur_bounce + 1,
                          limit=worker_limit))
         except PlatformError as exc:
-            c.store.update_work_item_metadata(
-                node.work_item_id, worker_bounce=cur_bounce)
-            c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-            c.store.add_comment(
-                node.work_item_id,
-                ui(
+            apply([
+                UpdateMetadata(node.work_item_id, {'worker_bounce': cur_bounce}),
+                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+                AddComment(node.work_item_id, ui(
                     f"Failed to return delivery to worker {node.worker}; retry count rolled back: {exc}",
                     f"回退到 worker {node.worker} 继续交付失败"
-                    f"(已回滚回退计数): {exc}"),
-            )
+                    f"(已回滚回退计数): {exc}")),
+            ], Ports(store=c.store))
             set_node(c.manifest, key, status="blocked")
             c.failures[key] = ui(
                 f"Failed to return delivery to worker {node.worker}: {exc}",
@@ -4006,9 +4093,11 @@ def _collect_in_progress(c: _Collect, n: _Node) -> None:
         )
         if gate_errors:
             reason = "; ".join(gate_errors)
-            c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-            c.store.add_comment(node.work_item_id, ui(
-                f"Evidence gate failed: {reason}", f"证据门未通过: {reason}"))
+            apply([
+                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+                AddComment(node.work_item_id, ui(
+                f"Evidence gate failed: {reason}", f"证据门未通过: {reason}")),
+            ], Ports(store=c.store))
             set_node(c.manifest, key, status="blocked")
             c.failures[key] = ui(
                 f"Worker evidence gate failed: {reason}",
@@ -4046,7 +4135,9 @@ def _collect_in_progress(c: _Collect, n: _Node) -> None:
             merge_action = _complete_merge_if_confirmed(
                 c.store, c.runtime, c.code_host, c.manifest, key, c.limits, c.config or {}, c.manifest_path)
             if merge_action == "pass":
-                c.store.reset_review(node.work_item_id)
+                apply([
+                    ResetReview(node.work_item_id),
+                ], Ports(store=c.store))
             elif merge_action == "blocked":
                 c.failures[key] = ui(
                     "Merge failed and retry.merge is exhausted.",
@@ -4067,9 +4158,11 @@ def _collect_in_progress(c: _Collect, n: _Node) -> None:
                          id=node.work_item_id, reason=ui(
                              "Merge confirmation failed", "merge 确认失败"))
     elif n.item.status == WorkItemStatus.FAILED:
-        c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-        c.store.add_comment(node.work_item_id, ui(
-            "Worker execution failed", "worker 执行失败"))
+        apply([
+            UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+            AddComment(node.work_item_id, ui(
+            "Worker execution failed", "worker 执行失败")),
+        ], Ports(store=c.store))
         set_node(c.manifest, key, status="blocked")
         c.failures[key] = ui("Worker execution failed", "worker 执行失败")
         log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
@@ -4091,7 +4184,9 @@ def _review_blocked_by_decision(c: _Collect, n: _Node) -> bool:
         c.manifest_path, key, n.item)
     if n.decision_class in {"other", "explicit-review-retry"}:
         if n.item.status != WorkItemStatus.BLOCKED:
-            c.store.update_status(n.item.id, WorkItemStatus.BLOCKED)
+            apply([
+                UpdateStatus(n.item.id, WorkItemStatus.BLOCKED),
+            ], Ports(store=c.store))
         set_node(c.manifest, key, status="blocked")
         c.failures[key] = ui(
             "Reviewer recovery is blocked by the existing decision.",
@@ -4137,8 +4232,9 @@ def _observe_reviewer_run(c: _Collect, n: _Node) -> bool:
     if observed.target_run_id != baseline.target_run_id:
         baseline = replace(
             baseline, target_run_id=observed.target_run_id)
-        c.store.update_work_item_metadata(
-            n.item.id, reviewer_run_baseline=baseline)
+        apply([
+            UpdateMetadata(n.item.id, {'reviewer_run_baseline': baseline}),
+        ], Ports(store=c.store))
     if (
         observed.state == "missing" and baseline.attempt > 1
         and baseline.target_run_id is None
@@ -4275,10 +4371,12 @@ def _review_without_verdict(c: _Collect, n: _Node) -> None:
                 )
                 return None
         except PlatformError as exc:
-            c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-            c.store.add_comment(node.work_item_id, ui(
+            apply([
+                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+                AddComment(node.work_item_id, ui(
                 f"Failed to resume reviewer {node.reviewer}: {exc}",
-                f"恢复 reviewer {node.reviewer} 失败: {exc}"))
+                f"恢复 reviewer {node.reviewer} 失败: {exc}")),
+            ], Ports(store=c.store))
             set_node(c.manifest, key, status="blocked")
             c.failures[key] = ui(
                 f"Failed to resume reviewer {node.reviewer}: {exc}",
@@ -4286,13 +4384,12 @@ def _review_without_verdict(c: _Collect, n: _Node) -> None:
             return None
     # reviewer 已落终态但缺结构化 review_verdict → blocked(无证据不予通过)
     if n.item.status in (WorkItemStatus.DONE, WorkItemStatus.FAILED, WorkItemStatus.BLOCKED):
-        c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-        c.store.add_comment(
-            node.work_item_id,
-            ui(
+        apply([
+            UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+            AddComment(node.work_item_id, ui(
                 f"Reviewer platform status is {n.item.status.value}, but structured review_verdict evidence is missing.",
-                f"reviewer 平台 {n.item.status.value} 但缺 review_verdict 结构化证据"),
-        )
+                f"reviewer 平台 {n.item.status.value} 但缺 review_verdict 结构化证据")),
+        ], Ports(store=c.store))
         set_node(c.manifest, key, status="blocked")
         c.failures[key] = ui(
             "Reviewer is missing review_verdict", "reviewer 缺 review_verdict")
@@ -4313,7 +4410,9 @@ def _review_consume_baseline(c: _Collect, n: _Node) -> bool:
         )
         if marker_error is not None:
             if n.item.status != WorkItemStatus.BLOCKED:
-                c.store.update_status(n.item.id, WorkItemStatus.BLOCKED)
+                apply([
+                    UpdateStatus(n.item.id, WorkItemStatus.BLOCKED),
+                ], Ports(store=c.store))
             set_node(c.manifest, key, status="blocked")
             c.failures[key] = ui(
                 f"Reviewer recovery is unsafe: {marker_error}.",
@@ -4325,8 +4424,7 @@ def _review_consume_baseline(c: _Collect, n: _Node) -> bool:
         # it. An unknown write result stops this tick; restart either
         # retries the marker clear or observes it cleared and consumes
         # the still-preserved verdict normally.
-        cleared = c.store.update_work_item_metadata(
-            n.item.id, decision_required={})
+        cleared = apply_one(UpdateMetadata(n.item.id, {'decision_required': {}}), Ports(store=c.store))
         _clear_recovery_pending(c.manifest, key, cleared)
     return False
 
@@ -4349,13 +4447,10 @@ def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
             decision = build_contract_boundary_decision(
                 n.item, node, boundary_conflicts)
             _mark_recovery_pending(c.manifest, key)
-            c.store.update_work_item_metadata(
-                node.work_item_id,
-                decision_required=decision,
-                phase=TaskPhase.REVIEW,
-            )
-            c.store.update_status(
-                node.work_item_id, WorkItemStatus.BLOCKED)
+            apply([
+                UpdateMetadata(node.work_item_id, {'decision_required': decision, 'phase': TaskPhase.REVIEW}),
+                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+            ], Ports(store=c.store))
             set_node(c.manifest, key, status="blocked")
             c.failures[key] = ui(
                 "Reviewer required inputs outside the typed node contract; "
@@ -4662,7 +4757,9 @@ def _refresh_develop_issue_body(
 ) -> None:
     item_id, metadata = _develop_issue_body_metadata(
         store, manifest, key, phase=phase)
-    store.update_work_item_metadata(item_id, **metadata)
+    apply([
+        UpdateMetadata(item_id, {**metadata}),
+    ], Ports(store=store))
 
 
 def _develop_issue_body_metadata(
@@ -4719,15 +4816,15 @@ def _dispatch(
         # 刷新 body/source refs,否则 manifest 已修订而平台 issue 仍携带旧约束。
         is_new_item = not node.work_item_id
         if not node.work_item_id:
-            item = store.create_work_item(
-                workspace_id=workspace_id,
-                title=node.title or key,
-                description=node.description or f"Task {key}",
-                dag_key=_develop_dag_key(manifest, key),
-                worker=worker,
-                reviewer=node.reviewer,
-                blocked_by=list(node.blocked_by),
-            )
+            item = apply_one(CreateWorkItem({
+                'workspace_id': workspace_id,
+                'title': node.title or key,
+                'description': node.description or f"Task {key}",
+                'dag_key': _develop_dag_key(manifest, key),
+                'worker': worker,
+                'reviewer': node.reviewer,
+                'blocked_by': list(node.blocked_by),
+            }), Ports(store=store))
             set_node(manifest, key, work_item_id=item.id)
             manifest_changed = True
         else:
@@ -4738,7 +4835,9 @@ def _dispatch(
         # retry 的 scope/说明变化通过静默刷新 issue body 生效。
         if is_new_item:
             if node.contract is not None:
-                store.set_node_contract(item.id, node.contract)
+                apply([
+                    SetNodeContract(item.id, node.contract),
+                ], Ports(store=store))
 
         try:
             handoff = _dispatch_worker_handoff(
@@ -4750,10 +4849,12 @@ def _dispatch(
                 gate="explicit-dispatch",
             )
         except PlatformError as exc:
-            store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-            store.add_comment(node.work_item_id, ui(
+            apply([
+                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+                AddComment(node.work_item_id, ui(
                 f"Failed to wake worker {worker}: {exc}",
-                f"唤醒 worker {worker} 失败: {exc}"))
+                f"唤醒 worker {worker} 失败: {exc}")),
+            ], Ports(store=store))
             set_node(manifest, key, status="blocked")
             manifest_changed = True
             log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
@@ -4762,7 +4863,9 @@ def _dispatch(
             continue
 
         if handoff.state == "needs-decision":
-            store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+            apply([
+                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
+            ], Ports(store=store))
             set_node(manifest, key, status="blocked")
             manifest_changed = True
             continue
@@ -4990,8 +5093,7 @@ def _restore_active_formal_run_stages(
     committed: Dict[str, tuple[str, WorkItemControlProjection]] = {}
     for key, (status, projection, clear_decision) in restored.items():
         if clear_decision:
-            cleared = store.update_work_item_metadata(
-                projection.work_item.id, decision_required={})
+            cleared = apply_one(UpdateMetadata(projection.work_item.id, {'decision_required': {}}), Ports(store=store))
             if cleared.requires_decision:
                 raise PlatformError(
                     f"Provisional reviewer decision for work item "
@@ -5004,7 +5106,9 @@ def _restore_active_formal_run_stages(
             else WorkItemStatus.IN_PROGRESS
         )
         if projection.work_item.status != expected_status:
-            store.update_status(projection.work_item.id, expected_status)
+            apply([
+                UpdateStatus(projection.work_item.id, expected_status),
+            ], Ports(store=store))
             projection = replace(
                 projection,
                 work_item=replace(

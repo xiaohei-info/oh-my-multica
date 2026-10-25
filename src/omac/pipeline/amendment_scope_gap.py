@@ -8,6 +8,8 @@ from ..core.digest import digest, plain
 from ..core.taskmeta import TaskKind, TaskPhase, review_context_binding, DECISION_REQUIRED_SCHEMA
 from ..core.workitem import WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
+from .apply import Ports, apply
+from .decide_effects import UpdateMetadata, UpdateStatus
 
 SCHEMA = "omac.amendment-scope-gap/v1"
 
@@ -112,7 +114,9 @@ def report_scope_gap(store, runtime, issue_id, report):
                     or digest(plain(asdict(store.get_work_item(issue_id)))) != digest(plain(asdict(item)))):
                 raise ValidationError("Amendment control/Run binding changed before scope-gap effect; read work show again")
             try:
-                store.update_work_item_metadata(issue_id, decision_required=decision)
+                apply([
+                    UpdateMetadata(issue_id, {'decision_required': decision}),
+                ], Ports(store=store))
             except PlatformError:
                 _observe_gap_binding(store, runtime, issue_id, decision, item.status.value)
             _observe_gap_binding(store, runtime, issue_id, decision, item.status.value)
@@ -123,7 +127,9 @@ def report_scope_gap(store, runtime, issue_id, report):
         _observe_gap_binding(store, runtime, issue_id, decision, status)
         if status != WorkItemStatus.BLOCKED.value:
             try:
-                store.update_status(issue_id, WorkItemStatus.BLOCKED)
+                apply([
+                    UpdateStatus(issue_id, WorkItemStatus.BLOCKED),
+                ], Ports(store=store))
             except PlatformError:
                 _observe_gap_binding(store, runtime, issue_id, decision, WorkItemStatus.BLOCKED.value)
         _observe_gap_binding(store, runtime, issue_id, decision, WorkItemStatus.BLOCKED.value)

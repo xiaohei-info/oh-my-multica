@@ -31,14 +31,7 @@ TRANSITIONAL: dict[str, set[str]] = {
     "platform_argv": set(),
     "engine_assembly": set(),
     "function_length": set(),
-    # Port writes still inline; each file is converted to Effect values + apply and then removed from here.
-    "inline_effects": {
-        "src/omac/cli/commands/node.py", "src/omac/cli/commands/plan.py", "src/omac/pipeline/acceptance.py",
-        "src/omac/pipeline/amendment.py", "src/omac/pipeline/amendment_scope_gap.py",
-        "src/omac/pipeline/convergence.py", "src/omac/pipeline/dispatch.py", "src/omac/pipeline/loop.py",
-        "src/omac/pipeline/plan.py", "src/omac/pipeline/review.py", "src/omac/pipeline/tasks.py",
-        "src/omac/pipeline/worker_decision.py",
-    },
+    "inline_effects": set(),
 }
 # Fixture entries (names directly under tests/fixtures) that predate the size/content rule.
 TRANSITIONAL_FIXTURES: set[str] = set()

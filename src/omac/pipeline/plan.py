@@ -54,6 +54,8 @@ from .tasks import (
     refresh_authoring_task,
     run_task,
 )
+from .apply import Ports, apply, apply_one
+from .decide_effects import CancelRun, ClearAssignment, ResetReview, UpdateMetadata, UpdateStatus
 
 
 @dataclass
@@ -379,14 +381,19 @@ def plan_continue_review(
             "--reason 最多 1024 UTF-8 bytes"))
     continuation = build_review_continuation(
         item, configured_limit, mode=mode, reason=decision_reason)
-    store.update_work_item_metadata(
-        item.id, review_continuation=continuation)
+    apply([
+        UpdateMetadata(item.id, {'review_continuation': continuation}),
+    ], Ports(store=store))
     if mode == "producer-rework":
-        store.reset_review(item.id)
-        store.update_status(item.id, WorkItemStatus.TODO)
+        apply([
+            ResetReview(item.id),
+            UpdateStatus(item.id, WorkItemStatus.TODO),
+        ], Ports(store=store))
     elif projected_final_nits:
-        store.update_work_item_metadata(item.id, decision_required={})
-        store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+        apply([
+            UpdateMetadata(item.id, {'decision_required': {}}),
+            UpdateStatus(item.id, WorkItemStatus.IN_REVIEW),
+        ], Ports(store=store))
 
     return {
         "item_id": item.id,
@@ -722,8 +729,10 @@ def _resume_plan_stage(ctx: PlanContext, *, plan_key: str, name: Optional[str],
     if not plan_item.project_rules:
         # 历史 plan 只有设计文档时不能绕过新双交付契约。复用原 issue
         # 回到 authoring,由 planner 补交两份文件并重新走确认/review。
-        store.reset_review(plan_item.id)
-        store.update_status(plan_item.id, WorkItemStatus.TODO)
+        apply([
+            ResetReview(plan_item.id),
+            UpdateStatus(plan_item.id, WorkItemStatus.TODO),
+        ], Ports(store=store))
         plan_item = store.get_work_item(plan_item.id)
     resolved_name = name or _name_from_plan_issue(plan_item)
     item_id, plan_text, rules = _run_plan_stage(
@@ -737,14 +746,20 @@ def _restart_acceptance_item(ctx: PlanContext, acceptance_item, spec: AuthoringT
     store = ctx.engine.store
     restart_review = (
         acceptance_item.phase == TaskPhase.REVIEW and bool(acceptance_item.deliverable))
-    ctx.engine.runtime.cancel(acceptance_item.id)
-    store.clear_assignment(acceptance_item.id)
+    apply_one(CancelRun(acceptance_item.id), Ports(runtime=ctx.engine.runtime))
+    apply([
+        ClearAssignment(acceptance_item.id),
+    ], Ports(store=store))
     if restart_review:
         # Reviewer 卡住时保留已提交交付与 review phase，只重新派发 Reviewer。
-        store.update_status(acceptance_item.id, WorkItemStatus.IN_REVIEW)
+        apply([
+            UpdateStatus(acceptance_item.id, WorkItemStatus.IN_REVIEW),
+        ], Ports(store=store))
         return store.get_work_item(acceptance_item.id)
-    store.reset_review(acceptance_item.id)
-    store.update_status(acceptance_item.id, WorkItemStatus.TODO)
+    apply([
+        ResetReview(acceptance_item.id),
+        UpdateStatus(acceptance_item.id, WorkItemStatus.TODO),
+    ], Ports(store=store))
     return refresh_authoring_task(
         ctx.engine, acceptance_item.id, spec, item_snapshot=acceptance_item)
 

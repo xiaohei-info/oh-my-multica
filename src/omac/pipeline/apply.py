@@ -44,10 +44,6 @@ class ManifestState:
         save_manifest(self.manifest, self.path)
 
 
-def _store(ports: Ports):
-    return ports.store
-
-
 _RUNNERS: dict[type, Callable[[Effect, Ports, ManifestState | None], Any]] = {
     UpdateStatus: lambda e, p, s: p.store.update_status(e.item_id, e.status),
     UpdateMetadata: lambda e, p, s: p.store.update_work_item_metadata(e.item_id, **e.fields),
@@ -78,3 +74,8 @@ def apply(effects: Plan | Iterable[Effect], ports: Ports, state: ManifestState |
     steps = tuple(effects.effects if isinstance(effects, Plan) else effects)
     validate_plan(steps)
     return [_RUNNERS[type(effect)](effect, ports, state) for effect in steps]
+
+
+def apply_one(effect: Effect, ports: Ports, state: ManifestState | None = None) -> Any:
+    """Run a single effect and return its result (for the few that produce one: created item, review cycle...)."""
+    return apply([effect], ports, state)[0]

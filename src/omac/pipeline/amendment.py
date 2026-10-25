@@ -36,6 +36,8 @@ from ..core.workitem import WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import ui
 from .tasks import _review_subject_digest as task_review_subject_digest, run_task
+from .apply import Ports, apply, apply_one
+from .decide_effects import UpdateMetadata, UpdateStatus
 
 
 def default_amendment_path(manifest_path: str) -> str:
@@ -953,8 +955,7 @@ def accept_amendment_nits(
         engine, manifest_path, amendment, reason=reason, require_marker=False)
     if getattr(issue, "review_nits_acceptance", None) in (None, {}):
         _ensure_no_active_amendment_direct_run(engine, issue)
-        updated = engine.store.update_work_item_metadata(
-            issue.id, review_nits_acceptance=marker)
+        updated = apply_one(UpdateMetadata(issue.id, {'review_nits_acceptance': marker}), Ports(store=engine.store))
         if updated.review_nits_acceptance != marker:
             raise ValidationError(
                 "Amendment operator acceptance marker was not persisted; "
@@ -1049,9 +1050,8 @@ def accept_amendment(
     amendment["human_reason"] = reason
     amendment["apply_result"] = result
     _write_yaml_atomic(amendment_file, amendment)
-    engine.store.update_work_item_metadata(
-        issue_id,
-        decision_required={},
-    )
-    engine.store.update_status(issue_id, WorkItemStatus.DONE)
+    apply([
+        UpdateMetadata(issue_id, {'decision_required': {}}),
+        UpdateStatus(issue_id, WorkItemStatus.DONE),
+    ], Ports(store=engine.store))
     return {**result, "issue_id": issue_id, "state": "applied"}

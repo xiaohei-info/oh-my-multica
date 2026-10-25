@@ -48,6 +48,8 @@ from omac.errors import AuthError, NeedsDecision, PlatformError, ValidationError
 from omac.i18n import CN, EN, t, ui
 from ..engines.codehost import CodeHost
 from .convergence import ConvergenceResolution, ResolutionState, resolve_convergence
+from .apply import Ports, apply
+from .decide_effects import UpdateMetadata, UpdateStatus
 
 
 
@@ -1134,8 +1136,10 @@ def report_worker_blocker(store: WorkItemStore, issue_id: str, report_file: str,
     if item.decision_required not in (None, {}, decision):
         raise NeedsDecision("An existing decision must be resolved first", report=item.decision_required)
     # Decision first: an interrupted status write still prevents redispatch.
-    store.update_work_item_metadata(item.id, decision_required=decision)
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    apply([
+        UpdateMetadata(item.id, {'decision_required': decision}),
+        UpdateStatus(item.id, WorkItemStatus.BLOCKED),
+    ], Ports(store=store))
     return {"ok": False, "exit_code": 20, "terminal": True,
             "decision_required": decision, "next_action": "stop"}
 
@@ -1159,18 +1163,19 @@ class _SubmitArgs:
 
 
 def _advance_authoring_to_review(store: WorkItemStore, issue_id: str, **metadata: Any) -> None:
-    store.update_work_item_metadata(
-        issue_id,
-        review_verdict="",
-        review_comment="",
-        machine_feedback={},
-        review_subject_digest="",
-        decision_required={},
-        review_nits_acceptance={},
-        phase=TaskPhase.REVIEW,
-        **metadata,
-    )
-    store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
+    apply([
+        UpdateMetadata(issue_id, {
+            'review_verdict': "",
+            'review_comment': "",
+            'machine_feedback': {},
+            'review_subject_digest': "",
+            'decision_required': {},
+            'review_nits_acceptance': {},
+            'phase': TaskPhase.REVIEW,
+            **metadata,
+        }),
+        UpdateStatus(issue_id, WorkItemStatus.IN_REVIEW),
+    ], Ports(store=store))
 
 
 def _authoring_done_message() -> str:
@@ -1205,13 +1210,14 @@ def _submit_develop(store, issue_id, item, kind, phase, a: _SubmitArgs) -> Submi
             raise NeedsDecision('Resolve the current Worker decision before submitting', report=fresh.decision_required)
         if _worker_control_moved(fresh, current):
             raise ValidationError('Worker control changed during verification; re-read work show')
-        store.update_work_item_metadata(
-            issue_id,
-            artifacts=artifacts,
-            verification=verification,
-            verification_source=verification_source,
-        )
-        store.update_status(issue_id, WorkItemStatus.DONE)
+        apply([
+            UpdateMetadata(issue_id, {
+                'artifacts': artifacts,
+                'verification': verification,
+                'verification_source': verification_source,
+            }),
+            UpdateStatus(issue_id, WorkItemStatus.DONE),
+        ], Ports(store=store))
         return SubmitResult(kind, phase, "verification", WorkItemStatus.DONE)
 
 
@@ -1249,16 +1255,17 @@ def _review_ledger_metadata(item, kind: TaskKind, report: Any, verdict: Optional
 def _submit_review(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
     report = _validate_review(kind, a.verdict, a.report_file, item)
     metadata = _review_ledger_metadata(item, kind, report, a.verdict)
-    store.update_work_item_metadata(
-        issue_id,
-        review_comment="",
-        machine_feedback={},
-        review_report=report,
-        review_report_source=_read_text(a.report_file),
-        review_verdict=a.verdict,
-        phase=TaskPhase.REVIEW,
-        **metadata,
-    )
+    apply([
+        UpdateMetadata(issue_id, {
+            'review_comment': "",
+            'machine_feedback': {},
+            'review_report': report,
+            'review_report_source': _read_text(a.report_file),
+            'review_verdict': a.verdict,
+            'phase': TaskPhase.REVIEW,
+            **metadata,
+        }),
+    ], Ports(store=store))
     # 状态保持 IN_REVIEW,由 loop / plan 流水线收割判定 done / blocked。
     return SubmitResult(
         kind, phase, "review_report", WorkItemStatus.IN_REVIEW,
@@ -1274,11 +1281,10 @@ def _submit_review(store, issue_id, item, kind, phase, a: _SubmitArgs) -> Submit
 
 def _submit_final_acceptance(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
     _validate_final_acceptance_authoring(a.acceptance_results_file, item)
-    store.update_work_item_metadata(
-        issue_id,
-        deliverable=_read_text(a.acceptance_results_file),
-    )
-    store.update_status(issue_id, WorkItemStatus.DONE)
+    apply([
+        UpdateMetadata(issue_id, {'deliverable': _read_text(a.acceptance_results_file)}),
+        UpdateStatus(issue_id, WorkItemStatus.DONE),
+    ], Ports(store=store))
     return SubmitResult(kind, phase, "acceptance_results", WorkItemStatus.DONE)
 
 

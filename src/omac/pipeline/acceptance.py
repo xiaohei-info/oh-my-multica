@@ -41,6 +41,8 @@ from ..errors import NeedsDecision
 from ..i18n import resolve_language, ui
 from ..pipeline import loop as loop_mod
 from .tasks import AuthoringTaskSpec, create_authoring_task
+from .apply import Ports, apply
+from .decide_effects import Assign, UpdateStatus, Wake
 
 
 @dataclass
@@ -410,9 +412,11 @@ def _dispatch_and_wait(
     runtime = engine.runtime
     item = create_authoring_task(engine, spec)
     item_id = item.id
-    store.mark_in_progress(item_id)
-    store.assign_work_item(item_id, spec.assignee, "worker")
-    runtime.wake(item_id, spec.assignee, "worker")
+    apply([
+        UpdateStatus(item_id, WorkItemStatus.IN_PROGRESS),
+        Assign(item_id, spec.assignee, "worker"),
+        Wake(item_id, spec.assignee, "worker"),
+    ], Ports(store=store, runtime=runtime))
 
     # decompose 作者提交后落在 IN_REVIEW(待审),视为终态一并退出
     terminal = (WorkItemStatus.DONE, WorkItemStatus.FAILED,

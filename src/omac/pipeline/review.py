@@ -20,12 +20,16 @@ from ..core.workitem import WorkItemStatus
 from ..errors import NeedsDecision, ValidationError
 from ..i18n import ui
 from .dispatch import reviewer_dispatch_stopped
+from .apply import Ports, apply, apply_one
+from .decide_effects import CreateWorkItem, DispatchReviewer, UpdateMetadata, UpdateStatus
 
 
 def _dispatch_blocked(store, item_id: str, current) -> NeedsDecision:
     """Block the review item (if not yet) and build the exit-20 decision for a stopped dispatch."""
     if current.status != WorkItemStatus.BLOCKED:
-        store.update_status(item_id, WorkItemStatus.BLOCKED)
+        apply([
+            UpdateStatus(item_id, WorkItemStatus.BLOCKED),
+        ], Ports(store=store))
     return NeedsDecision(
         ui(
             "Reviewer dispatch is blocked by the existing decision or platform status.",
@@ -69,30 +73,34 @@ def _start_review(engine, workspace_id: str, title: str, body, reviewer: str,
                   deliverable: Optional[str]) -> str:
     """Create the review issue, mark it in review and dispatch the reviewer; returns the item id."""
     store, runtime = engine.store, engine.runtime
-    item = store.create_work_item(
-        workspace_id,
-        title,
-        title if callable(body) else body,
-        dag_key="plan-check",
-        worker=reviewer,
-        kind=TaskKind.DECOMPOSE,
-    )
+    item = apply_one(CreateWorkItem({
+        'workspace_id': workspace_id,
+        'title': title,
+        'description': title if callable(body) else body,
+        'dag_key': "plan-check",
+        'worker': reviewer,
+        'kind': TaskKind.DECOMPOSE,
+    }), Ports(store=store))
     metadata = {}
     if callable(body):
         metadata["description"] = body(item.id)
     if deliverable is not None:
         metadata["deliverable"] = deliverable
     if metadata:
-        store.update_work_item_metadata(item.id, **metadata)
+        apply([
+            UpdateMetadata(item.id, {**metadata}),
+        ], Ports(store=store))
 
     current = store.observe_work_item_control(item.id).work_item
     if reviewer_dispatch_stopped(current):
         raise _dispatch_blocked(store, item.id, current)
-    store.mark_in_review(item.id)
+    apply([
+        UpdateStatus(item.id, WorkItemStatus.IN_REVIEW),
+    ], Ports(store=store))
     current = store.observe_work_item_control(item.id).work_item
     if reviewer_dispatch_stopped(current):
         raise _dispatch_blocked(store, item.id, current)
-    if not runtime.dispatch_reviewer(store, item.id, reviewer):
+    if not apply_one(DispatchReviewer(item.id, reviewer), Ports(store=store, runtime=runtime)):
         raise _dispatch_blocked(
             store, item.id, store.observe_work_item_control(item.id).work_item)
     return item.id
@@ -136,7 +144,9 @@ def _raise_if_run_ended_silently(store, runtime, cur, reviewer: str) -> None:
     if not terminal_runs:
         return
     if cur.status != WorkItemStatus.BLOCKED:
-        store.update_status(cur.id, WorkItemStatus.BLOCKED)
+        apply([
+            UpdateStatus(cur.id, WorkItemStatus.BLOCKED),
+        ], Ports(store=store))
     raise NeedsDecision(
         ui(
             "Reviewer Agent Run ended without submitting a verdict; inspect "

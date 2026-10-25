@@ -17,6 +17,8 @@ from ..core.review_convergence import (
 )
 from ..core.taskmeta import TaskPhase, current_review_ledger
 from ..core.workitem import WorkItemStatus
+from .apply import Ports, apply
+from .decide_effects import UpdateMetadata, UpdateStatus
 
 
 class ResolutionState(str, Enum):
@@ -127,8 +129,11 @@ def resolve_convergence(
 def persist_decision(store, item: Any, resolution: ConvergenceResolution) -> dict:
     decision = bounded_decision_required(resolution.decision)
     if item.decision_required != decision or item.phase != TaskPhase.REVIEW:
-        store.update_work_item_metadata(
-            item.id, decision_required=decision, phase=TaskPhase.REVIEW)
+        apply([
+            UpdateMetadata(item.id, {'decision_required': decision, 'phase': TaskPhase.REVIEW}),
+        ], Ports(store=store))
     if item.status != WorkItemStatus.BLOCKED:
-        store.update_status(item.id, WorkItemStatus.BLOCKED)
+        apply([
+            UpdateStatus(item.id, WorkItemStatus.BLOCKED),
+        ], Ports(store=store))
     return decision
