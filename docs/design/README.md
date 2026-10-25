@@ -69,7 +69,8 @@ A DAG is two things on disk, both plain text, both committed to git:
 * **Sync through `origin/main`.** `core/gitsync.py` commits the definition and the state directory after each tick.
   Machines advancing different nodes touch different files, so git merges them without conflict; a conflicting push
   is rebased only when every unpushed commit touches nothing but those files.
-* **Bounded size.** The definition holds no run history; the amendment ledger in `meta` is replaced per amendment.
+* **Bounded size.** A node's state file is limited to 64 KiB at save time (the error says to keep large payloads as
+  platform attachments). The definition holds no run history; the amendment ledger in `meta` is replaced per amendment.
   Large payloads (captured sources, transcripts) are attachments on the platform, referenced by digest.
 * **No 1.x compatibility.** A single-file 1.x manifest (inline `work_item_id`, or the old compressed envelope) is not read
   or modified: the error says to finish that run with 1.x or abandon it, then run `omac plan create` with 2.0.

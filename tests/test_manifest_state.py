@@ -139,3 +139,11 @@ def test_manifest_files_lists_the_state_directory_once_it_exists(tmp_path):
     assert manifest_files(path) == [path]
     save_manifest(_dag(1), path)
     assert manifest_files(path) == [path, state_dir(path)]
+
+
+def test_an_oversized_node_state_is_refused_and_the_definition_is_not_written(tmp_path):
+    manifest = _dag(2)
+    manifest.nodes["n1"].merge_request_state = "x" * (64 * 1024)
+    with pytest.raises(ValidationError, match="platform attachments"):
+        save_manifest(manifest, str(tmp_path / "dag.yaml"))
+    assert not (tmp_path / "dag.yaml").exists()

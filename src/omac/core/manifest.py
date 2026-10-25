@@ -384,9 +384,18 @@ def _read_state_file(path: str) -> dict:
     return state
 
 
-def _state_bytes(state: dict) -> bytes:
+STATE_FILE_MAX = 64 * 1024  # a node's state is facts and references; large payloads belong on the platform
+
+
+def _state_bytes(state: dict, node_id: str = "") -> bytes:
     body = yaml.dump(state, Dumper=getattr(yaml, "CDumper", yaml.Dumper),
                      default_flow_style=False, allow_unicode=True, sort_keys=False).encode("utf-8")
+    if len(body) > STATE_FILE_MAX:
+        raise ValidationError(ui(
+            f"State of node {node_id!r} is {len(body)} bytes; the limit is {STATE_FILE_MAX}. Store large payloads "
+            "(transcripts, captured sources) as platform attachments and keep only a reference and digest here.",
+            f"节点 {node_id!r} 的状态为 {len(body)} 字节,上限 {STATE_FILE_MAX}。大载荷(转录、捕获的源)请作为平台附件保存,"
+            "状态里只留引用和摘要。"))
     return b"# sha256: " + hashlib.sha256(body).hexdigest().encode() + b"\n" + body
 
 
@@ -485,7 +494,7 @@ def save_manifest(manifest: Manifest, path: str):
     touched = set()
     for key, state in states.items():
         if old_states.get(key) != state:
-            _atomic_write(os.path.join(directory, f"{key}.yaml"), _state_bytes(state))
+            _atomic_write(os.path.join(directory, f"{key}.yaml"), _state_bytes(state, key))
             touched.add(directory)
     for key in old_states.keys() - states.keys():
         try:
