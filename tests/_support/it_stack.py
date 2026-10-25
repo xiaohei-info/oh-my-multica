@@ -57,6 +57,7 @@ class Stack:
         self.profile = f"it{self.run_id}"
         self.bin_dir = self.root / "fakebin"
         self.gh_state = self.root / "gh"
+        self.dump_dir = self.root / "dump"
 
     # ---- compose
     def _compose(self, *args: str, check: bool = True):
@@ -115,7 +116,7 @@ class Stack:
         return {"OMAC_ENGINE": "multica", "OMAC_WORKSPACE_ID": self.workspace_id,
                 "OMAC_PROJECT_ID": self.project_id, "PYTHONPATH": src,
                 "PATH": f"{self.bin_dir}{os.pathsep}{os.environ['PATH']}", "OMAC_GH_STATE": str(self.gh_state),
-                "OMAC_FAKE_BIN": str(self.bin_dir)}
+                "OMAC_FAKE_BIN": str(self.bin_dir), "OMAC_FAKE_DUMP": str(self.dump_dir)}
 
     def _write_cli_config(self) -> None:
         for directory in (self.home / ".multica", self.home / ".multica" / "profiles" / self.profile):
@@ -134,6 +135,7 @@ class Stack:
     def _start_daemon(self) -> None:
         self.bin_dir.mkdir()
         self.gh_state.mkdir()
+        self.dump_dir.mkdir()
         for shim in ("claude", "gh"):
             target = self.bin_dir / shim
             target.write_text((IT_DIR / "agent" / shim).read_text().replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1))
@@ -175,6 +177,9 @@ class Stack:
     def tool(self, *args: str) -> dict:
         """A scenario step that runs a scripted-agent command (tests/it/agent/tools.py); {issue} is filled by the Run."""
         return {"run": [sys.executable, str(IT_DIR / "agent" / "tools.py"), *args, "{issue}"]}
+
+    def review(self, verdict: str) -> dict:
+        return self.tool("reviewer-submit", verdict)
 
     def gh_calls(self, verb: str) -> list[list[str]]:
         """Arguments of every `gh pr <verb>` OMAC ran, oldest first."""

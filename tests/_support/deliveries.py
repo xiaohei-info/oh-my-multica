@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from omac.core.acceptance_responsibility import evidence_targets
-from omac.core.manifest import Contract
+from omac.core.manifest import Contract, _load_contract
 
 
 def verification_for(contract: Contract, dag_key: str) -> dict:
@@ -31,4 +31,43 @@ def verification_for(contract: Contract, dag_key: str) -> dict:
         "ci_status": "passed",
         "coverage": contract.coverage_gate,
         "env_setup": [f"env: {gate.get('name')}" for gate in contract.integration_gates] if contract.integration_gates else [],
+    }
+
+
+def review_report_for(context: dict, verdict: str, round_index: int = 1) -> dict:
+    """A review report for the obligations listed by `omac work show` (context), with the given verdict."""
+    contract = _load_contract(context["contract"])
+    failed = "dimension:structure" if verdict == "reject" else None
+    return {
+        "review_protocol": context["review_protocol"],
+        "obligation_results": [
+            {"obligation_id": o["obligation_id"], "status": "fail" if o["obligation_id"] == failed else "pass",
+             "evidence": "covered"}
+            for o in context.get("review_obligations") or []
+        ],
+        "prior_blocker_results": [
+            {"blocker_id": b["blocker_id"], "status": "fixed", "evidence": "regression check passed"}
+            for b in context.get("prior_open_blockers") or []
+        ],
+        "review_goals": ["review goal"],
+        "diff_reviewed": True, "tests_rerun": True, "integration_tests_rerun": True,
+        "coverage_checked": True, "full_review_completed": True,
+        "integration_gate_mapping": [
+            {"gate": gate.get("name"), "source_of_truth": list(gate.get("source_of_truth", [])),
+             "delivery_goal": gate.get("delivery_goal"), "evidence": f"integration gate {gate.get('name')}",
+             "commands": [{"cmd": cmd, "exit_code": 0, "summary": "rerun passed"} for cmd in gate.get("commands", [])],
+             "metrics": dict(gate.get("required_metrics", {})), "artifacts": list(gate.get("artifacts", [])),
+             "status": "pass"}
+            for gate in contract.integration_gates
+        ],
+        "acceptance_mapping": [
+            {"acceptance": a, "evidence": f"reviewed {a}", "status": "fail" if failed else "pass"}
+            for a in evidence_targets(contract)
+        ],
+        "blockers": ([{
+            "root_cause_key": f"review-{round_index}", "obligation_id": failed, "classification": "new",
+            "summary": "needs revision", "evidence": "the reviewer found a blocker",
+            "required_fix": "revise the deliverable",
+        }] if failed else []),
+        "nits": ["apply the non-blocking follow-up"] if verdict == "pass-with-nits" else [],
     }

@@ -1398,8 +1398,21 @@ class MulticaStore(WorkItemStore):
         ]
         if self.config.project_id:
             create_args += ["--project", self.config.project_id]
-        result = self._run_multica_with_text_file(
-            create_args, "--description-file", description)
+        try:
+            result = self._run_multica_with_text_file(
+                create_args, "--description-file", description)
+        except PlatformError as exc:
+            orphan = re.search(r"Active duplicate issue exists: (\S+)", str(exc))
+            if not orphan:
+                raise
+            issue = orphan.group(1)
+            raise PlatformError(ui(
+                f"Issue {issue} already exists for node '{dag_key}': an earlier run created it and stopped "
+                "before recording it. OMAC does not adopt an issue it cannot prove it created. "
+                f"Cancel it with `multica issue status {issue} cancelled`, then rerun the same command.",
+                f"节点 '{dag_key}' 已存在 issue {issue}: 之前的运行创建了它但在记录前中断。"
+                "OMAC 不会接管无法证明由自己创建的 issue。"
+                f"请先执行 `multica issue status {issue} cancelled` 取消它,再重跑同一条命令。")) from exc
 
         if not isinstance(result, dict) or "id" not in result:
             raise PlatformError(ui(

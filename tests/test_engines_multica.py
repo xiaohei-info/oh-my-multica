@@ -4037,3 +4037,17 @@ def test_find_dag_key_does_not_hide_listing_errors(monkeypatch):
     monkeypatch.setattr(store, "hydrate_work_item_evidence", lambda *args: pytest.fail("list failed"))
     with pytest.raises(PlatformError, match="listing failed"):
         store.find_work_item_by_dag_key("ws", "target")
+
+
+def test_create_work_item_tells_how_to_clear_an_issue_left_by_an_interrupted_run(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+
+    def duplicate(*_args, **_kwargs):
+        raise PlatformError("Active duplicate issue exists: PROJ-7 [DAG:node-a] Node A (status: todo).")
+
+    monkeypatch.setattr(store, "_run_multica_with_text_file", duplicate)
+
+    with pytest.raises(PlatformError) as caught:
+        store.create_work_item("ws", "Node A", "body", "node-a", "alice")
+
+    assert "multica issue status PROJ-7 cancelled" in str(caught.value)
