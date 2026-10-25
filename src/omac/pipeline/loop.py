@@ -3393,6 +3393,167 @@ def reconcile(
         full_scan=full_scan).changed
 
 
+def _close_or_block_without_item(manifest: Manifest, key: str, node) -> bool:
+    """A node whose WorkItem is gone: closed merge stays done, a done node without proof blocks."""
+    if confirmed_merge_is_closed(node):
+        if node.status != "done":
+            set_node(manifest, key, status="done")
+            return True
+    elif node.status == "done":
+        set_node(manifest, key, status="blocked")
+        return True
+    return False
+
+
+def _reconcile_missing_item(manifest: Manifest, key: str, node) -> bool:
+    if confirmed_merge_is_closed(node) or node.status == "done":
+        return _close_or_block_without_item(manifest, key, node)
+    if node.status != "abandoned":
+        set_node(manifest, key, work_item_id=None, status="todo")
+        return True
+    return False
+
+
+def _reconcile_confirmed_merge(store: WorkItemStore, manifest: Manifest, key: str, node, item) -> bool:
+    """confirmed merge closure is the sole ordinary-reconcile terminal invariant.
+
+    Explicit amendment/retry must retire it before any authoring/review recovery is eligible again."""
+    if _confirmed_merge_has_real_recovery(item):
+        raise PlatformError(
+            f"Confirmed merge node {key} still has recovery control facts; "
+            "inspect the WorkItem before clearing its recovery marker")
+    changed = False
+    # A terminal DONE projection may carry a historical reviewer
+    # baseline from the just-completed cycle. It is stale only after
+    # this authoritative read, so clear the manifest marker now.
+    if node.recovery_marker:
+        node.recovery_marker = False
+        changed = True
+    if item.status != WorkItemStatus.DONE or item.platform_assignee_id is not None:
+        store.normalize_confirmed_merge(node.work_item_id)
+    if node.status != "done":
+        set_node(manifest, key, status="done")
+        changed = True
+    return changed
+
+
+def _reconcile_done_develop(store: WorkItemStore, manifest: Manifest, manifest_path: str, key: str,
+                            node, item, pull_requests: Dict[str, Any]) -> bool:
+    """A historical `done` develop node must still prove a confirmed remote merge."""
+    if not _pull_request_url(item):
+        store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+        store.add_comment(node.work_item_id, ui(
+            "⚠️ Develop done requires a PR with confirmed remote merge facts.",
+            "⚠️ develop done 必须有带远端合入确认事实的 PR。"))
+        set_node(manifest, key, status="blocked")
+        return True
+    if not merge_request_state_is_valid(node.merge_request_state):
+        block_unproven_merge_request(
+            node, item, store, manifest_path, key,
+            f"Historical merge request state {node.merge_request_state!r} is invalid.")
+        return True
+    if confirmed_merge_is_closed(node):
+        if item.status != WorkItemStatus.DONE:
+            store.update_status(node.work_item_id, WorkItemStatus.DONE)
+        return False
+    pull_request = pull_requests[key]  # observed only for nodes that still need the merge proof
+    state = _pull_request_state(pull_request)
+    if state == PullRequestState.MERGED and getattr(pull_request, "merged_at", None):
+        node.merged = True
+        node.merged_at = pull_request.merged_at
+        node.merge_request_state = None
+        if item.status != WorkItemStatus.DONE:
+            store.update_status(node.work_item_id, WorkItemStatus.DONE)
+        return True
+    if state in {PullRequestState.OPEN, PullRequestState.PENDING}:
+        store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
+        if state == PullRequestState.PENDING:
+            node.merge_request_state = "requested"
+        set_node(manifest, key, status="merging")
+        return True
+    if state == PullRequestState.UNKNOWN:
+        store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
+        set_node(manifest, key, status="merging")
+        return True
+    detail = getattr(pull_request, "detail", "") or ui(
+        "PR closed without merge or merge facts are unavailable",
+        "PR 未合入即关闭，或无法获得合入事实")
+    store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+    store.add_comment(node.work_item_id, ui(
+        f"⚠️ Historical done state lacks confirmed merge; refusing closure. {detail}",
+        f"⚠️ 历史 done 状态缺少已确认的合入事实；拒绝收口。{detail}"))
+    set_node(manifest, key, status="blocked")
+    return True
+
+
+def _reconcile_done_node(store: WorkItemStore, manifest: Manifest, manifest_path: str, key: str,
+                         node, item, pull_requests: Dict[str, Any]) -> bool:
+    """done 是 OMAC 已收口的业务状态。若 worker/平台把投影回退为 in_review/in_progress,
+    不反向污染 manifest,而是把平台投影修回 done。"""
+    # 兼容旧版本坏状态:结构合法的 reject 曾可能被误收口为 done。
+    # reject 是业务未通过,必须回到 review 回收路径处理有界返工。
+    if item.review_verdict == "reject":
+        set_node(manifest, key, status="in_review")
+        return True
+    if getattr(item, "kind", TaskKind.DEVELOP) == TaskKind.DEVELOP:
+        return _reconcile_done_develop(
+            store, manifest, manifest_path, key, node, item, pull_requests)
+    if item.review_verdict == "pass-with-nits":
+        store.reset_review(node.work_item_id)
+    if item.status != WorkItemStatus.DONE:
+        store.update_status(node.work_item_id, WorkItemStatus.DONE)
+    return False
+
+
+def _reconcile_observed_node(store: WorkItemStore, manifest: Manifest, manifest_path: str, key: str,
+                             node, item, pull_requests: Dict[str, Any]) -> bool:
+    if confirmed_merge_is_closed(node):
+        return _reconcile_confirmed_merge(store, manifest, key, node, item)
+
+    # reviewer reject 后，worker 可在 manifest 仍 todo/blocked/done 时通过正式
+    # work submit 写入新交付。todo 常见于 node retry 后、下一次 tick 前提交。
+    # 此时不能把平台 DONE 直接同步成业务 done，必须回到 collect_results
+    # 重新过证据门并派发 reviewer。
+    if (
+        node.status in FAILED_STATUSES or node.status in {"todo", "done"}
+    ) and _has_unreviewed_worker_delivery(node, item):
+        set_node(manifest, key, status="in_progress")
+        return True
+
+    # blocked/failed 是 OMAC 已持久化的失败决策。平台投影可能因为进程在
+    # manifest-first 转换后、平台状态写入前崩溃而短暂滞后；不能用这个
+    # 旧投影反向解锁节点。显式 node retry 会先把 manifest 改为 todo，
+    # 合法的新 worker 交付则由上面的证据分支接管。
+    if node.status in FAILED_STATUSES:
+        return False
+
+    # todo 是首次派发、operator retry 或 amendment recovery 的显式意图。
+    # 若尚无 causal worker handoff，平台上的旧 authoring/review/status 投影
+    # 不能反向夺回控制权；新 Worker delivery 已由上面的证据分支处理。
+    if (
+        node.status == "todo"
+        and item.worker_handoff is None
+        and item.status != WorkItemStatus.DONE
+    ):
+        return False
+
+    # 运行中节点的终态回收归 collect_results(证据门 + 阶段交接)；
+    # abandoned 是调用者显式决策(omac node abandon),不归 reconcile 同步,
+    # 否则平台侧仍 DONE/BLOCKED 的 work_item 会把 manifest 的 abandoned 覆盖回 done/blocked
+    if node.status in RUNNING_STATUSES or node.status == "abandoned":
+        return False
+
+    if node.status == "done":
+        return _reconcile_done_node(store, manifest, manifest_path, key, node, item, pull_requests)
+
+    platform_status = item.status.value if hasattr(item.status, "value") else str(item.status)
+    manifest_status = _PLATFORM_TO_MANIFEST.get(platform_status, platform_status)
+    if manifest_status != node.status:
+        set_node(manifest, key, status=manifest_status)
+        return True
+    return False
+
+
 def _reconcile_candidate(
     store: WorkItemStore, manifest: Manifest, manifest_path: str,
     observations: Dict[str, Any], pull_requests: Dict[str, Any],
@@ -3404,13 +3565,7 @@ def _reconcile_candidate(
     changed = False
     for key, node in manifest.nodes.items():
         if not node.work_item_id:
-            if confirmed_merge_is_closed(node):
-                if node.status != "done":
-                    set_node(manifest, key, status="done")
-                    changed = True
-            elif node.status == "done":
-                set_node(manifest, key, status="blocked")
-                changed = True
+            changed |= _close_or_block_without_item(manifest, key, node)
             continue
         observation = observations.get(key)
         if observation is None:
@@ -3425,161 +3580,16 @@ def _reconcile_candidate(
                 raise PlatformError(
                     f"Reconcile observation is missing for selected node {key}")
             continue
-        observed_marker = (
-            False if observation is _MISSING_WORK_ITEM
-            else _has_recovery_control_fact(observation.work_item)
-        )
+        missing = observation is _MISSING_WORK_ITEM
+        observed_marker = False if missing else _has_recovery_control_fact(observation.work_item)
         if node.recovery_marker != observed_marker:
             node.recovery_marker = observed_marker
             changed = True
-        if observation is _MISSING_WORK_ITEM:
-            if confirmed_merge_is_closed(node):
-                if node.status != "done":
-                    set_node(manifest, key, status="done")
-                    changed = True
-            elif node.status == "done":
-                set_node(manifest, key, status="blocked")
-                changed = True
-            elif node.status not in {"done", "abandoned"}:
-                set_node(manifest, key, work_item_id=None, status="todo")
-                changed = True
-            continue
-        item = observation.work_item
-
-        # confirmed merge closure is the sole ordinary-reconcile terminal
-        # invariant. Explicit amendment/retry must retire it before any
-        # authoring/review recovery is eligible again.
-        if confirmed_merge_is_closed(node):
-            if _confirmed_merge_has_real_recovery(item):
-                raise PlatformError(
-                    f"Confirmed merge node {key} still has recovery control facts; "
-                    "inspect the WorkItem before clearing its recovery marker")
-            # A terminal DONE projection may carry a historical reviewer
-            # baseline from the just-completed cycle. It is stale only after
-            # this authoritative read, so clear the manifest marker now.
-            if node.recovery_marker:
-                node.recovery_marker = False
-                changed = True
-            if (
-                item.status != WorkItemStatus.DONE
-                or item.platform_assignee_id is not None
-            ):
-                store.normalize_confirmed_merge(node.work_item_id)
-            if node.status != "done":
-                set_node(manifest, key, status="done")
-                changed = True
-            continue
-
-        # reviewer reject 后，worker 可在 manifest 仍 todo/blocked/done 时通过正式
-        # work submit 写入新交付。todo 常见于 node retry 后、下一次 tick 前提交。
-        # 此时不能把平台 DONE 直接同步成业务 done，必须回到 collect_results
-        # 重新过证据门并派发 reviewer。
-        if (
-            node.status in FAILED_STATUSES or node.status in {"todo", "done"}
-        ) and _has_unreviewed_worker_delivery(node, item):
-            set_node(manifest, key, status="in_progress")
-            changed = True
-            continue
-
-        # blocked/failed 是 OMAC 已持久化的失败决策。平台投影可能因为进程在
-        # manifest-first 转换后、平台状态写入前崩溃而短暂滞后；不能用这个
-        # 旧投影反向解锁节点。显式 node retry 会先把 manifest 改为 todo，
-        # 合法的新 worker 交付则由上面的证据分支接管。
-        if node.status in FAILED_STATUSES:
-            continue
-
-        # todo 是首次派发、operator retry 或 amendment recovery 的显式意图。
-        # 若尚无 causal worker handoff，平台上的旧 authoring/review/status 投影
-        # 不能反向夺回控制权；新 Worker delivery 已由上面的证据分支处理。
-        if (
-            node.status == "todo"
-            and item.worker_handoff is None
-            and item.status != WorkItemStatus.DONE
-        ):
-            continue
-
-        # 运行中节点的终态回收归 collect_results(证据门 + 阶段交接)
-        if node.status in RUNNING_STATUSES:
-            continue
-
-        # abandoned 是调用者显式决策(omac node abandon),不归 reconcile 同步,
-        # 否则平台侧仍 DONE/BLOCKED 的 work_item 会把 manifest 的 abandoned 覆盖回 done/blocked
-        if node.status == "abandoned":
-            continue
-
-        # done 是 OMAC 已收口的业务状态。若 worker/平台把投影回退为 in_review/in_progress,
-        # 不反向污染 manifest,而是把平台投影修回 done。
-        if node.status == "done":
-            # 兼容旧版本坏状态:结构合法的 reject 曾可能被误收口为 done。
-            # reject 是业务未通过,必须回到 review 回收路径处理有界返工。
-            if item.review_verdict == "reject":
-                set_node(manifest, key, status="in_review")
-                changed = True
-                continue
-            if getattr(item, "kind", TaskKind.DEVELOP) == TaskKind.DEVELOP:
-                pr_url = _pull_request_url(item)
-                if not pr_url:
-                    store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                    store.add_comment(node.work_item_id, ui(
-                        "⚠️ Develop done requires a PR with confirmed remote merge facts.",
-                        "⚠️ develop done 必须有带远端合入确认事实的 PR。"))
-                    set_node(manifest, key, status="blocked")
-                    changed = True
-                    continue
-                if not merge_request_state_is_valid(node.merge_request_state):
-                    block_unproven_merge_request(
-                        node, item, store, manifest_path, key,
-                        f"Historical merge request state {node.merge_request_state!r} is invalid.")
-                    changed = True
-                    continue
-                if confirmed_merge_is_closed(node):
-                    if item.status != WorkItemStatus.DONE:
-                        store.update_status(node.work_item_id, WorkItemStatus.DONE)
-                    continue
-                observation = pull_requests[key]
-                state = _pull_request_state(observation)
-                if state == PullRequestState.MERGED and getattr(observation, "merged_at", None):
-                    node.merged = True
-                    node.merged_at = observation.merged_at
-                    node.merge_request_state = None
-                    if item.status != WorkItemStatus.DONE:
-                        store.update_status(node.work_item_id, WorkItemStatus.DONE)
-                    changed = True
-                    continue
-                if state in {PullRequestState.OPEN, PullRequestState.PENDING}:
-                    store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
-                    if state == PullRequestState.PENDING:
-                        node.merge_request_state = "requested"
-                    set_node(manifest, key, status="merging")
-                    changed = True
-                    continue
-                if state == PullRequestState.UNKNOWN:
-                    store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
-                    set_node(manifest, key, status="merging")
-                    changed = True
-                    continue
-                detail = getattr(observation, "detail", "") or ui(
-                    "PR closed without merge or merge facts are unavailable",
-                    "PR 未合入即关闭，或无法获得合入事实")
-                store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                store.add_comment(node.work_item_id, ui(
-                    f"⚠️ Historical done state lacks confirmed merge; refusing closure. {detail}",
-                    f"⚠️ 历史 done 状态缺少已确认的合入事实；拒绝收口。{detail}"))
-                set_node(manifest, key, status="blocked")
-                changed = True
-                continue
-            if item.review_verdict == "pass-with-nits":
-                store.reset_review(node.work_item_id)
-            if item.status != WorkItemStatus.DONE:
-                store.update_status(node.work_item_id, WorkItemStatus.DONE)
-            continue
-
-        platform_status = item.status.value if hasattr(item.status, "value") else str(item.status)
-        manifest_status = _PLATFORM_TO_MANIFEST.get(platform_status, platform_status)
-        if manifest_status != node.status:
-            set_node(manifest, key, status=manifest_status)
-            changed = True
-
+        if missing:
+            changed |= _reconcile_missing_item(manifest, key, node)
+        else:
+            changed |= _reconcile_observed_node(
+                store, manifest, manifest_path, key, node, observation.work_item, pull_requests)
     return changed
 
 
