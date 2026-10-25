@@ -1240,6 +1240,130 @@ def _validate_structured_recovery_payloads(
         ))
 
 
+def _observe_control(store: WorkItemStore, job: Tuple[str, str]) -> Tuple[str, Any]:
+    key, item_id = job
+    try:
+        projection = store.observe_work_item_control(item_id)
+    except WorkItemNotFoundError as first_missing:
+        # One typed not-found can be a transient resolver/index result. Do
+        # not clear the manifest identity until a second explicit 404-like
+        # observation names the same item; any other error stays fail-closed.
+        try:
+            projection = store.observe_work_item_control(item_id)
+        except WorkItemNotFoundError as confirmed_missing:
+            identity = str(item_id).strip().lower()
+            if (
+                not identity
+                or identity not in str(first_missing).lower()
+                or identity not in str(confirmed_missing).lower()
+            ):
+                raise PlatformError(
+                    f"Work item {item_id} missing identity was not confirmed; "
+                    "preserving the manifest work_item_id") from confirmed_missing
+            projection = _MISSING_WORK_ITEM
+    return key, projection
+
+
+def _bounded_workers(jobs: list, max_parallel: int, store_limit: int) -> int:
+    return max(1, min(len(jobs), max(1, max_parallel), store_limit))
+
+
+def _observe_controls_fail_closed(
+    store: WorkItemStore, control_jobs: List[Tuple[str, str]], max_parallel: int,
+) -> List[Tuple[str, Any]]:
+    """Read active controls with the Store's bounded parallelism contract."""
+    if not control_jobs:
+        return []
+    workers = _bounded_workers(
+        control_jobs, max_parallel,
+        store.control_observation_parallelism(max(1, max_parallel)))
+    if workers == 1:
+        return [_observe_control(store, job) for job in control_jobs]
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="omac-control") as executor:
+        return list(executor.map(lambda job: _observe_control(store, job), control_jobs))
+
+
+def _observe_static_controls(store: WorkItemStore, static_control_jobs: List[Tuple[str, str]]):
+    """Batch-read static nodes; after a batch failure retry each, isolating only data-plane errors."""
+    controls: Dict[str, Any] = {}
+    incomplete: set[str] = set()
+    try:
+        batch = store.observe_work_item_controls([item_id for _, item_id in static_control_jobs])
+    except (PlatformError, AuthError):
+        # The batch has no authoritative per-item facts. Retry each
+        # static item below, isolating only explicit data-plane errors.
+        batch = {}
+    for key, item_id in static_control_jobs:
+        if item_id in batch:
+            controls[key] = batch[item_id]
+            continue
+        try:
+            _, projection = _observe_control(store, (key, item_id))
+        except (PlatformError, AuthError):
+            incomplete.add(key)
+            continue
+        controls[key] = projection
+    return controls, incomplete
+
+
+def _read_reconcile_controls(store: WorkItemStore, manifest: Manifest, max_parallel: int,
+                             full_scan: bool):
+    """Phase 1: every selected Issue control envelope is read before any attachment body.
+
+    Static nodes are not read during normal reconciliation. Full audits always read active
+    controls independently and fail closed; only static control reads may be isolated after
+    a batch/fallback failure."""
+    active_keys = reconcile_active_keys(manifest)
+    jobs = [
+        (key, node.work_item_id, key in active_keys)
+        for key, node in manifest.nodes.items() if node.work_item_id
+    ]
+    active_jobs = [(k, i) for k, i, active in jobs if active]
+    static_jobs = [(k, i) for k, i, active in jobs if full_scan and not active]
+    selected_jobs = [(k, i) for k, i, active in jobs if full_scan or active]
+    # Static error isolation is valid only for adapters that explicitly
+    # execute a real list-batch control read. The default Store batch method is
+    # a compatibility per-item loop and must remain all-or-nothing.
+    batch_capable = getattr(store, "control_batch_observation_supported", lambda: False)()
+    if not full_scan or not batch_capable:
+        return dict(_observe_controls_fail_closed(store, selected_jobs, max_parallel)), set()
+    controls = dict(_observe_controls_fail_closed(store, active_jobs, max_parallel))
+    incomplete: set[str] = set()
+    if static_jobs:
+        static, incomplete = _observe_static_controls(store, static_jobs)
+        controls.update(static)
+    return controls, incomplete
+
+
+def _hydrate_reconcile_evidence(store: WorkItemStore, manifest: Manifest, controls: Dict[str, Any],
+                                max_parallel: int) -> Dict[str, WorkItemControlProjection]:
+    """Phase 2: the complete control snapshot produces an explicit hydration plan."""
+    hydration_jobs: List[Tuple[str, WorkItemControlProjection, WorkItemHydrationPlan]] = []
+    for key, node in manifest.nodes.items():
+        projection = controls.get(key)
+        if projection is None or projection is _MISSING_WORK_ITEM:
+            continue
+        plan = _build_work_item_hydration_plan(node, projection)
+        if plan:
+            hydration_jobs.append((key, projection, plan))
+    if not hydration_jobs:
+        return {}
+
+    def hydrate(job):
+        key, projection, plan = job
+        item = store.hydrate_work_item_evidence(projection, plan)
+        return key, replace(
+            projection, work_item=item,
+            deferred_payloads=projection.deferred_payloads - plan)
+
+    workers = _bounded_workers(
+        hydration_jobs, max_parallel, store.evidence_hydration_parallelism(max(1, max_parallel)))
+    if workers == 1:
+        return dict(hydrate(job) for job in hydration_jobs)
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="omac-evidence") as executor:
+        return dict(executor.map(hydrate, hydration_jobs))
+
+
 def _observe_reconcile_inputs(
     store: WorkItemStore,
     code_host: CodeHost, manifest: Manifest,
@@ -1254,169 +1378,31 @@ def _observe_reconcile_inputs(
     complete platform view. P3's CLI scheduler chooses audit full scans
     without changing this explicit read contract.
     """
-    controls: Dict[str, Any] = {}
-    observations: Dict[str, Any] = {}
-    pull_requests: Dict[str, Any] = {}
-    incomplete_static_keys: set[str] = set()
-
-    # Phase 1: every selected Issue control envelope is read before any
-    # attachment body. Static nodes are not read during normal reconciliation.
-    # Full audits always read active controls independently and fail closed;
-    # only static control reads may be isolated after a batch/fallback failure.
-    active_keys = reconcile_active_keys(manifest)
-    active_control_jobs = [
-        (key, node.work_item_id)
-        for key, node in manifest.nodes.items()
-        if node.work_item_id and key in active_keys
-    ]
-    static_control_jobs = [
-        (key, node.work_item_id)
-        for key, node in manifest.nodes.items()
-        if full_scan and node.work_item_id and key not in active_keys
-    ]
-    selected_control_jobs = [
-        (key, node.work_item_id)
-        for key, node in manifest.nodes.items()
-        if node.work_item_id and (full_scan or key in active_keys)
-    ]
-
-    def observe_control(job: Tuple[str, str]) -> Tuple[str, Any]:
-        key, item_id = job
-        try:
-            projection = store.observe_work_item_control(item_id)
-        except WorkItemNotFoundError as first_missing:
-            # One typed not-found can be a transient resolver/index result. Do
-            # not clear the manifest identity until a second explicit 404-like
-            # observation names the same item; any other error stays fail-closed.
-            try:
-                projection = store.observe_work_item_control(item_id)
-            except WorkItemNotFoundError as confirmed_missing:
-                identity = str(item_id).strip().lower()
-                if (
-                    not identity
-                    or identity not in str(first_missing).lower()
-                    or identity not in str(confirmed_missing).lower()
-                ):
-                    raise PlatformError(
-                        f"Work item {item_id} missing identity was not confirmed; "
-                        "preserving the manifest work_item_id") from confirmed_missing
-                projection = _MISSING_WORK_ITEM
-        return key, projection
-
-    def observe_controls_fail_closed(
-        control_jobs: List[Tuple[str, str]],
-    ) -> List[Tuple[str, Any]]:
-        """Read active controls with the Store's bounded parallelism contract."""
-        if not control_jobs:
-            return []
-        requested_parallelism = max(1, max_parallel)
-        workers = max(1, min(
-            len(control_jobs),
-            requested_parallelism,
-            store.control_observation_parallelism(requested_parallelism),
-        ))
-        if workers == 1:
-            return [observe_control(job) for job in control_jobs]
-        with ThreadPoolExecutor(
-            max_workers=workers,
-            thread_name_prefix="omac-control",
-        ) as executor:
-            return list(executor.map(observe_control, control_jobs))
-
-    # Static error isolation is valid only for adapters that explicitly
-    # execute a real list-batch control read. The default Store batch method is
-    # a compatibility per-item loop and must remain all-or-nothing.
-    batch_capable = getattr(
-        store, "control_batch_observation_supported", lambda: False)()
-    if not full_scan or not batch_capable:
-        controls.update(observe_controls_fail_closed(selected_control_jobs))
-    else:
-        controls.update(observe_controls_fail_closed(active_control_jobs))
-        if static_control_jobs:
-            batch: Dict[str, WorkItemControlProjection] = {}
-            try:
-                batch = store.observe_work_item_controls(
-                    [item_id for _, item_id in static_control_jobs])
-            except (PlatformError, AuthError):
-                # The batch has no authoritative per-item facts. Retry each
-                # static item below, isolating only explicit data-plane errors.
-                batch = {}
-            for key, item_id in static_control_jobs:
-                if item_id in batch:
-                    controls[key] = batch[item_id]
-                    continue
-                try:
-                    _, projection = observe_control((key, item_id))
-                except (PlatformError, AuthError):
-                    incomplete_static_keys.add(key)
-                    continue
-                controls[key] = projection
-
-    # Phase 2: the complete control snapshot produces an explicit hydration plan.
-    hydration_jobs: List[
-        Tuple[str, WorkItemControlProjection, WorkItemHydrationPlan]
-    ] = []
-    for key, node in manifest.nodes.items():
-        projection = controls.get(key)
-        if projection is None:
-            continue
-        if projection is _MISSING_WORK_ITEM:
-            continue
-        plan = _build_work_item_hydration_plan(node, projection)
-        if plan:
-            hydration_jobs.append((key, projection, plan))
-
-    def hydrate(
-        job: Tuple[str, WorkItemControlProjection, WorkItemHydrationPlan],
-    ) -> Tuple[str, WorkItemControlProjection]:
-        key, projection, plan = job
-        item = store.hydrate_work_item_evidence(projection, plan)
-        return key, replace(
-            projection,
-            work_item=item,
-            deferred_payloads=projection.deferred_payloads - plan,
-        )
-
-    hydrated: Dict[str, WorkItemControlProjection] = {}
-    if hydration_jobs:
-        requested_parallelism = max(1, max_parallel)
-        workers = max(1, min(
-            len(hydration_jobs),
-            requested_parallelism,
-            store.evidence_hydration_parallelism(requested_parallelism),
-        ))
-        if workers == 1:
-            results = [hydrate(job) for job in hydration_jobs]
-        else:
-            with ThreadPoolExecutor(
-                max_workers=workers,
-                thread_name_prefix="omac-evidence",
-            ) as executor:
-                results = list(executor.map(hydrate, hydration_jobs))
-        hydrated = dict(results)
+    controls, incomplete_static_keys = _read_reconcile_controls(
+        store, manifest, max_parallel, full_scan)
+    hydrated = _hydrate_reconcile_evidence(store, manifest, controls, max_parallel)
 
     # Publish the complete read barrier in manifest order only after every
     # required hydration succeeded. Completion order never affects decisions.
+    observations: Dict[str, Any] = {}
     for key in manifest.nodes:
         projection = controls.get(key)
         if projection is None:
             continue
-        if projection is _MISSING_WORK_ITEM:
-            observations[key] = _MISSING_WORK_ITEM
-        else:
-            observations[key] = hydrated.get(key, projection)
+        observations[key] = (
+            _MISSING_WORK_ITEM if projection is _MISSING_WORK_ITEM
+            else hydrated.get(key, projection))
 
     # Phase 3: remote PR facts are read only after every required payload read
     # succeeded, preserving the existing all-or-nothing reconcile observation.
+    pull_requests: Dict[str, Any] = {}
     for key, node in manifest.nodes.items():
         observation = observations.get(key)
         if observation is None or observation is _MISSING_WORK_ITEM:
             continue
         item = observation.work_item
-        if not _requires_pull_request_observation(node, item):
-            continue
-        pull_requests[key] = code_host.observe_pull_request(
-            _pull_request_url(item))
+        if _requires_pull_request_observation(node, item):
+            pull_requests[key] = code_host.observe_pull_request(_pull_request_url(item))
     return ReconcileInputs(
         observations=observations,
         pull_requests=pull_requests,
