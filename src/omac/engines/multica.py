@@ -1,6 +1,6 @@
 """Multica 引擎 — 调用 multica CLI 实现双接口(现有资产平移,去 squad 概念)。
 
-参考实现映射见设计文档 §12.3:
+参考实现映射见docs/design/README.md §12.3:
 - MulticaStore:issue create/get/metadata set/list/comment/update/assign
 - MulticaRuntime:assign 即唤醒(wake 为确认性 no-op)
 

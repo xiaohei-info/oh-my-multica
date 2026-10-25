@@ -1,7 +1,7 @@
 # oh-my-multica
 
 [![CI](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/xiaohei-info/oh-my-multica/releases/tag/v1.0.0)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/xiaohei-info/oh-my-multica/releases/tag/v2.0.0)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
@@ -148,13 +148,13 @@ Prerequisites:
 - For the Multica engine, [install the Multica CLI](https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md), complete `multica login`, and connect Codex, Claude Code, or other Runtimes on the machine to Multica.
 
 ```bash
-pipx install git+https://github.com/xiaohei-info/oh-my-multica.git@v1.0.0
+pipx install git+https://github.com/xiaohei-info/oh-my-multica.git@v2.0.0
 
 omac --version
 ```
 
 The versioned GitHub Tag is the current stable installation source. To install
-the latest development revision instead, replace `@v1.0.0` with `@main`.
+the latest development revision instead, replace `@v2.0.0` with `@main`.
 
 The more machines connected to Multica, the greater the Agent execution concurrency available. Machines with a
 Coding Agent Runtime installed are the actual task execution layer at the bottom of this system.
@@ -187,7 +187,7 @@ Work from the target project's repository root:
 1. Run `omac init --check`. If configuration is missing, follow the error output to complete declarative configuration; do not invoke the Human interactive wizard.
 2. Create a plan from the user's goal, or continue an existing manifest.
 3. Execute the exact “next step” printed by the command. Do not guess the manifest path, command arguments, or current stage.
-4. Keep `dag run` in the foreground until it returns exit 0 or exit 20.
+4. Keep `dag run` in the foreground until it returns exit 0 or exit 20. With `--max-rounds` or `--max-minutes`, exit 10 means "still advancing": run the same command again to continue.
 5. Report delivery complete only when exit 0 is returned and the manifest has converged. On exit 20, load `omac guide recovery`; return decisions that change the goal, scope, or accepted risk to the Human.
 
 ## Agent Team configuration best practices
@@ -361,7 +361,7 @@ checkpoints in the process instead of remaining hidden in Human memory or chat h
 | Production delivery requirement | Where it is enforced in oh-my-multica |
 | --- | --- |
 | Requirements do not drift | Design problem / non-goals / flows and acceptance flow IDs |
-| Architecture remains maintainable | Core data ownership, module boundaries, cross-module contracts, and project-level `AGENTS.md` |
+| Architecture remains maintainable | Core data ownership, module boundaries, cross-module contracts, and the target project's own `AGENTS.md` |
 | Changes preserve existing behavior | Contract source of truth, non-goals, integration gates, and compatibility requirements |
 | Results are reproducible | Verification commands, environment setup, and structured evidence |
 | Authors cannot prove their own correctness | Worker and Reviewer separation, with final user-journey acceptance by the Acceptor |

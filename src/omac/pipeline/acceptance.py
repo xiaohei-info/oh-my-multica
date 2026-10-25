@@ -1,4 +1,4 @@
-"""总控验收外层循环 + DAG 增量扩展(不起新 DAG,设计文档 §7.6)。
+"""总控验收外层循环 + DAG 增量扩展(不起新 DAG,docs/design/README.md §7.6)。
 
 内层 tick-loop 收敛(全部节点 done)后,若 ``.omac/<name>.acceptance.yaml`` 存在,
 进入外层验收循环(``<= acceptance.max_rounds``,缺省 3;无验收文档跳过,收敛即 exit 0):

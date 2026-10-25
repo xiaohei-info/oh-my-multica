@@ -1,6 +1,6 @@
 """omac CLI 入口 — 名词-动词命令树,gh 风格分组 help,稳定退出码。
 
-纪律(设计文档 §2):
+纪律(docs/design/README.md §2):
 - 报错即教学:参数错误时打印错误 + 该命令完整 help;
 - 业务层 raise OmacError 子类,这里统一转退出码,不散落 sys.exit。
 """

@@ -1,6 +1,6 @@
 """pipeline/report — dag status / exit 20 共享的结构化报告(单一 schema 模块)。
 
-设计文档 §5.2/§13.3:dag status --output json 与 dag run exit 20 报告共用同一 schema,
+docs/design/README.md §5.2/§13.3:dag status --output json 与 dag run exit 20 报告共用同一 schema,
 P5 web 与 agent 都消费它。schema 用本模块的 *_KEYS 常量锁定,测试断言字段不变。
 
 退出码约定(§5.1):dag status 正常观测退出 0；平台/网络错误退出 2，

@@ -1,4 +1,4 @@
-"""Web 路由层:只做「解析参数 → 调命令函数 → 原样返回 JSON」(设计文档 §13.2)。
+"""Web 路由层:只做「解析参数 → 调命令函数 → 原样返回 JSON」(docs/design/README.md §13.2)。
 
 纪律:
 - 绝不直接读 manifest / 调 engine / 二次加工数据 —— 那些都是命令层的职责。
@@ -167,7 +167,7 @@ def node_show(manifest_path: str, node_key: str) -> Any:
 def get_plan_acceptance(orchestrator_dir: Path, manifest_path: str) -> Any:
     """GET /api/plan/acceptance:加载对应 <manifest-stem>.acceptance.yaml 并原样返回 JSON。
 
-    对应设计文档 §13.3 静态信息页中的「验收文档逐条清单」。
+    对应docs/design/README.md §13.3 静态信息页中的「验收文档逐条清单」。
     """
     acceptance = orchestrator_dir / (Path(manifest_path).stem + ".acceptance.yaml")
     meta = {"acceptance_file": str(acceptance)}

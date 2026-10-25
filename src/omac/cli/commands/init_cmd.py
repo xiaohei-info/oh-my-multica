@@ -1,4 +1,4 @@
-"""omac init — 交互式配置 / --check 体检(设计文档 §7.1)。
+"""omac init — 交互式配置 / --check 体检(docs/design/README.md §7.1)。
 
 两种模式:
   omac init            交互式:引擎 → workspace → 可选模板 agent → 角色映射 → 落盘 config.yaml

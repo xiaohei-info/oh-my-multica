@@ -3,8 +3,8 @@
 This file contains implementation guardrails specific to the `oh-my-multica`
 (`omac` CLI) repository. Cross-project engineering practices are intentionally
 omitted; only repository-specific, non-negotiable constraints belong here.
-Items marked `[enforced from Phase N]` are review requirements today and become
-CI-enforced when that phase of the remediation plan lands.
+Rules marked as enforced are checked by CI (`lint-imports`, `tests/test_architecture.py`);
+the rest are review requirements.
 
 ## Repository Map
 
@@ -13,11 +13,12 @@ CI-enforced when that phase of the remediation plan lands.
 | `src/omac/web/` | Read-only web surface. |
 | `src/omac/cli/` | CLI surface and composition root (argument parsing, engine assembly, exit codes). |
 | `src/omac/pipeline/` | Deterministic Loop: reconcile, result collection, gates, dispatch, delivery, acceptance. |
-| `src/omac/engines/` | Ports (`store.py`, `runtime.py`, `models.py`) and adapters (`multica.py`, `github.py`); `create_engine` is the only factory. |
+| `src/omac/engines/` | Ports (`store.py`, `runtime.py`, `codehost.py`, `models.py`) and adapters (`multica.py`, `github.py`); `create_engine` is the only factory. |
 | `src/omac/core/` | Domain model, manifest I/O, validation, Git state sync. |
 | `src/omac/guide/`, `src/omac/agents/` | Packaged, machine-consumed guides and Agent templates. |
 | `scripts/check_release.py` | Release metadata check used by `release.yml`. |
-| `tests/` | pytest suite; markers `integration`, `live`, `e2e` (see `pyproject.toml`). |
+| `tests/` | pytest suite; markers `integration`, `docker`, `live` (see `pyproject.toml`). `tests/it` runs a private Docker Multica; `tests/smoke` is the weekly real-agent run. |
+| `docs/design/README.md` | The current design; code comments cite its section numbers. |
 
 ## Hard Rules
 
@@ -33,7 +34,7 @@ method to the port and let the adapter produce structured data.
 Local tooling is allowed only where it already exists: `git` (Git state sync and
 repository reads), `bash -n` (syntax preflight), and `lsof`. Do not add new
 subprocess call sites outside adapters without updating the allowlist in
-`tests/test_architecture.py`. `[enforced from Phase 0]`
+`tests/test_architecture.py`. (enforced)
 
 This is a code-review hard stop.
 
@@ -51,7 +52,7 @@ Dependency direction is strictly downward:
 - The only permanent exception is the `omac web` command starting
   `omac.web.server`.
 - Enforced by `lint-imports` (contracts in `pyproject.toml`). The baseline
-  exception list may only shrink. `[enforced from Phase 0]`
+  exception list may only shrink. (enforced)
 
 ### 3. Web surface
 
@@ -68,22 +69,16 @@ UUIDs; commit or file SHA digests; specific node names; URLs) used as admission
 conditions or special cases. One-off recovery for a single incident is written
 as separate operator tooling outside the package, reviewed, run, and deleted.
 Generic mechanisms (unknown results are never replayed, drift fails closed) stay
-in the product without incident constants. `[enforced from Phase 0, allowlist
-cleared by Phase 3]`
-
-Retirement status (update as phases land):
-
-| Modules | Status |
-|---|---|
-| `pipeline/publication_review.py`, `sdk_publication_review.py`, `sdk_checkpoint_review.py` | Retiring in Phase 1 — do not extend or depend on. |
-| `core/owner_amendment.py`, `core/current_owner_source.py`, `core/prospective_owner.py`, `core/credential_prospective.py`, `core/historical_review_source.py`, `pipeline/owner_amendment.py`, `pipeline/portable_owner.py`, `pipeline/historical_review_source.py` | Retiring in Phase 2. |
-| `pipeline/evidence_handoff.py`, `operator_review_recovery.py`, `evidence_review.py`, `contract_repair.py`, `core/literal_correction.py`, `core/state_sync_recovery.py` | Retiring in Phase 3. |
+in the product without incident constants. (enforced)
 
 ### 5. Manifest state
 
 - One writer per manifest, guarded by the manifest write lock
-  (`core/manifest.py`). The Multica engine synchronizes manifest and config
-  through `origin/main`.
+  (`core/manifest.py`). The Multica engine synchronizes the DAG definition, the
+  per-node state files and the config through `origin/main`.
+- Run state is one small file per node (`.omac/<name>.state/<node>.yaml`);
+  `save_manifest` rewrites only files whose content changed. Do not add a code
+  path that rewrites the whole state or reads a 1.x single-file manifest.
 - `meta` keys that the current code does not know are preserved unchanged on
   load and save.
 - Do not store unbounded or large payloads (captured sources, transcripts,
@@ -137,11 +132,16 @@ goes through `omac.i18n.ui(english, chinese)`.
 4. **Fixtures are synthetic and small.** No captured real-project data, machine
    paths, platform IDs, emails, or credentials (see `CONTRIBUTING.md`). A single
    fixture file stays under 1 MB. Tests must not read paths outside the
-   repository. `[enforced from Phase 0]`
+   repository. (enforced)
 5. **Architecture checks** live in `tests/test_architecture.py` and
-   `lint-imports`; do not weaken them to make a change pass. `[enforced from
-   Phase 0]`
-6. Changes to packaged documents (`src/omac/guide/**`, `src/omac/agents/**`)
+   `lint-imports`; do not weaken them to make a change pass. (enforced)
+6. Per-test budgets are enforced by `tests/conftest.py` (`tests/_support/budget.py`):
+   unit 0.2 s target (0.4 s gate), integration 5 s, docker 30 s, peak memory and
+   temp-file limits. Do not add files to `EXEMPT_FILES` without a reason in the PR.
+7. Tests that need the real server go to `tests/it` (private Docker Multica; never
+   skipped silently). The real-agent smoke run costs money and never runs for pull
+   requests.
+8. Changes to packaged documents (`src/omac/guide/**`, `src/omac/agents/**`)
    run `tests/test_guide.py`, `tests/test_i18n.py`, and
    `tests/test_agent_templates.py`.
 
@@ -159,9 +159,9 @@ goes through `omac.i18n.ui(english, chinese)`.
 
 ## Design Documents
 
-The current design lives in `docs/design/` (tracked). `docs/dev/` is local and
-ignored by Git; never cite it from code or this file. Cite design sections only
-by documents that exist in the repository. `[docs/design/ created in Phase 9]`
+The current design lives in `docs/design/README.md` (tracked); code comments cite its
+section numbers. `docs/dev/` is local and ignored by Git; never cite it from code or
+this file. Cite design sections only by documents that exist in the repository.
 
 ## Releases
 

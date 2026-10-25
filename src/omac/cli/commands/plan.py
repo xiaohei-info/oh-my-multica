@@ -18,7 +18,7 @@ from ..output import print_json
 def resolve_review_rounds(cfg: dict | None = None) -> int:
     """plan 流水线评审修订轮次上界,与 dag run 节点评审共用 config.retry.review。
 
-    设计文档 §7.2:每个 LLM 环节的修订循环有界(评审轮次读 config.retry.review,缺省 ≤3),
+    docs/design/README.md §7.2:每个 LLM 环节的修订循环有界(评审轮次读 config.retry.review,缺省 ≤3),
     耗尽则 exit 20 移交调用者。此处统一从 config.retry 读取,消除第二处硬编码。
     """
     cfg = cfg if cfg is not None else config_mod.load_config()

@@ -1,4 +1,4 @@
-"""omac 错误类型 — 与退出码契约一一对应(设计文档 §5.1)。
+"""omac 错误类型 — 与退出码契约一一对应(docs/design/README.md §5.1)。
 
 cli.main 统一捕获这些异常并转换为对应退出码,
 业务层只管 raise,不直接 sys.exit。

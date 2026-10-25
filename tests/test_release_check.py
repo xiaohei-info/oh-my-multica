@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from omac import __version__
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check_release.py"
@@ -19,15 +21,18 @@ def run_check(tag: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_release_check_accepts_matching_v1_tag() -> None:
-    result = run_check("v1.0.0")
+def test_release_check_accepts_the_tag_matching_the_project_version() -> None:
+    result = run_check(f"v{__version__}")
 
     assert result.returncode == 0, result.stderr
-    assert "release metadata is consistent for v1.0.0" in result.stdout
+    assert f"release metadata is consistent for v{__version__}" in result.stdout
 
 
 def test_release_check_rejects_mismatched_tag() -> None:
-    result = run_check("v1.0.1")
+    major, minor, patch = __version__.split(".")
+    other = f"{major}.{minor}.{int(patch) + 1}"
+
+    result = run_check(f"v{other}")
 
     assert result.returncode == 1
-    assert "tag version 1.0.1 does not match project version 1.0.0" in result.stderr
+    assert f"tag version {other} does not match project version {__version__}" in result.stderr

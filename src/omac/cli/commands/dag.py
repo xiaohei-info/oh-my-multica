@@ -776,7 +776,7 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
 
 
 def run(args) -> int:
-    """前台 loop:sync → decide → dispatch,直到收敛或需决策(设计文档 §7.3)。
+    """前台 loop:sync → decide → dispatch,直到收敛或需决策(docs/design/README.md §7.3)。
 
     幂等:全部状态在 manifest + 平台,任意中断重跑即续跑,done 节点复用。
     有界:--max-rounds / --max-minutes 支持分段跑。

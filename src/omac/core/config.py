@@ -1,6 +1,6 @@
 """omac 项目配置(.omac/config.yaml)。
 
-设计文档 §6:配置与状态一律 YAML 进 git,不用 SQLite。
+docs/design/README.md §6:配置与状态一律 YAML 进 git,不用 SQLite。
 优先级:config.yaml < 环境变量(OMAC_*)< 命令行参数。
 
 结构(全部键可选,init 交互式生成):
@@ -58,7 +58,7 @@ DEFAULT_WORKFLOW = {
     "goal_required": False,
 }
 
-# 各类「回到 worker」回退次数上限(设计文档 §6 / §7.3;缺省 3,0 = 该类失败即 blocked)
+# 各类「回到 worker」回退次数上限(docs/design/README.md §6 / §7.3;缺省 3,0 = 该类失败即 blocked)
 DEFAULT_RETRY = {
     "worker": 3,
     "ci": 3,
@@ -66,7 +66,7 @@ DEFAULT_RETRY = {
     "merge": 3,
 }
 
-# 总控验收外层循环上限(设计文档 §6;与 retry 正交)
+# 总控验收外层循环上限(docs/design/README.md §6;与 retry 正交)
 DEFAULT_MAX_ROUNDS = 3
 
 # reviewer no-submit 续跑预算:连续多少个 reviewer Run 以「结束但未提交裁决」
@@ -87,7 +87,7 @@ DEFAULT_GITHUB_CHECK_COMMAND = "gh pr checks {pr_url} --watch --fail-fast"
 DEFAULT_GITHUB_MERGE_COMMAND = "gh pr merge {pr_url} --squash --delete-branch"
 
 
-# 环境变量回退(设计文档 §5:全局 flag 带 env 回退)
+# 环境变量回退(docs/design/README.md §5:全局 flag 带 env 回退)
 ENV_ENGINE = "OMAC_ENGINE"
 ENV_WORKSPACE = "OMAC_WORKSPACE_ID"
 ENV_PROJECT = "OMAC_PROJECT_ID"
@@ -138,7 +138,7 @@ def set_value(data: dict, dotted_key: str, value):
 def resolve_retry(config: dict) -> dict:
     """解析 retry 块:以 DEFAULT_RETRY 为缺省,合并 config.retry,并校验。
 
-    校验规则(设计文档 §6):retry.{worker|ci|review|merge} 必须为整数且 ≥ 0;
+    校验规则(docs/design/README.md §6):retry.{worker|ci|review|merge} 必须为整数且 ≥ 0;
     负数在「校验期」报错(ValidationError → exit 5)。
     """
     raw = get_value(config, "retry")
@@ -307,7 +307,7 @@ def _has_github_workflow(root: str | os.PathLike = ".") -> bool:
 def get_ci_config(config: dict, root: str | os.PathLike = ".") -> dict | None:
     """返回 ci 配置块;未显式配置时按 .github/workflows 自动判断。
 
-    设计文档 §6/§7.3:ci 可选。显式 check_command 最高优先级;未配置时,
+    docs/design/README.md §6/§7.3:ci 可选。显式 check_command 最高优先级;未配置时,
     若仓库存在 GitHub Actions workflow,默认用 gh pr checks;否则跳过 CI。
     check_command 是带 {pr_url} 占位的模板命令,subprocess 执行,退出码即结论。
     """
@@ -326,7 +326,7 @@ def get_ci_config(config: dict, root: str | os.PathLike = ".") -> dict | None:
 def get_merge_config(config: dict) -> dict | None:
     """返回 merge 配置块;未显式配置时默认用 gh pr merge。
 
-    设计文档 §7.3:reviewer pass 后应进入自动合并门。显式 command 最高优先级;
+    docs/design/README.md §7.3:reviewer pass 后应进入自动合并门。显式 command 最高优先级;
     未配置或 command 为空时使用 GitHub CLI 默认命令。命令退出码仅表示请求结果；
     合入结论必须由引擎随后观察远端 PR。
     """

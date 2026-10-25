@@ -147,7 +147,7 @@ class ReleaseAssetObservation:
 class WorkItem:
     """工作单元 — 纯业务数据,不包含平台技术细节(body/labels/state)。
 
-    issue 的范围是一个完整阶段(设计文档 §7.4):产出、评审、回退往返
+    issue 的范围是一个完整阶段(docs/design/README.md §7.4):产出、评审、回退往返
     都在同一条 work item 上,当前阶段与承担者由 metadata + assignee 表达。
     """
     id: str

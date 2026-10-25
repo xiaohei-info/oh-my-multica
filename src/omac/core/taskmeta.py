@@ -1,4 +1,4 @@
-"""任务类型×阶段模型 — 让每条 issue 自描述(设计文档 §7.4)。
+"""任务类型×阶段模型 — 让每条 issue 自描述(docs/design/README.md §7.4)。
 
 issue 的范围是一个完整阶段:产出、评审、回退往返都发生在同一条 issue
 时间线上。当前阶段(phase)与承担者由 issue metadata + assignee 表达,
@@ -46,7 +46,7 @@ class TaskPhase(Enum):
 DEFAULT_KIND = TaskKind.DEVELOP
 DEFAULT_PHASE = TaskPhase.AUTHORING
 
-# 回退有界上限(设计文档 §7.3:缺省 3 次,耗尽 → blocked)
+# 回退有界上限(docs/design/README.md §7.3:缺省 3 次,耗尽 → blocked)
 DEFAULT_MAX_BOUNCES = 3
 
 

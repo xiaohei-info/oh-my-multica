@@ -1,6 +1,6 @@
 """DAG 图算法。
 
-术语约定(设计文档 §10.2):就绪节点(ready_nodes)、进行中节点(running)。
+术语约定(docs/design/README.md §10.2):就绪节点(ready_nodes)、进行中节点(running)。
 """
 
 DONE = "done"

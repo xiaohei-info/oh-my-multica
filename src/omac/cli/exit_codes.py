@@ -1,6 +1,6 @@
-"""退出码契约(设计文档 §5.1)— 稳定,调用方可脚本分支。"""
+"""退出码契约(docs/design/README.md §5.1)— 稳定,调用方可脚本分支。"""
 
-OK = 0               # 成功 / DAG 收敛全部 done
+OK = 0               # DAG 已收敛(无进行中/阻塞/失败节点;done、abandoned、cancelled 计为收敛),且需要验收时最终验收已通过
 GENERIC = 1          # 通用错误
 PLATFORM = 2         # 平台/网络错误
 AUTH = 3             # 认证错误(平台 CLI 未登录等)

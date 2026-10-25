@@ -1,4 +1,4 @@
-"""omac guide — 知识分发通道之一(设计文档 §9)。骨架期即可用。"""
+"""omac guide — 知识分发通道之一(docs/design/README.md §9)。骨架期即可用。"""
 from __future__ import annotations
 
 import sys

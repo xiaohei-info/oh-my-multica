@@ -1,7 +1,7 @@
 # oh-my-multica
 
 [![CI](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaohei-info/oh-my-multica/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/xiaohei-info/oh-my-multica/releases/tag/v1.0.0)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/xiaohei-info/oh-my-multica/releases/tag/v2.0.0)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
@@ -129,12 +129,12 @@ oh-my-multica 不适合一次性的代码片段生成，也不会替代业务决
 - 使用 Multica engine 时，[安装 Multica CLI](https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md) 并完成 `multica login`将电脑/机器上的 Codex、Claude Code 等 Runtime 接入 Multica。
 
 ```bash
-pipx install git+https://github.com/xiaohei-info/oh-my-multica.git@v1.0.0
+pipx install git+https://github.com/xiaohei-info/oh-my-multica.git@v2.0.0
 
 omac --version
 ```
 
-当前稳定安装源是带版本号的 GitHub Tag。如需安装最新开发版本，将命令中的 `@v1.0.0`
+当前稳定安装源是带版本号的 GitHub Tag。如需安装最新开发版本，将命令中的 `@v2.0.0`
 替换为 `@main`。
 
 接入 Multica 的机器越多、你能够获得的 Agent 执行并行度就越大，装了 Coding Agent Runtime 的机器是这套机制最底层的任务执行地点。
@@ -165,7 +165,7 @@ omac guide workflow
 1. 先运行 `omac init --check`。配置缺失时，按照错误输出完成声明式配置，不调用人类交互向导。
 2. 根据用户目标创建新计划，或接续已经存在的 manifest。
 3. 执行命令输出中给出的精确“下一步”，不要猜 manifest 路径、命令参数或当前阶段。
-4. 保持 `dag run` 在前台运行，直到返回 exit 0 或 exit 20。
+4. 保持 `dag run` 在前台运行，直到返回 exit 0 或 exit 20。使用 `--max-rounds` 或 `--max-minutes` 时，exit 10 表示仍在推进：重新执行同一条命令即可继续。
 5. 只有 exit 0 且 manifest 已收敛时才能报告交付完成。exit 20 时加载 `omac guide recovery`；
    需要改变目标、范围或风险接受程度时，把决定交还给 Human。
 
@@ -212,7 +212,7 @@ Loop 负责持续读取事实、消费反馈、推进工作，并判断下一步
 Agent 会根据当前仓库、设计方案和验收定义动态规划 DAG；程序在规划通过后接管循环控制。
 
 ```text
-reconcile → result collection (collect_results) → evidence and delivery gates → ready nodes → dispatch → converged / exit 20
+reconcile → 结果收集（collect_results）→ 证据与交付门 → 就绪节点 → 派发 → 收敛 / exit 20
 ```
 
 | Loop Engineering 要素  | oh-my-multica 的落地                                                                                                            |
@@ -321,7 +321,7 @@ oh-my-multica 提供的保证更务实：这些关键条件会成为流程中的
 | 生产交付要求           | oh-my-multica 中的落点                                                 |
 | ---------------------- | ---------------------------------------------------------------------- |
 | 需求不漂移             | design problem / non-goals / flows 与 acceptance flow id               |
-| 架构可维护             | 核心数据所有权、模块边界、跨模块契约、项目级`AGENTS.md`              |
+| 架构可维护             | 核心数据所有权、模块边界、跨模块契约、目标项目自己的 `AGENTS.md`              |
 | 改动不破坏既有行为     | contract 的 source of truth、non-goals、integration gates 与兼容性要求 |
 | 结果可以复现           | verification commands、env setup、结构化 evidence                      |
 | 作者不能自证正确       | worker 与 reviewer 分离，最终由 acceptor 按用户旅程验收                |

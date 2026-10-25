@@ -8,17 +8,58 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-10-25
+
+2.0.0 removes everything that existed to recover one particular project, splits the engine into three ports, stores
+run state as small per-node files, and replaces the in-process mock engine with a private Docker Multica for tests.
+It is a breaking release; read **Upgrading from 1.x** first.
+
+### Upgrading from 1.x
+
+- Run state is not migrated. A 1.x single-file manifest is neither read nor modified: `omac` exits 5 and tells you to
+  finish that run with 1.x or abandon it, then start a new one with `omac plan create`.
+- `engine: mock` (and `OMAC_ENGINE=mock`) now exits 5 with the fix. Tests use a private Docker Multica (`tests/it`).
+- `omac init` defaults the engine to `multica`.
+- Scripts that call a removed command (below) fail with the usual "invalid argument" error and the command's help.
+
+### Removed
+
+- Project-specific recovery code: 17 modules (about 10,000 lines) for incident-specific evidence handoff, publication and
+  SDK checkpoint re-review, owner/source-bound amendment assessment, literal correction, contract repair and state-sync
+  recovery, together with their 35 test files and 434 MB of captured fixtures.
+- The operator-recovery subcommands that drove them: `dag recover-sync`; `dag amend prepare-owner`,
+  `prepare-owner-source`, `resolve-owner`, `resolve-owner-source`, `prepare-review-source`, `observe-review-source`,
+  `resolve-review-source`, `prepare-literal-correction` and its observe/resolve steps; `node review-evidence`,
+  `continue-evidence`, `review-infrastructure`, `review-publication`, `review-sdk-publication`, `review-sdk-checkpoint`.
+  Generic safeguards stay: unknown results are never replayed, drift fails closed, merges are idempotent, amendments
+  stay inside their scope.
+- The `gzip+base64` full-state transport and its 256 MiB limit (`core/state_transport.py`).
+- The built-in `mock` engine (`engines/mock.py`) and the `MOCK_*` / `OMAC_MOCK_*` environment passthrough.
+
 ### Changed
 
-- `omac init` now defaults to the `multica` engine when the engine prompt is answered with Enter.
-- Run state is stored as one small plain-text file per node (`.omac/<name>.state/<node>.yaml`, with a sha256
-  header) next to the DAG definition (`.omac/<name>.yaml`). A save rewrites only the files that changed, so a
-  tick writes kilobytes instead of the whole manifest, and machines advancing different nodes merge in git
-  without conflicts. The `gzip+base64` full-state encoding and its 256 MiB limit are gone. 1.x single-file
-  manifests are not read or modified: `omac` stops with an error telling you to finish or abandon that run and
-  start a new one with `omac plan create`.
+- **Three ports.** The engine is `Engine(store, runtime, code_host)`: `WorkItemStore`, `AgentRuntime` and the new
+  `CodeHost` (pull-request facts, checks, merge; GitHub adapter). Pull-request methods left the store. The pipeline
+  receives `code_host` explicitly. `engines.engine_from_config` is the only CLI assembly path.
+- **Layering is enforced.** `lint-imports` (CI) and `tests/test_architecture.py` guard `web → cli → pipeline → engines →
+  core → i18n → errors`, the platform-CLI boundary, purity of `decide_*` modules and the absence of captured
+  identifiers. Domain types moved from `engines.models` to `core.workitem`; `omac.i18n` no longer imports `core.config`.
+- **Pure decisions.** Merge, Worker and Reviewer stage decisions are pure functions (`pipeline/decide_*.py`) with table
+  tests; `run_task` and `collect_results` are split into staged functions.
+- **State as small files.** Run state lives in `.omac/<name>.state/<node>.yaml` (sha256 header) beside the DAG definition
+  `.omac/<name>.yaml`. A save rewrites only changed files with atomic replace; a tick on a 500-node DAG writes
+  kilobytes. Machines advancing different nodes merge in git without conflict.
+- A crash between creating a work item and recording it now fails closed with an error that names the orphan issue and
+  the command that clears it, instead of a raw platform message.
+- `exit 0` of `dag run` means the DAG converged and, when required, final acceptance passed (documented; unchanged).
+- Tests: about 2,700 tests in roughly two minutes (was about 3,800 tests, 2.6 hours serial). Per-test time, memory and
+  temp-file budgets are enforced; `tests/it` runs a private Docker Multica with a scripted agent, a `gh` shim and a fault
+  proxy, including a crash/lost-response matrix over every write of a one-node DAG.
+- CI installs the pinned Multica CLI and runs the full suite on every push and pull request. A weekly real-agent smoke
+  run (`smoke.yml`, schedule and manual only, 20 USD monthly cap) gates releases.
+- The current design is in `docs/design/README.md`; contributor rules are in `AGENTS.md`.
 
-### Added
+### Also added in 2.0.0
 
 - New reviewed amendments use an identity envelope that binds the base manifest
   and acceptance digests plus the review issue, preventing envelope tampering from
@@ -35,7 +76,7 @@ This file records public changes to oh-my-multica. The format follows
   fixed at 2. Invalid values fail closed at `config set`, `dag run`/`dag
   tick`, and acceptance-loop entry.
 
-### Changed
+### Also changed in 2.0.0
 
 - Static project-scoped full-audit control-read failures now remain incomplete
   observations instead of aborting active DAG progress or claiming convergence;
@@ -185,4 +226,5 @@ records 86 passing tests, 97.18% coverage, CI across Python 3.10–3.13, and
 11/11 final acceptance flows.
 
 [Webhook Inbox demo]: https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox
+[2.0.0]: https://github.com/xiaohei-info/oh-my-multica/releases/tag/v2.0.0
 [1.0.0]: https://github.com/xiaohei-info/oh-my-multica/releases/tag/v1.0.0

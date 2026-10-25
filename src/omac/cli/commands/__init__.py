@@ -1,4 +1,4 @@
-"""命令注册表 — 分组顺序即 root help 的展示顺序(设计文档 §5)。
+"""命令注册表 — 分组顺序即 root help 的展示顺序(docs/design/README.md §5)。
 
 每个命令模块约定导出:
     NAME: str            命令名

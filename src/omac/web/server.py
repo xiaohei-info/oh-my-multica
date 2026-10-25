@@ -1,4 +1,4 @@
-"""omac web 服务端 —— 薄路由层(设计文档 §13)。
+"""omac web 服务端 —— 薄路由层(docs/design/README.md §13)。
 
 职责:
 - 把 URL 路径 + 查询参数解析为对 api.py 端点的一次调用(Bearer token 校验);

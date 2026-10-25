@@ -4,7 +4,7 @@
 最重要的契约是**写后读一致性**——任何 update_* / assign 后,
 紧接着的 get_work_item 必须返回更新后的值。
 
-措辞保持平台中立(设计文档 §12.4),平台专有说明写在各实现内部。
+措辞保持平台中立(docs/design/README.md §12.4),平台专有说明写在各实现内部。
 """
 from __future__ import annotations
 
@@ -463,7 +463,7 @@ class WorkItemStore(ABC):
         """将工作单元分配给成员(role: "worker" | "reviewer"),并同步 metadata。
 
         这是阶段交接的载体:评审/回退 = 同一 work item 转派新 assignee
-        (设计文档 §7.4)。是否由 assign 触发 agent 唤醒是执行面(AgentRuntime)
+        (docs/design/README.md §7.4)。是否由 assign 触发 agent 唤醒是执行面(AgentRuntime)
         的事,本方法只保证数据面生效。默认保持平台原生 assignment 行为；
         ``start_run=False`` 只更新 assignment，让调用方随后通过 AgentRuntime.wake
         显式启动执行。

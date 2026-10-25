@@ -1,4 +1,4 @@
-"""delivery — CI 监控与 ci_check 有界回退引擎(设计文档 §7.3)。
+"""delivery — CI 监控与 ci_check 有界回退引擎(docs/design/README.md §7.3)。
 
 本模块承载 loop 收割顺序「worker 证据过门 → ci_check →(绿)in_review」中
 worker 证据过门之后、进评审之前的 CI 门:
@@ -59,7 +59,7 @@ from ..i18n import ui
 
 # ── manifest 侧细分态 ↔ 平台 WorkItemStatus 映射表 ──────────────────────────
 # ci_check 是 manifest 侧细分态;平台侧仍映射到 in_progress,保证平台状态机不被
-# 细分态污染(设计文档 §7.3)。映射表写清并测试;未知状态报错即教学。
+# 细分态污染(docs/design/README.md §7.3)。映射表写清并测试;未知状态报错即教学。
 MANIFEST_TO_PLATFORM_STATUS: dict[str, WorkItemStatus] = {
     "todo": WorkItemStatus.TODO,
     "in_progress": WorkItemStatus.IN_PROGRESS,

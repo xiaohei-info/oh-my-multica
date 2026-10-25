@@ -1,4 +1,4 @@
-"""omac web —— 本地只读可视化面板(设计文档 §13)。"""
+"""omac web —— 本地只读可视化面板(docs/design/README.md §13)。"""
 from __future__ import annotations
 
 import sys

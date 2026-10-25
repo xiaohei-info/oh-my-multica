@@ -7,7 +7,7 @@
   调用者自拆 manifest,不存在「产出者 Agent 修订」这一环 —— reviewer 拒收即
   NeedsDecision(exit 20),交调用者改文件后重跑 omac dag check。
 
-两者共享 Store/Runtime 原语与 verdict 轮询结构(设计文档 §12.4 红线:本层只调
+两者共享 Store/Runtime 原语与 verdict 轮询结构(docs/design/README.md §12.4 红线:本层只调
 WorkItemStore/AgentRuntime 接口,绝不直接 shell 平台 CLI)。
 """
 from __future__ import annotations

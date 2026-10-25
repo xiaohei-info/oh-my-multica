@@ -2,7 +2,7 @@
 
 数据面(WorkItemStore)保证工单与证据的读写;执行面保证被指派的 agent
 真的会醒来干活。二者在某些平台上由同一系统一体承担(此时 wake 可能是
-确认性 no-op),在纯 issue 平台上则需要独立的运行时方案(设计文档 §12.3)。
+确认性 no-op),在纯 issue 平台上则需要独立的运行时方案(docs/design/README.md §12.3)。
 """
 from __future__ import annotations
 

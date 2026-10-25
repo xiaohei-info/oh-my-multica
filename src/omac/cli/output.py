@@ -1,4 +1,4 @@
-"""输出层(设计文档 §5.2)。
+"""输出层(docs/design/README.md §5.2)。
 
 纪律:
 - stdout 出数据(--output json|table);

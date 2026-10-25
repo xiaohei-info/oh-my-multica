@@ -1,4 +1,4 @@
-"""dispatch — 协议文本、submit 模板与左移校验入口(设计文档 §7.4)。
+"""dispatch — 协议文本、submit 模板与左移校验入口(docs/design/README.md §7.4)。
 
 work show 按(kind × phase × 身份)输出任务上下文与执行协议。
 协议文本与 submit 参数在此集中定义,供 work show 与 work submit 共享,
@@ -995,7 +995,7 @@ def _validate_final_acceptance_authoring(
 def _resolve_phase(item: WorkItem, declared: TaskPhase) -> TaskPhase:
     """把 work item 的阶段归一化为可路由的 phase。
 
-    设计文档 §7.4:平台状态(status)由 loop / plan 流水线驱动,phase 只是
+    docs/design/README.md §7.4:平台状态(status)由 loop / plan 流水线驱动,phase 只是
     metadata 的快拍。当 status 已经是 IN_REVIEW 时(无论 phase 字段是否更新),
     按审稿阶段路由 —— 否则同一张 issue 上后续 work submit 会被误派为 authoring。
     """
@@ -1703,7 +1703,7 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
 
 def render_review_rollout_comment(node, contract, verdict: Optional[str], report=None,
                                   item_id=None, kind: TaskKind = TaskKind.DEVELOP):
-    """review 转派评论模板(设计文档 §7.4 阶段交接)。
+    """review 转派评论模板(docs/design/README.md §7.4 阶段交接)。
 
     包含:阶段变更说明 + 评审对象定位。三种语境:
       - verdict=None:产出者交付完毕,转派 reviewer 接手(进入 review);

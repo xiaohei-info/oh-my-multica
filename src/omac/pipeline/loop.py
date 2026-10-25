@@ -1,6 +1,6 @@
 """pipeline/loop — 确定性单轮 tick(结果回收 → 就绪计算 → 派发)。
 
-设计文档 §7.3:sync → decide → dispatch,状态全在 manifest + 平台,幂等。
+docs/design/README.md §7.3:sync → decide → dispatch,状态全在 manifest + 平台,幂等。
 硬性约束(§2.4):业务失败无自动重试——blocked 节点在后续 tick 保持 blocked,
 重试只经 `omac node retry` 显式决策。明确 allowlist 的执行基础设施瞬时失败
 复用同一 Run 派发路径做一次有界恢复,不占业务 bounce。abandoned 上游视同
@@ -5002,7 +5002,7 @@ def tick(
     幂等:全部状态在 manifest + 平台,中断重跑即续跑。
 
     retry_limits: config.retry 解析后的 {ci, review, merge} 上界(None = 全缺省 3);
-    reviewer reject 的「回到 worker」有界退回次数由此控制(见设计文档 §7.3)。
+    reviewer reject 的「回到 worker」有界退回次数由此控制(见docs/design/README.md §7.3)。
     与「自动重试」不同 —— tick 不会把已 blocked 节点重置为 todo
     (必须经 `omac node retry` 显式决策);retry_limits 是节点内的有界往返。
     """
