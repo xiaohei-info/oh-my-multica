@@ -22,11 +22,18 @@ from ..core.taskmeta import (
     WorkerHandoffIntent,
 )
 from ..errors import PlatformError, WorkItemNotFoundError
-from .models import (
-    EngineConfig, MergeCommandResult, ProjectInfo, PullRequestCheckResult,
-    PullRequestObservation, PullRequestReadiness, PullRequestReadinessFailure,
-    VerificationAttachmentObservation, WorkItem, WorkItemControlProjection,
-    WorkItemHydrationPlan, WorkItemStatus, WorkspaceInfo,
+from .models import EngineConfig, ProjectInfo, WorkspaceInfo
+from ..core.workitem import (
+    MergeCommandResult,
+    PullRequestCheckResult,
+    PullRequestObservation,
+    PullRequestReadiness,
+    PullRequestReadinessFailure,
+    VerificationAttachmentObservation,
+    WorkItem,
+    WorkItemControlProjection,
+    WorkItemHydrationPlan,
+    WorkItemStatus,
 )
 
 

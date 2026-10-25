@@ -35,7 +35,7 @@ from ..core.evidence import validate_acceptance_results
 from ..core.lint import lint_increment
 from ..core.manifest import Manifest, Node, _dump_contract, merge_increment, save_manifest
 from ..core.taskmeta import TaskKind, make_dag_key
-from ..engines.models import WorkItemStatus
+from ..core.workitem import WorkItemStatus
 from ..engines.store import WorkItemStore
 from ..errors import NeedsDecision
 from ..i18n import resolve_language, ui

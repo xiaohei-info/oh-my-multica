@@ -27,9 +27,9 @@ from omac.core.taskmeta import (
     TaskPhase,
     WorkerHandoffIntent,
 )
-from omac.engines.models import (
+from omac.engines.models import EngineConfig
+from omac.core.workitem import (
     AgentRunObservation,
-    EngineConfig,
     PullRequestObservation,
     PullRequestReadiness,
     PullRequestState,

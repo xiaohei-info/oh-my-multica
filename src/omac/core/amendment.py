@@ -33,7 +33,7 @@ from .taskmeta import (
     TaskPhase,
     amendment_review_nits_acceptance_is_valid,
 )
-from ..engines.models import WorkItemStatus
+from .workitem import WorkItemStatus
 from ..errors import NeedsDecision, ValidationError, WorkItemNotFoundError
 from ..i18n import ui
 

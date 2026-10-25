@@ -28,11 +28,25 @@ from ..core.taskmeta import (
 from ..errors import PlatformError, ValidationError, WorkItemNotFoundError
 from ..i18n import ui
 from .models import (
-    AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig, ProjectInfo, RuntimeTarget,
-    MergeCommandResult, PullRequestCheckResult, PullRequestObservation,
-    PullRequestReadiness, PullRequestState, RuntimeCapabilities,
-    VerificationAttachmentObservation, WorkItem, WorkItemControlProjection,
-    WorkItemStatus, WorkspaceInfo,
+    AgentInfo,
+    AgentProvisionSpec,
+    EngineConfig,
+    ProjectInfo,
+    RuntimeTarget,
+    RuntimeCapabilities,
+    WorkspaceInfo,
+)
+from ..core.workitem import (
+    AgentRunObservation,
+    MergeCommandResult,
+    PullRequestCheckResult,
+    PullRequestObservation,
+    PullRequestReadiness,
+    PullRequestState,
+    VerificationAttachmentObservation,
+    WorkItem,
+    WorkItemControlProjection,
+    WorkItemStatus,
 )
 from .runtime import AgentRuntime
 from .store import WorkItemStore

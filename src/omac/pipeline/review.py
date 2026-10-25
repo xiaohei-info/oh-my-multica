@@ -16,7 +16,7 @@ from typing import Callable, Optional
 
 from ..core.review_preflight import run_manifest_preflight
 from ..core.taskmeta import TaskKind
-from ..engines.models import WorkItemStatus
+from ..core.workitem import WorkItemStatus
 from ..errors import NeedsDecision, ValidationError
 from ..i18n import ui
 from .dispatch import reviewer_dispatch_stopped

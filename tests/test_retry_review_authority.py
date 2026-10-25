@@ -9,7 +9,7 @@ from omac.cli.main import main
 from omac.core.manifest import load_manifest, save_manifest
 from omac.core.retry_budget import consumed_bounces
 from omac.core.taskmeta import WorkerHandoffIntent, review_context_binding
-from omac.engines.models import WorkItemStatus
+from omac.core.workitem import WorkItemStatus
 from omac.pipeline.dispatch import build_show_output
 from test_cli_node import _pass_with_nits_fixture
 

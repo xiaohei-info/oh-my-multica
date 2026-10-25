@@ -4,8 +4,7 @@ from __future__ import annotations
 import os
 
 from ...core import config as config_mod
-from ...engines import create_engine
-from ...engines.models import EngineConfig
+from ...engines import engine_from_config
 from ...errors import ValidationError
 from ...i18n import resolve_language, ui
 from .. import exit_codes
@@ -114,16 +113,10 @@ def register(parser):
 
 def _resolve_engine(args):
     """按 config.yaml < 环境变量 < 命令行 解析引擎配置;缺失时报错即教学。"""
-    cfg = config_mod.load_config()
-    engine_type, workspace_id, project_id = config_mod.resolve_engine_settings(
-        cfg, engine=getattr(args, "engine", None), workspace=getattr(args, "workspace", None),
-        project=getattr(args, "project", None))
-    extra = dict(cfg.get("engine_extra") or {})
-    extra.update(getattr(args, "engine_extra", None) or {})
-    return create_engine(
-        engine_type,
-        EngineConfig(engine_type=engine_type, workspace_id=workspace_id,
-                     project_id=project_id, extra=extra))
+    return engine_from_config(
+        config_mod.load_config(), engine=getattr(args, "engine", None),
+        workspace=getattr(args, "workspace", None), project=getattr(args, "project", None),
+        engine_extra=getattr(args, "engine_extra", None))
 
 
 def _resolve_goal(args) -> str | None:
@@ -233,7 +226,7 @@ def _confirm(args) -> int:
     reviewer),流转到 DONE。omac 的编排轮询识别到 DONE 后翻回评审流程。
     """
     from ...core.taskmeta import TaskKind, TaskPhase
-    from ...engines.models import WorkItemStatus
+    from ...core.workitem import WorkItemStatus
 
     engine = _resolve_engine(args)
     workspace_id = engine.store.config.workspace_id

@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 import omac.engines.multica as multica_module
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import EngineConfig
+from omac.core.workitem import WorkItemStatus
 from omac.engines.multica import (
     MulticaStore, _transient_read_failure, _TransientReadFailure,
 )

@@ -21,7 +21,8 @@ from conftest import seal_mock_delivery
 
 from omac.core.manifest import Manifest, Node
 from omac.core.config import DEFAULT_RETRY
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import EngineConfig
+from omac.core.workitem import WorkItemStatus
 from omac.engines.mock import MockRuntime, MockStore
 from omac.pipeline.delivery import (
     MANIFEST_TO_PLATFORM_STATUS,

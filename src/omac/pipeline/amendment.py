@@ -32,7 +32,7 @@ from ..core.taskmeta import (
     amendment_review_nits_acceptance_is_valid,
     current_review_ledger,
 )
-from ..engines.models import WorkItemStatus
+from ..core.workitem import WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import ui
 from .tasks import _review_subject_digest as task_review_subject_digest, run_task

@@ -29,9 +29,8 @@ from omac.core.taskmeta import (
 )
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
-from omac.engines.models import (
-    AgentRunObservation, EngineConfig, WorkItem, WorkItemStatus,
-)
+from omac.engines.models import EngineConfig
+from omac.core.workitem import AgentRunObservation, WorkItem, WorkItemStatus
 from omac.engines.multica import MulticaStore
 from omac.errors import NeedsDecision, PlatformError, WorkItemNotFoundError
 from omac.pipeline.dispatch import build_show_output

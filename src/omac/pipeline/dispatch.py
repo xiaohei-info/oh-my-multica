@@ -34,9 +34,13 @@ from omac.core.review_convergence import (
     required_closures,
 )
 from omac.core.taskmeta import TaskKind, TaskPhase, current_review_ledger
-from omac.engines.models import (
-    PullRequestReadiness, PullRequestReadinessFailure,
-    PullRequestReadinessFailureKind, WorkItem, WorkItemPayload, WorkItemStatus,
+from omac.core.workitem import (
+    PullRequestReadiness,
+    PullRequestReadinessFailure,
+    PullRequestReadinessFailureKind,
+    WorkItem,
+    WorkItemPayload,
+    WorkItemStatus,
 )
 from omac.engines.store import WorkItemStore, reviewer_dispatch_stopped
 from omac.errors import AuthError, NeedsDecision, PlatformError, ValidationError

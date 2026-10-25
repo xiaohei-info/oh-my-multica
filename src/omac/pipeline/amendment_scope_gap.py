@@ -6,7 +6,7 @@ import json
 from ..core.digest import digest, plain
 
 from ..core.taskmeta import TaskKind, TaskPhase, review_context_binding, DECISION_REQUIRED_SCHEMA
-from ..engines.models import WorkItemStatus
+from ..core.workitem import WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
 
 SCHEMA = "omac.amendment-scope-gap/v1"

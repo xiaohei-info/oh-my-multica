@@ -16,10 +16,9 @@ from omac.core.taskmeta import (
     REVIEWER_RUN_BASELINE_KEY, REVIEW_LEDGER_REF_KEY, REVIEW_REPORT_REF_KEY,
     REVIEW_SUBJECT_DIGEST_KEY, TaskKind, TaskPhase,
 )
-from omac.engines.models import (
-    AgentRunObservation, EngineConfig, PullRequestReadinessFailure, PullRequestState,
-)
-from omac.engines.models import WorkItemStatus
+from omac.engines.models import EngineConfig
+from omac.core.workitem import AgentRunObservation, PullRequestReadinessFailure, PullRequestState
+from omac.core.workitem import WorkItemStatus
 from omac.engines.metadata_policy import encode_metadata_value
 from omac.engines.multica import MulticaRuntime, MulticaStore
 from omac.errors import PlatformError
@@ -4088,7 +4087,7 @@ def test_rework_recovery_after_reset_uses_valid_current_ledger_subject(monkeypat
 @pytest.mark.parametrize("project_id", [None, "project-1"])
 def test_find_dag_key_filters_paginated_envelopes_before_hydration(monkeypatch, shell, project_id):
     from dataclasses import replace
-    from omac.engines.models import WorkItemPayload
+    from omac.core.workitem import WorkItemPayload
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws", project_id=project_id))
     issues = [{"id": str(i), "title": "unrelated", "status": "todo",
                "metadata": {"dag_key": "target-other"}} for i in range(12)]

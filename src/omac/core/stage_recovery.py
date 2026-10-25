@@ -12,7 +12,7 @@ from datetime import datetime
 
 from .manifest import _dump_contract
 from .taskmeta import TaskPhase, review_context_binding, WorkerHandoffIntent
-from ..engines.models import WorkItemStatus
+from .workitem import WorkItemStatus
 from ..errors import PlatformError
 
 

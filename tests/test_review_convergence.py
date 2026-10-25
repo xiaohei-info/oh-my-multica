@@ -22,7 +22,8 @@ from omac.core.review_convergence import (
 )
 from omac.core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
 from omac.engines.mock import MockStore
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import EngineConfig
+from omac.core.workitem import WorkItemStatus
 from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import dispatch
 from omac.pipeline.convergence import ResolutionState, resolve_convergence

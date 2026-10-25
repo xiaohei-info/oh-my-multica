@@ -46,7 +46,7 @@ from ..core.review_continuation import (
 from ..core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase, make_dag_key, make_plan_id,
 )
-from ..engines.models import WorkItem, WorkItemStatus
+from ..core.workitem import WorkItem, WorkItemStatus
 from ..errors import ValidationError
 from ..i18n import CN, ui
 from .tasks import (

@@ -468,7 +468,7 @@ def test_node_detail_uses_only_the_store_read_method(
     from types import SimpleNamespace
 
     import omac.cli.commands.node as node_cmd
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     manifest = _write_manifest(orch, "with-evidence", [{
         "id": "a", "worker": "alice", "work_item_id": "issue-1",

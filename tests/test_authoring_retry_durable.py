@@ -7,7 +7,7 @@ import pytest
 from omac.cli.main import main
 from omac.core.manifest import load_manifest
 from omac.core.taskmeta import TaskPhase, review_context_binding
-from omac.engines.models import WorkItemStatus
+from omac.core.workitem import WorkItemStatus
 from omac.errors import PlatformError
 from omac.pipeline.dispatch import _previous_review_context
 from test_cli_node import _pass_with_nits_fixture
@@ -263,7 +263,7 @@ def test_multica_partial_reset_preserves_full_durable_intent(
 
 def test_recovery_intent_blocks_dispatch(tmp_path, monkeypatch):
     from omac.pipeline.loop import _dispatch_worker_handoff_locked
-    from omac.engines.models import WorkItemControlProjection
+    from omac.core.workitem import WorkItemControlProjection
 
     engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
     engine.store.get_work_item(item_id).bounces.review = 1

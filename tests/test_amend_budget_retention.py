@@ -12,7 +12,7 @@ from omac.core.manifest import load_manifest, save_manifest
 from omac.core.retry_budget import consumed_bounces
 from omac.errors import ValidationError, PlatformError
 from test_amendment import _engine, _manifest, _proposal
-from omac.engines.models import WorkItemStatus
+from omac.core.workitem import WorkItemStatus
 
 POOL = {"alice", "bob", "charlie"}
 

@@ -10,7 +10,8 @@ import yaml
 
 from omac.core.manifest import Manifest, Node
 from omac.core.taskmeta import current_review_ledger
-from omac.engines.models import AgentRunObservation, EngineConfig, WorkItemPayload
+from omac.engines.models import EngineConfig
+from omac.core.workitem import AgentRunObservation, WorkItemPayload
 from omac.engines.multica import MulticaStore
 from omac.errors import PlatformError
 from omac.pipeline import loop

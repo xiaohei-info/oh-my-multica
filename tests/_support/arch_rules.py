@@ -113,6 +113,15 @@ def platform_argv(path: str, source: str) -> list[str]:
             and n.elts[0].value in {"multica", "gh"}]
 
 
+def engine_assembly(path: str, source: str) -> list[str]:
+    """Engines are assembled by ``engines.engine_from_config``; ``create_engine`` stays inside engines/."""
+    if path.startswith(ENGINES_PREFIX):
+        return []
+    return [f"{path}:{n.lineno}: create_engine called outside engines/ (use engine_from_config)"
+            for n in ast.walk(_parse(source))
+            if isinstance(n, ast.Call) and _tail(n.func) == "create_engine"]
+
+
 def decide_imports(path: str, source: str) -> list[str]:
     """decide_* modules stay pure: no engines or subprocess imports."""
     if not path.rsplit("/", 1)[-1].startswith("decide"):

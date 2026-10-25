@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import sys
 
 from ._stub import not_implemented
 from ...core import config as config_mod
-from ...engines import create_engine
-from ...engines.models import EngineConfig, WorkItemStatus
+from ...engines import engine_from_config
+from ...core.workitem import WorkItemStatus
 from ...errors import NeedsDecision, OmacError, ValidationError
 from ...i18n import resolve_language, t, ui
 from ...pipeline.dispatch import (
@@ -99,21 +98,14 @@ def _render_parse_error(parser, message: str, namespace) -> bool:
     return True
 
 
+def _resolve_engine():
+    """config < env 解析引擎配置,返回 Engine。"""
+    return engine_from_config(config_mod.load_config())
+
+
 def _resolve_store():
     """按 config < env < 命令行 解析引擎配置,返回 Store 实例。"""
-    cfg = config_mod.load_config()
-    engine_type, workspace_id, project_id = config_mod.resolve_engine_settings(cfg)
-    extra = dict(cfg.get("engine_extra") or {})
-    if cfg.get("workspace_slug"):
-        extra["workspace_slug"] = cfg["workspace_slug"]
-    extra.update({
-        k: v for k, v in os.environ.items()
-        if k.startswith("OMAC_") or k.startswith("MOCK_")
-    })
-    config = EngineConfig(
-        engine_type=engine_type, workspace_id=workspace_id,
-        project_id=project_id, extra=extra)
-    return create_engine(engine_type, config).store
+    return _resolve_engine().store
 
 
 def _identity_for(item) -> str:
@@ -444,10 +436,9 @@ def run(args) -> int:
         if args.action == "read":
             return _run_read(args)
         if args.action == "block":
-            store = _resolve_store()
+            engine = _resolve_engine()
             result = report_worker_blocker(
-                store, args.issue_id, args.report_file,
-                runtime=create_engine(store.config.engine_type, store.config).runtime)
+                engine.store, args.issue_id, args.report_file, runtime=engine.runtime)
             print_json(result)
             return exit_codes.NEEDS_DECISION
         if args.action == "submit":

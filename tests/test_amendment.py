@@ -43,9 +43,8 @@ from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
-from omac.engines.models import (
-    AgentRunObservation, EngineConfig, WorkItem, WorkItemStatus,
-)
+from omac.engines.models import EngineConfig
+from omac.core.workitem import AgentRunObservation, WorkItem, WorkItemStatus
 from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import loop
 from omac.pipeline.delivery import run_merge_delivery

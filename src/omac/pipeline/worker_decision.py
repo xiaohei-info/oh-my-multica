@@ -9,7 +9,7 @@ from ..core.taskmeta import (
     TaskPhase,
     review_context_binding,
 )
-from ..engines.models import WorkItemStatus, WorkItemPayload
+from ..core.workitem import WorkItemStatus, WorkItemPayload
 from ..errors import NeedsDecision, PlatformError, ValidationError
 
 SCHEMA = "omac.worker-blocker/v2"

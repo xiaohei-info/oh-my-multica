@@ -30,7 +30,8 @@ from omac.core.manifest import (
 from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import EngineConfig
+from omac.core.workitem import WorkItemStatus
 from omac.pipeline.dispatch import (
     KIND_GUIDE,
     KIND_LABEL,

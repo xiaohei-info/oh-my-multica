@@ -10,7 +10,7 @@ dag run/tick 在 needs_decision 非空时 exit 20,report 结构完全相同。
 from __future__ import annotations
 
 from ..core.manifest import Manifest
-from ..engines.models import WorkItemPayload
+from ..core.workitem import WorkItemPayload
 from ..engines.store import WorkItemStore
 from ..core import graph
 

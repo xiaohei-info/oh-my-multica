@@ -3,7 +3,7 @@ from copy import deepcopy
 
 from omac.cli.main import main
 from omac.core.taskmeta import TaskPhase
-from omac.engines.models import WorkItemStatus
+from omac.core.workitem import WorkItemStatus
 from test_cli_node import _pass_with_nits_fixture
 
 

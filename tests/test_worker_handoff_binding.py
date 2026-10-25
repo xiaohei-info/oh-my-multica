@@ -7,7 +7,7 @@ import pytest
 
 from omac.core.manifest import Manifest, Node, _load_contract
 from omac.core.taskmeta import review_context_binding
-from omac.engines.models import WorkItemPayload
+from omac.core.workitem import WorkItemPayload
 from omac.errors import PlatformError
 from omac.pipeline import loop
 from omac.pipeline.dispatch import build_show_output
@@ -109,7 +109,7 @@ def test_contract_hydration_failure_does_not_persist_null_intent(monkeypatch, fa
 def test_materialized_handoff_can_block_but_null_binding_stays_rejected(
     monkeypatch, stale_null_binding
 ):
-    from omac.engines.models import AgentRunObservation
+    from omac.core.workitem import AgentRunObservation
     from omac.errors import ValidationError
     from omac.pipeline.worker_decision import report_decision
 

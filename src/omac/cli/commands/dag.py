@@ -9,8 +9,8 @@ import time
 from .. import exit_codes
 from ..output import add_output_flag, hint, print_json, print_table
 from ...core.config import (
-    CONFIG_PATH, DEFAULTS, ENV_ENGINE, ENV_WORKSPACE,
-    load_config, resolve_engine_settings, resolve_no_submit_runs,
+    CONFIG_PATH, DEFAULTS,
+    load_config, resolve_no_submit_runs,
     resolve_reconcile, resolve_retry,
 )
 from ...core.amendment import ensure_amendment_apply_complete
@@ -20,8 +20,7 @@ from ...core.lint import lint
 from ...core.manifest import load_manifest, manifest_write_lock
 from pathlib import Path
 from ...core.gitsync import ensure_config_synced
-from ...engines import create_engine
-from ...engines.models import EngineConfig
+from ...engines import engine_from_config
 from ...errors import NeedsDecision, ValidationError
 from ...i18n import current_language, ui
 from ...pipeline.loop import tick
@@ -225,33 +224,11 @@ def _assemble_engine(args):
 
     返回 (engine, engine_config)。报错即教学(§2)。
     """
-    config = _load_config_for_manifest(args.manifest)
-    engine_type, workspace_id, project_id = resolve_engine_settings(
-        config, engine=getattr(args, "engine", None),
+    engine = engine_from_config(
+        _load_config_for_manifest(args.manifest),
+        engine=getattr(args, "engine", None),
         workspace=getattr(args, "workspace", None),
         project=getattr(args, "project", None))
-
-    poll_interval = config.get("defaults", {}).get(
-        "poll_interval", DEFAULTS["poll_interval"])
-    # OMAC_* 与 MOCK_* env vars 透传给 EngineConfig.extra(对齐 node.py/init_cmd 模式);
-    # 让 MOCK_AUTO_COMPLETE / MOCK_AUTO_COMPLETE_DELAY 等 mock 配置可被 e2e 测试携带。
-    extra = dict(config.get("engine_extra") or {})
-    if config.get("workspace_slug"):
-        extra["workspace_slug"] = config["workspace_slug"]
-    extra.update({
-        k: v for k, v in os.environ.items()
-        if (k.startswith('OMAC_') or k.startswith('MOCK_'))
-        and k not in (ENV_ENGINE, ENV_WORKSPACE)
-    })
-    extra = extra or None
-    engine_config = EngineConfig(
-        engine_type=engine_type,
-        workspace_id=workspace_id,
-        project_id=project_id,
-        polling_interval=poll_interval,
-        extra=extra,
-    )
-    engine = create_engine(engine_type, engine_config)
 
     # 测试钩子:OMAC_MOCK_FAIL_KEYS 注入失败节点(逗号分隔 dag_key)。
     # mock 引擎下可驱动失败场景;真实引擎忽略(set_fail_keys 不存在)。
@@ -277,7 +254,7 @@ def _assemble_engine(args):
             inc[dk] = Manifest(meta=payload.get("meta", {}), nodes=nodes)
         engine.store.set_acceptance_behaviors(acc, inc)
 
-    return engine, engine_config
+    return engine, engine.store.config
 
 
 def _default_max_parallel(args) -> int:

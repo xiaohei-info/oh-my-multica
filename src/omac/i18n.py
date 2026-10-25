@@ -331,10 +331,22 @@ def resolve_language(config: Mapping | None) -> str:
         f"language must be one of: {', '.join(SUPPORTED_LANGUAGES)}; got {value!r}")
 
 
+def _english() -> str:
+    return EN
+
+
+_language_source = _english
+
+
+def set_language_resolver(resolver) -> None:
+    """Install the callable that reads the project language; the CLI entry point does this once."""
+    global _language_source
+    _language_source = resolver
+
+
 def current_language() -> str:
-    """Read the project language without creating an import cycle at module load."""
-    from .core import config as config_mod
-    return resolve_language(config_mod.load_config())
+    """The project language as seen by the installed resolver (English until one is installed)."""
+    return _language_source()
 
 
 def ui(english: str, chinese: str, *, language: str | None = None) -> str:

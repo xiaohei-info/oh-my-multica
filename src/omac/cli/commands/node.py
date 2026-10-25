@@ -8,7 +8,7 @@ from typing import Any
 
 from .. import exit_codes
 from ..output import add_output_flag, hint, print_json
-from ...core.config import ENV_ENGINE, ENV_WORKSPACE, load_config, resolve_engine_settings
+from ...core.config import load_config
 from ...core.manifest import (
     MISSING_CONSUMES, clear_confirmed_merge, load_manifest, save_manifest,
 )
@@ -24,8 +24,8 @@ from ...core.taskmeta import (
 from ...core.stage_recovery import (
     prepare_stage_recovery, stage_recovery_subject, validate_stage_recovery,
 )
-from ...engines import EngineConfig, create_engine
-from ...engines.models import PullRequestState, WorkItemStatus
+from ...engines import engine_from_config
+from ...core.workitem import PullRequestState, WorkItemStatus
 from ...errors import NeedsDecision, OmacError, ValidationError, WorkItemNotFoundError
 from ...i18n import ui
 
@@ -134,20 +134,9 @@ def _contract_to_dict(contract):
 def _build_engine(config: dict):
     """按 config + 环境变量装配引擎;失败返回 None(show 退化为 contract-only)。"""
     try:
-        engine_type, workspace_id, project_id = resolve_engine_settings(config)
+        return engine_from_config(config, default_extra={"MOCK_AUTO_COMPLETE": "false"})
     except ValidationError:
         return None
-    extra = {}
-    for k, v in os.environ.items():
-        if k.startswith("OMAC_") and k not in (ENV_ENGINE, ENV_WORKSPACE):
-            extra[k] = v
-    cfg = EngineConfig(
-        engine_type=engine_type,
-        workspace_id=workspace_id,
-        project_id=project_id,
-        extra=extra or {"MOCK_AUTO_COMPLETE": "false"},
-    )
-    return create_engine(engine_type, cfg)
 
 
 def _work_item_status_to_str(status) -> str:

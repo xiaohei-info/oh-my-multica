@@ -3,6 +3,7 @@ from copy import deepcopy
 import hashlib
 import os
 
+import omac.engines
 import pytest
 import yaml
 
@@ -28,7 +29,7 @@ def _pass_with_nits_fixture(tmp_path, monkeypatch):
         DeliveryIdentity, DELIVERY_IDENTITY_SCHEMA, TaskKind, TaskPhase,
     )
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine = create_engine(
         "mock",
@@ -108,7 +109,7 @@ def _pass_with_nits_fixture(tmp_path, monkeypatch):
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     path = _write_manifest(tmp_path, [{
         "id": "b", "worker": "bob", "reviewer": "alice",
         "status": "blocked", "work_item_id": item.id,
@@ -151,7 +152,7 @@ def _delayed_reviewer_retry_fixture(tmp_path, monkeypatch):
     from omac.core.review_convergence import review_subject_digest
     from omac.core.taskmeta import TaskPhase
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine = create_engine(
         "mock",
@@ -233,7 +234,7 @@ def _delayed_reviewer_retry_fixture(tmp_path, monkeypatch):
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     path = _write_manifest(tmp_path, [{
         "id": "b",
         "worker": "bob",
@@ -259,7 +260,7 @@ def _dispatch_unresolved_reviewer_retry_fixture(tmp_path, monkeypatch):
     from omac.core.review_convergence import review_subject_digest
     from omac.core.taskmeta import TaskPhase
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine = create_engine(
         "mock",
@@ -333,7 +334,7 @@ def _dispatch_unresolved_reviewer_retry_fixture(tmp_path, monkeypatch):
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     path = _write_manifest(tmp_path, [{
         "id": "b",
         "worker": "bob",
@@ -400,7 +401,7 @@ def test_show_reads_evidence_from_mock_engine(tmp_path, capsys, monkeypatch):
 
     # 让 node show 用同一个内存 store(模拟 multica 持久化)
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
 
     nodes = [{"id": "b", "worker": "bob", "status": "in_review",
               "work_item_id": item.id}]
@@ -450,7 +451,7 @@ def test_retry_review_preserves_sealed_delivery_and_resumes_reviewer(
 
     from omac.core.taskmeta import TaskPhase
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine = create_engine(
         "mock",
@@ -485,7 +486,7 @@ def test_retry_review_preserves_sealed_delivery_and_resumes_reviewer(
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     path = _write_manifest(tmp_path, [{
         "id": "b", "worker": "bob", "reviewer": "alice",
         "status": "blocked", "work_item_id": item.id,
@@ -517,7 +518,7 @@ def test_retry_bounds_operator_handoff_direct_run_baseline(
 
     from omac.core.taskmeta import TaskPhase
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import AgentRunObservation, WorkItemStatus
+    from omac.core.workitem import AgentRunObservation, WorkItemStatus
 
     engine = create_engine(
         "mock",
@@ -555,7 +556,7 @@ def test_retry_bounds_operator_handoff_direct_run_baseline(
     monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: runs)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     path = _write_manifest(tmp_path, [{
         "id": "b",
         "worker": "bob",
@@ -581,7 +582,7 @@ def test_retry_review_recovers_delayed_visible_dispatch_and_preserves_reject(
 ):
     """显式 review retry 只绑定已存在 Run，不清除当前 subject 的报告。"""
     from omac.core.taskmeta import TaskPhase
-    from omac.engines.models import AgentRunObservation, WorkItemStatus
+    from omac.core.workitem import AgentRunObservation, WorkItemStatus
     from omac.pipeline.loop import tick
 
     engine, path, item_id, reviewer_id, subject, report = (
@@ -659,7 +660,7 @@ def test_retry_review_delayed_run_recovery_fails_closed(
     """不能唯一证明 Run 因果关系时保留 decision，且不产生平台执行副作用。"""
     from dataclasses import replace
 
-    from omac.engines.models import AgentRunObservation, WorkItemStatus
+    from omac.core.workitem import AgentRunObservation, WorkItemStatus
 
     engine, path, item_id, reviewer_id, subject, report = (
         _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
@@ -806,7 +807,7 @@ def test_retry_review_preserves_noncanonical_existing_decision(
     tmp_path, capsys, monkeypatch, case,
 ):
     """任何非 canonical 已有 decision 都必须原样失败关闭。"""
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id, _reviewer_id, subject, report = (
         _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
@@ -858,7 +859,7 @@ def test_retry_review_classifies_decision_before_submitted_evidence(
     tmp_path, capsys, monkeypatch,
 ):
     """Reviewer evidence incomplete must not bypass decision classification."""
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id, _reviewer_id, subject, _report = (
         _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
@@ -910,7 +911,7 @@ def test_retry_review_delayed_run_recovery_is_restart_safe(
 ):
     """每个持久化断点崩溃后，重复 retry 只补齐同一恢复事实。"""
     from omac.core.taskmeta import TaskPhase
-    from omac.engines.models import AgentRunObservation, WorkItemStatus
+    from omac.core.workitem import AgentRunObservation, WorkItemStatus
 
     engine, path, item_id, reviewer_id, subject, report = (
         _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
@@ -1009,7 +1010,7 @@ def test_retry_completed_review_without_decision_resets_for_fresh_reviewer(
     from dataclasses import replace
 
     from omac.core.taskmeta import TaskPhase
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id, _reviewer_id, _subject, _report = (
         _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
@@ -1053,7 +1054,7 @@ def test_retry_review_without_submitted_report_keeps_normal_retry_semantics(
 ):
     """无结构化报告时仍是普通 review retry，不尝试绑定历史 Run。"""
     from omac.core.taskmeta import TaskPhase
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id, _reviewer_id, _subject, _report = (
         _delayed_reviewer_retry_fixture(tmp_path, monkeypatch))
@@ -1087,7 +1088,7 @@ def test_retry_review_dispatch_unresolved_adopts_delayed_active_run(
     """续跑派发结果未确证时,显式 retry 必须认领延迟可见的活跃 Run,
     而不是重置评审阶段再派发一个重复 reviewer。"""
     from omac.core.taskmeta import TaskPhase
-    from omac.engines.models import AgentRunObservation, WorkItemStatus
+    from omac.core.workitem import AgentRunObservation, WorkItemStatus
 
     engine, path, item_id, reviewer_id, subject = (
         _dispatch_unresolved_reviewer_retry_fixture(tmp_path, monkeypatch))
@@ -1138,7 +1139,7 @@ def test_retry_review_dispatch_unresolved_without_run_resets_review_stage(
     """续跑 Run 确实没有产生时,显式 retry 重置评审阶段以便重新派发,
     且 retry 本身不产生任何 Agent 派发副作用。"""
     from omac.core.taskmeta import TaskPhase
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id, _reviewer_id, subject = (
         _dispatch_unresolved_reviewer_retry_fixture(tmp_path, monkeypatch))
@@ -1181,7 +1182,7 @@ def test_retry_review_dispatch_unresolved_tampered_decision_fails_closed(
     """篡改后的 dispatch-unresolved 决策仍必须按未知决策失败关闭。"""
     from copy import deepcopy
 
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id, _reviewer_id, subject = (
         _dispatch_unresolved_reviewer_retry_fixture(tmp_path, monkeypatch))
@@ -1249,7 +1250,8 @@ def test_retry_reassignment_survives_reconcile_and_dispatches_new_worker(
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
 
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import TaskPhase, WorkItemStatus
+    from omac.core.taskmeta import TaskPhase
+    from omac.core.workitem import WorkItemStatus
     from omac.pipeline.loop import tick
 
     engine = create_engine(
@@ -1266,7 +1268,7 @@ def test_retry_reassignment_survives_reconcile_and_dispatches_new_worker(
     engine.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
 
     path = _write_manifest(tmp_path, [{
         "id": "b",
@@ -1302,7 +1304,7 @@ def test_retry_retires_old_handoff_and_waits_for_new_worker_submit(
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
 
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
     from omac.core.taskmeta import TaskPhase
     from omac.pipeline.loop import tick
 
@@ -1322,7 +1324,7 @@ def test_retry_retires_old_handoff_and_waits_for_new_worker_submit(
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     path = _write_manifest(tmp_path, [{
         "id": "b",
         "worker": "bob",
@@ -1398,7 +1400,7 @@ def test_retry_legacy_delivery_isolates_old_evidence_until_fresh_submit(
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
 
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import PullRequestCheckResult, WorkItemStatus
+    from omac.core.workitem import PullRequestCheckResult, WorkItemStatus
     from omac.core.taskmeta import TaskPhase
     from omac.pipeline.dispatch import submit
     from omac.pipeline.loop import tick
@@ -1471,7 +1473,7 @@ def test_retry_legacy_delivery_isolates_old_evidence_until_fresh_submit(
         "attachment_id"]
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     path = _write_manifest(tmp_path, [{
         "id": "b",
         "worker": "bob",
@@ -1605,7 +1607,7 @@ def test_retry_handoff_retirement_is_restart_safe(
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
 
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
     from omac.core.taskmeta import TaskPhase
 
     engine = create_engine(
@@ -1623,7 +1625,7 @@ def test_retry_handoff_retirement_is_restart_safe(
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     path = _write_manifest(tmp_path, [{
         "id": "b", "worker": "bob", "status": "blocked",
         "work_item_id": item.id,
@@ -1683,7 +1685,7 @@ def test_retry_clears_recovery_marker_after_retiring_recovery_facts(
 
     from omac.core.taskmeta import TaskPhase
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine = create_engine(
         "mock",
@@ -1699,7 +1701,7 @@ def test_retry_clears_recovery_marker_after_retiring_recovery_facts(
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     path = _write_manifest(tmp_path, [{
         "id": "b", "worker": "bob", "status": "blocked",
         "work_item_id": item.id, "recovery_marker": True,
@@ -1731,7 +1733,7 @@ def test_retry_platform_failure_preserves_recovery_marker_and_business_fields(
     item = engine.store.create_work_item("ws-1", "t", "d", "b", "bob")
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     monkeypatch.setattr(
         engine.store,
         "restore_authoring_generation",
@@ -1773,7 +1775,7 @@ def test_retry_platform_read_failure_preserves_recovery_marker_and_business_fiel
     item = engine.store.create_work_item("ws-1", "t", "d", "b", "bob")
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     monkeypatch.setattr(
         engine.store,
         "get_work_item",
@@ -1807,7 +1809,7 @@ def test_retry_preserves_stale_mock_work_item_id_for_reconcile(tmp_path, monkeyp
         EngineConfig("mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}),
     )
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
 
     path = _write_manifest(tmp_path, [{
         "id": "b",
@@ -1824,7 +1826,7 @@ def test_retry_preserves_stale_mock_work_item_id_for_reconcile(tmp_path, monkeyp
 
 def test_plain_retry_records_rejected_pr_head_for_worker_delta(
         tmp_path, capsys, monkeypatch):
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
     current = engine.store.get_work_item(item_id)
@@ -1855,7 +1857,7 @@ def test_plain_retry_records_rejected_pr_head_for_worker_delta(
 
 def test_plain_retry_without_live_verdict_still_records_existing_head(
         tmp_path, capsys, monkeypatch):
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
     current = engine.store.get_work_item(item_id)
@@ -1886,7 +1888,7 @@ def test_plain_retry_preserves_prior_handoff_rejected_head_when_projection_is_in
         tmp_path, capsys, monkeypatch):
     from dataclasses import replace
     from omac.core.taskmeta import WorkerHandoffIntent
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
     current = engine.store.get_work_item(item_id)
@@ -1929,7 +1931,7 @@ def test_plain_retry_preserves_prior_handoff_rejected_head_when_projection_is_in
 def test_plain_retry_recovers_review_feedback_from_store_comments(
         tmp_path, capsys, monkeypatch):
     from omac.core.taskmeta import WORKER_REWORK_FEEDBACK_SCHEMA
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
     current = engine.store.get_work_item(item_id)
@@ -1971,7 +1973,7 @@ def test_plain_retry_recovers_review_feedback_from_store_comments(
 
 def test_plain_retry_reject_without_review_context_fails_closed(
         tmp_path, capsys, monkeypatch):
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
     engine.store.reset_review(item_id)
@@ -1995,7 +1997,7 @@ def test_plain_retry_reject_without_review_context_fails_closed(
 def test_plain_retry_reject_with_zero_review_bounce_records_existing_head(
         tmp_path, capsys, monkeypatch):
     from omac.core.taskmeta import TaskPhase
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
     current = engine.store.get_work_item(item_id)
@@ -2025,7 +2027,7 @@ def test_plain_retry_reject_with_zero_review_bounce_records_existing_head(
 def test_plain_retry_falls_back_to_artifact_head_for_incomplete_identity(
         tmp_path, capsys, monkeypatch):
     from dataclasses import replace
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
     current = engine.store.get_work_item(item_id)
@@ -2056,7 +2058,7 @@ def test_accept_nits_restores_review_preserves_reviewer_facts_and_is_idempotent(
     tmp_path, capsys, monkeypatch,
 ):
     import json
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
     before = engine.store.get_work_item(item_id)
@@ -2101,7 +2103,7 @@ def test_accept_nits_restores_review_preserves_reviewer_facts_and_is_idempotent(
 def test_accept_nits_rejects_active_direct_run_without_writes(
     tmp_path, capsys, monkeypatch,
 ):
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
     engine.store.assign_work_item(item_id, "alice", "reviewer")
@@ -2121,7 +2123,7 @@ def test_accept_nits_rejects_active_direct_run_without_writes(
 def test_retry_clears_review_nits_acceptance_marker_and_returns_authoring(
     tmp_path, capsys, monkeypatch,
 ):
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine, path, item_id = _pass_with_nits_fixture(tmp_path, monkeypatch)
     marker = {
@@ -2159,7 +2161,7 @@ def test_accept_marks_done_and_updates_platform_status(tmp_path, capsys, monkeyp
 
     from omac.engines import EngineConfig, create_engine
     from omac.core.taskmeta import TaskKind
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
     engine = create_engine("mock", EngineConfig("mock", "ws-1",
                                                 extra={"MOCK_AUTO_COMPLETE": "false"}))
     item = engine.store.create_work_item(
@@ -2172,7 +2174,7 @@ def test_accept_marks_done_and_updates_platform_status(tmp_path, capsys, monkeyp
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
 
     path = _write_manifest(tmp_path, [
         {"id": "b", "worker": "bob", "status": "blocked",
@@ -2195,7 +2197,7 @@ def test_accept_rejects_develop_pr_without_confirmed_merge(tmp_path, monkeypatch
 
     from types import SimpleNamespace
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine = create_engine("mock", EngineConfig(
         "mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}))
@@ -2207,7 +2209,7 @@ def test_accept_rejects_develop_pr_without_confirmed_merge(tmp_path, monkeypatch
         state="open", merged_at=None)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     path = _write_manifest(tmp_path, [{
         "id": "b", "worker": "bob", "status": "blocked", "work_item_id": item.id,
     }])
@@ -2223,7 +2225,7 @@ def test_accept_rejects_develop_node_without_pr(tmp_path, monkeypatch):
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
 
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine = create_engine("mock", EngineConfig(
         "mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}))
@@ -2231,7 +2233,7 @@ def test_accept_rejects_develop_node_without_pr(tmp_path, monkeypatch):
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     path = _write_manifest(tmp_path, [{
         "id": "b", "worker": "bob", "status": "blocked", "work_item_id": item.id,
     }])
@@ -2256,7 +2258,7 @@ def test_accept_rejects_merged_flag_without_authoritative_timestamp(tmp_path, mo
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
 
     from omac.engines import EngineConfig, create_engine
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine = create_engine("mock", EngineConfig(
         "mock", "ws-1", extra={"MOCK_AUTO_COMPLETE": "false"}))
@@ -2266,7 +2268,7 @@ def test_accept_rejects_merged_flag_without_authoritative_timestamp(tmp_path, mo
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
 
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *a, **kw: engine)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *a, **kw: engine)
     path = _write_manifest(tmp_path, [{
         "id": "b", "worker": "bob", "status": "blocked", "work_item_id": item.id,
         "merged": True,

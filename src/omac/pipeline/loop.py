@@ -46,10 +46,14 @@ from ..pipeline.delivery import (
     advance_delivery, block_unproven_merge_request,
     merge_bounce_attempt, merge_request_state_is_valid, run_merge_delivery,
 )
-from ..engines.models import (
+from ..core.workitem import (
     AgentRunObservation,
-    PullRequestReadiness, PullRequestReadinessFailure, PullRequestState,
-    WorkItemControlProjection, WorkItemHydrationPlan, WorkItemPayload,
+    PullRequestReadiness,
+    PullRequestReadinessFailure,
+    PullRequestState,
+    WorkItemControlProjection,
+    WorkItemHydrationPlan,
+    WorkItemPayload,
     WorkItemStatus,
 )
 from ..engines.runtime import AgentRuntime

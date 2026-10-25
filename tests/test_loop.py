@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 
+import omac.engines
 import pytest
 import yaml
 
@@ -42,10 +43,10 @@ from omac.core.taskmeta import (
     TaskPhase,
     WorkerHandoffIntent,
 )
-from omac.engines.models import (
+from omac.engines.models import EngineConfig, RuntimeCapabilities
+from omac.core.workitem import (
+    PullRequestReadiness,
     AgentRunObservation,
-    EngineConfig,
-    RuntimeCapabilities,
     WorkItemControlProjection,
     WorkItemPayload,
     WorkItemStatus,
@@ -4443,7 +4444,7 @@ def test_worker_runtime_failure_next_action_recovers_authoring(
     monkeypatch.setenv("OMAC_ENGINE", "mock")
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws")
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *_args, **_kwargs: eng)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *_args, **_kwargs: eng)
 
     command = split(next_action)
     assert command[0] == "omac"
@@ -4521,7 +4522,7 @@ def test_reviewer_runtime_failure_next_action_recovers_review(
     monkeypatch.setenv("OMAC_ENGINE", "mock")
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws")
     import omac.cli.commands.node as node_mod
-    monkeypatch.setattr(node_mod, "create_engine", lambda *_args, **_kwargs: eng)
+    monkeypatch.setattr(omac.engines, "create_engine", lambda *_args, **_kwargs: eng)
 
     command = split(next_action)
     assert command[0] == "omac"
@@ -5773,7 +5774,7 @@ class TestReconcile:
         # 平台 DONE 但缺 pr_url(不合规提交)
         item = eng.store.create_work_item(
             "ws", "a", "d", dag_key="a", worker="alice")
-        eng.store.update_status(item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
         manifest.nodes["a"].work_item_id = item.id
         manifest.nodes["a"].status = "in_progress"
         save_manifest(manifest, path)
@@ -5795,7 +5796,7 @@ class TestReconcile:
         # 手动建 work item + 标 done,manifest 保持 todo(非运行态)
         item = eng.store.create_work_item(
             "ws", "a", "d", dag_key="a", worker="alice")
-        eng.store.update_status(item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
         manifest.nodes["a"].work_item_id = item.id
         manifest.nodes["a"].status = "todo"
         save_manifest(manifest, path)
@@ -5885,7 +5886,7 @@ class TestEvidenceGateRegression:
             eng.store.update_work_item_metadata(item.id, artifacts=artifacts)
         if verification is not None:
             eng.store.update_work_item_metadata(item.id, verification=verification)
-        eng.store.update_status(item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
         return item
 
     def test_invalid_worker_evidence_blocks_node(self):
@@ -6049,7 +6050,7 @@ class TestReviewerRejectBoundedFallback:
             verification=verification,
             verification_source=yaml.safe_dump(verification),
         )
-        eng.store.update_status(item.id, __import__("omac").engines.models.WorkItemStatus.DONE)
+        eng.store.update_status(item.id, WorkItemStatus.DONE)
 
         # tick 2: worker 完成 → 转评审(in_review + assign reviewer)
         tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
@@ -6060,7 +6061,7 @@ class TestReviewerRejectBoundedFallback:
         # 置为 reject 评审结论
         eng.store.update_work_item_metadata(item.id, review_verdict="reject")
         eng.store.update_status(
-            item.id, __import__("omac").engines.models.WorkItemStatus.IN_REVIEW)
+            item.id, WorkItemStatus.IN_REVIEW)
         return manifest, eng, item
 
     @staticmethod
@@ -6249,7 +6250,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """completed/cancelled no-submit 跨 grace 后使用业务 worker retry。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation
+        from omac.core.workitem import AgentRunObservation
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -6335,7 +6336,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """平台保持 in_review/authoring 时，Run 事实仍驱动 grace 后恢复。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation
+        from omac.core.workitem import AgentRunObservation
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -6410,7 +6411,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """terminal no-submit 使用既有 worker=0 立即 blocked 语义。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation
+        from omac.core.workitem import AgentRunObservation
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -6459,9 +6460,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """A valid submit at the worker limit must not be blocked as no-submit."""
         from omac.engines import create_engine
-        from omac.engines.models import (
-            AgentRunObservation, PullRequestReadiness,
-        )
+        from omac.core.workitem import AgentRunObservation, PullRequestReadiness
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -6558,9 +6557,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """A blocked projection must not hide a terminal submitted handoff."""
         from omac.engines import create_engine
-        from omac.engines.models import (
-            AgentRunObservation, PullRequestReadiness,
-        )
+        from omac.core.workitem import AgentRunObservation, PullRequestReadiness
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -6651,7 +6648,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """有限观察窗口内晚到的新 attachment 仍按 causal submit 收割。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation, PullRequestReadiness
+        from omac.core.workitem import AgentRunObservation, PullRequestReadiness
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -6704,7 +6701,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """retry intent 先落盘；重启从同 generation 收敛 bounce 后只派一次。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation
+        from omac.core.workitem import AgentRunObservation
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -6861,7 +6858,7 @@ class TestReviewerRejectBoundedFallback:
         path = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, path)
         old = eng.store.get_work_item(item.id)
-        from omac.engines.models import PullRequestReadiness
+        from omac.core.workitem import PullRequestReadiness
         pr_url, head = "https://github.com/acme/repo/pull/73", old.artifacts["head_sha"]
         eng.store.update_work_item_metadata(
             item.id, artifacts={"pr_url": pr_url, "head_sha": head})
@@ -9055,7 +9052,7 @@ class TestReviewerRejectBoundedFallback:
 
         monkeypatch.setattr(eng.runtime, "wake", wake)
         monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: [
-            __import__("omac").engines.models.AgentRunObservation(
+            AgentRunObservation(
                 id=intent.target_run_id,
                 kind="direct",
                 status="completed",
@@ -9074,7 +9071,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """delivery 可见但目标 Worker Run active 时不得并发派 Reviewer。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation
+        from omac.core.workitem import AgentRunObservation
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -9109,7 +9106,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """解析后的 verification 投影与实际附件不一致时失败关闭。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation
+        from omac.core.workitem import AgentRunObservation
         from omac.errors import PlatformError
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
@@ -9136,7 +9133,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """并发新交付只延后本节点，下一轮按最新事实重新封存。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation
+        from omac.core.workitem import AgentRunObservation
         from omac.pipeline import loop as loop_module
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
@@ -9199,7 +9196,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """seal 后又 push commit 时，下一轮 Reviewer 派发必须失败关闭。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation, PullRequestReadiness
+        from omac.core.workitem import AgentRunObservation, PullRequestReadiness
         from omac.errors import PlatformError
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
@@ -9241,7 +9238,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """handoff seal 不是证据门；空命令 verification 仍必须被正常门阻断。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation, PullRequestReadiness
+        from omac.core.workitem import AgentRunObservation, PullRequestReadiness
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -9290,7 +9287,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """identity 先持久化、intent 后退役；中间崩溃可重复收敛且不重派 Worker。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation
+        from omac.core.workitem import AgentRunObservation
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -9385,7 +9382,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """artifacts/ref 先可见、identity 尚未封装且 Worker active 时继续等待。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation
+        from omac.core.workitem import AgentRunObservation
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -9418,8 +9415,9 @@ class TestReviewerRejectBoundedFallback:
     ):
         """handoff 收敛后必须走正常 evidence/CI 路径，失败 CI 不得派 Reviewer。"""
         from omac.engines import create_engine
-        from omac.engines.models import (
-            AgentRunObservation, PullRequestCheckResult,
+        from omac.core.workitem import (
+            AgentRunObservation,
+            PullRequestCheckResult,
             PullRequestReadiness,
         )
 
@@ -9482,7 +9480,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """submit 后 PR 推新 commit 时，metadata 里的旧 head 不能通过恢复。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation, PullRequestReadiness
+        from omac.core.workitem import AgentRunObservation, PullRequestReadiness
         from omac.errors import PlatformError
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
@@ -9515,7 +9513,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """PR URL/verification 内容相同也可由新 generation/run 证明真实提交。"""
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation
+        from omac.core.workitem import AgentRunObservation
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -9557,8 +9555,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(
             eng.store,
             "read_pull_request_readiness",
-            lambda _pr_url: __import__(
-                "omac").engines.models.PullRequestReadiness(
+            lambda _pr_url: PullRequestReadiness(
                     is_draft=False,
                     state="OPEN",
                     head_sha=current.artifacts["head_sha"],
@@ -9579,7 +9576,7 @@ class TestReviewerRejectBoundedFallback:
         import copy
 
         from omac.engines import create_engine
-        from omac.engines.models import AgentRunObservation
+        from omac.core.workitem import AgentRunObservation
         from omac.errors import PlatformError
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
@@ -10405,7 +10402,7 @@ class TestReviewerRejectBoundedFallback:
         """retry.review=1 → 第 1 次 reject 回退 worker(bounce→1),第 2 次 reject 耗尽 → blocked。"""
         from omac.engines import create_engine
         from omac.core.manifest import set_node
-        from omac.engines.models import WorkItemStatus
+        from omac.core.workitem import WorkItemStatus
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         fpath = str(tmp_path / "m.yaml")
         manifest, eng, item = self._setup_reject_node(eng, fpath)
@@ -10446,7 +10443,7 @@ class TestReviewerRejectBoundedFallback:
         for i in range(3):
             eng.store.update_work_item_metadata(item.id, review_verdict="reject")
             eng.store.update_status(
-                item.id, __import__("omac").engines.models.WorkItemStatus.IN_REVIEW)
+                item.id, WorkItemStatus.IN_REVIEW)
             tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
             got = eng.store.get_work_item(item.id)
             assert manifest.nodes["a"].status == "in_progress", f"第 {i+1} 次应回退 worker"
@@ -10554,7 +10551,7 @@ class TestReviewerRejectFallbackRecovery:
             verification=verification,
             verification_source=yaml.safe_dump(verification),
         )
-        from omac.engines.models import WorkItemStatus
+        from omac.core.workitem import WorkItemStatus
         eng.store.update_status(item.id, WorkItemStatus.DONE)
         tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
         set_node(manifest, key, status="in_review")

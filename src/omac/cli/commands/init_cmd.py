@@ -20,8 +20,8 @@ from typing import List, Optional
 
 from ...agent_templates import AgentTemplateCatalog
 from ...core import config as config_mod
-from ...engines import ENGINE_TYPES, create_engine
-from ...engines.models import AgentProvisionSpec, EngineConfig, RuntimeTarget, WorkspaceInfo
+from ...engines import ENGINE_TYPES, engine_from_config
+from ...engines.models import AgentProvisionSpec, RuntimeTarget, WorkspaceInfo
 from ...errors import OmacError, ValidationError
 from ...i18n import CN, EN, resolve_language, t, ui
 from .. import exit_codes
@@ -98,13 +98,12 @@ def _as_list(val) -> List[str]:
 
 def _build_store(engine_type: str, workspace_id: str = ""):
     """按引擎类型构造一个 Store(init 只用 list_workspaces / list_members)。"""
-    config = EngineConfig(engine_type=engine_type, workspace_id=workspace_id)
-    return create_engine(engine_type, config).store
+    return _build_engine(engine_type, workspace_id).store
 
 
 def _build_engine(engine_type: str, workspace_id: str = ""):
-    config = EngineConfig(engine_type=engine_type, workspace_id=workspace_id)
-    return create_engine(engine_type, config)
+    return engine_from_config(
+        {}, engine=engine_type, workspace=workspace_id, workspace_optional=True)
 
 
 def _prompt(message: str, default: Optional[str] = None) -> str:

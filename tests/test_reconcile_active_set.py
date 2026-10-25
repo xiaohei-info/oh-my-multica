@@ -18,7 +18,8 @@ import pytest
 
 from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
 from omac.engines.mock import MockStore
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import EngineConfig
+from omac.core.workitem import WorkItemStatus
 from omac.pipeline import loop
 from omac.pipeline.report import build_status_report
 

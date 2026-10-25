@@ -54,14 +54,30 @@ from ..errors import (
 )
 from ..i18n import ui
 from .models import (
-    AgentInfo, AgentProvisionSpec, AgentRunObservation, EngineConfig,
-    ProjectInfo, RuntimeTarget, MergeCommandResult,
-    PullRequestCheckResult, PullRequestObservation,
-    PullRequestReadiness, PullRequestReadinessFailure, RuntimeCapabilities,
-    PullRequestReadinessFailureKind, PullRequestState,
-    SkillPackage, VerificationAttachmentObservation, WorkItem,
-    WorkItemControlProjection, WorkItemHydrationPlan, WorkItemPayload,
-    WorkItemStatus, WorkspaceInfo,
+    AgentInfo,
+    AgentProvisionSpec,
+    EngineConfig,
+    ProjectInfo,
+    RuntimeTarget,
+    RuntimeCapabilities,
+    SkillPackage,
+    WorkspaceInfo,
+)
+from ..core.workitem import (
+    AgentRunObservation,
+    MergeCommandResult,
+    PullRequestCheckResult,
+    PullRequestObservation,
+    PullRequestReadiness,
+    PullRequestReadinessFailure,
+    PullRequestReadinessFailureKind,
+    PullRequestState,
+    VerificationAttachmentObservation,
+    WorkItem,
+    WorkItemControlProjection,
+    WorkItemHydrationPlan,
+    WorkItemPayload,
+    WorkItemStatus,
 )
 from ..core.machine_feedback import (
     dump_machine_feedback, is_machine_feedback, parse_machine_feedback,
@@ -2571,7 +2587,7 @@ class MulticaStore(WorkItemStore):
 
     def observe_git_artifacts(self, urls: List[str], *, download: bool = True):
         """Read only commit-pinned regular blobs; native tree proves their paths."""
-        from .models import ReleaseAssetObservation
+        from ..core.workitem import ReleaseAssetObservation
         if not isinstance(urls,list) or not 1 <= len(urls) <= 19 or any(not isinstance(u,str) for u in urls) or len(set(urls)) != len(urls):
             raise PlatformError("Use one to nineteen unique native Git artifact URLs")
         parsed=[]
@@ -2646,7 +2662,7 @@ class MulticaStore(WorkItemStore):
     def observe_release_assets(self, urls: List[str], *, download: bool = True):
         """Pin identities and digests; never treat a mutable download URL as immutable."""
         from urllib.parse import urlsplit
-        from .models import ReleaseAssetObservation
+        from ..core.workitem import ReleaseAssetObservation
         if not isinstance(urls, list) or not 1 <= len(urls) <= 9 or len(set(urls)) != len(urls):
             raise PlatformError("A unique bounded release asset set is required")
         paths = []

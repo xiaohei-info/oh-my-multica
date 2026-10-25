@@ -29,6 +29,7 @@ TRANSITIONAL: dict[str, set[str]] = {
     "id_comparisons": set(),
     "subprocess_use": set(),
     "platform_argv": set(),
+    "engine_assembly": set(),
 }
 # Fixture entries (names directly under tests/fixtures) that predate the size/content rule.
 TRANSITIONAL_FIXTURES: set[str] = set()
@@ -53,7 +54,7 @@ def _violations():
         source = _read(path)
         found["project_names"] += rules.project_names(rel, source)
         if path.suffix == ".py":
-            for name in ("captured_literals", "id_comparisons", "subprocess_use", "platform_argv"):
+            for name in ("captured_literals", "id_comparisons", "subprocess_use", "platform_argv", "engine_assembly"):
                 found[name] += getattr(rules, name)(rel, source)
     return {n: [v for v in vs if v.split(":")[0] not in TRANSITIONAL[n]] for n, vs in found.items()}
 
@@ -116,6 +117,7 @@ def test_fixtures_are_small_and_synthetic():
     ("subprocess_use", "import subprocess\n"),
     ("subprocess_use", 'import os\nsubprocess.run(["rm", "-rf"])\n'),
     ("platform_argv", 'cmd = ["multica", "issue", "list"]\n'),
+    ("engine_assembly", 'engine = create_engine(kind, config)\n'),
 ])
 def test_rule_rejects_violation(rule, snippet):
     assert getattr(rules, rule)("src/omac/pipeline/x.py", snippet)
@@ -129,6 +131,11 @@ def test_rule_rejects_violation(rule, snippet):
 ])
 def test_rule_accepts_generic_code(rule, snippet):
     assert getattr(rules, rule)("src/omac/core/gitsync.py", snippet) == []
+
+
+def test_create_engine_is_allowed_inside_engines_only():
+    assert rules.engine_assembly("src/omac/engines/__init__.py", "x = create_engine(a, b)\n") == []
+    assert rules.engine_assembly("src/omac/cli/commands/dag.py", "x = engines.create_engine(a, b)\n")
 
 
 def test_platform_cli_allowed_only_in_engines():

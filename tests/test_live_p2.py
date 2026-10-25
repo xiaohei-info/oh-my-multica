@@ -30,7 +30,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from omac.core.manifest import Contract, Manifest, Node, load_manifest  # noqa: E402
 from omac.core.taskmeta import TaskKind, TaskPhase  # noqa: E402
 from omac.engines import create_engine  # noqa: E402
-from omac.engines.models import EngineConfig, WorkItemStatus  # noqa: E402
+from omac.engines.models import EngineConfig
+from omac.core.workitem import WorkItemStatus
 from omac.pipeline.dispatch import render_issue_body  # noqa: E402
 
 

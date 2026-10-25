@@ -14,7 +14,7 @@ from omac.core.taskmeta import (
     WorkerHandoffIntent,
     review_context_binding,
 )
-from omac.engines.models import WorkItem, WorkItemStatus, AgentRunObservation
+from omac.core.workitem import WorkItem, WorkItemStatus, AgentRunObservation
 from omac.errors import ValidationError, PlatformError
 from omac.pipeline.dispatch import report_worker_blocker, build_show_output
 
@@ -52,7 +52,7 @@ def setup_request(tmp_path):
     store.hydrate_work_item_evidence.side_effect = lambda projection, plan: deepcopy(
         projection.work_item
     )
-    from omac.engines.models import WorkItemControlProjection
+    from omac.core.workitem import WorkItemControlProjection
 
     store.observe_work_item_control.side_effect = lambda _: WorkItemControlProjection(
         deepcopy(item)
@@ -198,7 +198,7 @@ def test_show_exposes_exact_binding_without_claiming_run_authentication(setup_re
 def test_retry_rereads_decision_before_replacing_generation(setup_request):
     from omac.pipeline.loop import _retry_worker_handoff
     from omac.core.manifest import Manifest, Node
-    from omac.engines.models import WorkItemControlProjection
+    from omac.core.workitem import WorkItemControlProjection
 
     item, store, runtime, _, _ = setup_request
     stale = deepcopy(item)
@@ -226,7 +226,7 @@ def test_retry_rereads_decision_before_replacing_generation(setup_request):
 def test_dispatch_ignores_stale_projection_when_decision_arrived(setup_request):
     from omac.pipeline.loop import _dispatch_worker_handoff
     from omac.core.manifest import Manifest, Node
-    from omac.engines.models import WorkItemControlProjection
+    from omac.core.workitem import WorkItemControlProjection
 
     item, store, runtime, _, _ = setup_request
     stale = WorkItemControlProjection(deepcopy(item))
@@ -391,9 +391,8 @@ def test_cli_v2_returns_twenty(setup_request, monkeypatch, capsys):
 
     item, store, runtime, report, path = setup_request
     path.write_text(yaml.safe_dump(report))
-    monkeypatch.setattr(work, "_resolve_store", lambda: store)
     monkeypatch.setattr(
-        work, "create_engine", lambda *a: SimpleNamespace(runtime=runtime)
+        work, "_resolve_engine", lambda: SimpleNamespace(store=store, runtime=runtime)
     )
     assert main(["work", "block", item.id, "--report-file", str(path)]) == 20
     output = json.loads(capsys.readouterr().out)
@@ -426,7 +425,7 @@ def test_decision_arriving_during_runtime_read_prevents_retry_writes(setup_reque
 
 
 def test_report_does_not_hydrate_success_evidence(setup_request):
-    from omac.engines.models import WorkItemPayload
+    from omac.core.workitem import WorkItemPayload
 
     _, store, _, _, _ = setup_request
     store.get_work_item.side_effect = AssertionError(

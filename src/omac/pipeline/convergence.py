@@ -16,7 +16,7 @@ from ..core.review_convergence import (
     validate_review_ledger,
 )
 from ..core.taskmeta import TaskPhase, current_review_ledger
-from ..engines.models import WorkItemStatus
+from ..core.workitem import WorkItemStatus
 
 
 class ResolutionState(str, Enum):

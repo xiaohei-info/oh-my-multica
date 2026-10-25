@@ -4,7 +4,8 @@ import pytest
 
 from omac.core.taskmeta import TaskKind
 from omac.engines import create_engine
-from omac.engines.models import AgentRunObservation, EngineConfig, WorkItemStatus
+from omac.engines.models import EngineConfig
+from omac.core.workitem import AgentRunObservation, WorkItemStatus
 from omac.errors import ValidationError
 
 

@@ -10,10 +10,8 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, List
 
 from ..errors import PlatformError
-from .models import (
-    AgentInfo, AgentProvisionSpec, AgentRunObservation, RuntimeCapabilities,
-    RuntimeTarget,
-)
+from .models import AgentInfo, AgentProvisionSpec, RuntimeCapabilities, RuntimeTarget
+from ..core.workitem import AgentRunObservation
 
 if TYPE_CHECKING:
     from .store import WorkItemStore

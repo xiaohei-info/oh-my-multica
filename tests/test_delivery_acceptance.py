@@ -14,7 +14,8 @@ from omac.core.acceptance import load_acceptance_doc
 from omac.core.manifest import Contract, Manifest, Node, load_manifest, save_manifest
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import EngineConfig
+from omac.core.workitem import WorkItemStatus
 from omac.errors import NeedsDecision
 from omac.pipeline.acceptance import (
     acceptance_doc_path, resolve_acceptance_config, AcceptanceOutcome,
@@ -459,7 +460,7 @@ def test_no_acceptance_skips(tmp_path):
 # ── entry-level: real work submit 路径 ─────────────────────────────
 
 import json as _json
-from omac.engines.models import WorkItemStatus as _WIS
+from omac.core.workitem import WorkItemStatus as _WIS
 from omac.core.taskmeta import TaskKind
 from omac.engines.store import WorkItemStore
 from omac.pipeline import dispatch as dispatch_mod

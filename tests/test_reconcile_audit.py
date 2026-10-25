@@ -13,7 +13,8 @@ from omac.cli.commands import dag as dag_cmd
 from omac.pipeline import loop, reconcile_audit
 from omac.pipeline.loop import TickResult, tick
 from omac.engines.mock import MockRuntime, MockStore
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import EngineConfig
+from omac.core.workitem import WorkItemStatus
 
 
 NOW = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)

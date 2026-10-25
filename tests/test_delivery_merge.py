@@ -41,7 +41,8 @@ from omac.core.review_convergence import (
 )
 from omac.core.taskmeta import TaskPhase
 from omac.engines.mock import MockRuntime, MockStore
-from omac.engines.models import EngineConfig, WorkItem, WorkItemStatus
+from omac.engines.models import EngineConfig
+from omac.core.workitem import WorkItem, WorkItemStatus
 from omac.errors import AuthError, PlatformError
 from omac.pipeline.delivery import run_merge_delivery
 from omac.pipeline import loop

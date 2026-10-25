@@ -19,7 +19,8 @@ from omac.cli.main import main
 from omac.engines import create_engine
 from omac.engines.mock import MockStore
 from omac.engines.mock import MockRuntime
-from omac.engines.models import AgentRunObservation, EngineConfig, WorkItemStatus
+from omac.engines.models import EngineConfig
+from omac.core.workitem import AgentRunObservation, WorkItemStatus
 
 
 def test_acceptance_guard_rejects_generic_expected_template():
@@ -1004,7 +1005,7 @@ def test_create_records_source_issues_in_manifest_meta(tmp_path, monkeypatch):
 def test_plan_confirm_marks_waiting_issue_done(tmp_path, monkeypatch):
     """omac plan confirm <name>:手动把停在人机门的设计/验收 issue 流转到 DONE。"""
     from omac.core.taskmeta import TaskKind, TaskPhase
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
     engine = _configure_create_mock(tmp_path, monkeypatch)
     MockStore.set_auto_confirm(False)  # 关自动确认,验证手动放行
     item = engine.store.create_work_item(
@@ -1021,7 +1022,7 @@ def test_plan_confirm_marks_waiting_issue_done(tmp_path, monkeypatch):
 def test_plan_confirm_rejects_unreviewed_delivery(tmp_path, monkeypatch):
     """产出刚进入 review、Reviewer 尚未通过时，人工确认不能提前放行。"""
     from omac.core.taskmeta import TaskKind, TaskPhase
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine = _configure_create_mock(tmp_path, monkeypatch)
     MockStore.set_auto_confirm(False)
@@ -1043,7 +1044,7 @@ def test_plan_confirm_rejects_unreviewed_delivery(tmp_path, monkeypatch):
 def test_plan_confirm_dag_key_exactly_selects_waiting_issue(tmp_path, monkeypatch):
     """name 会重复;人工门确认必须支持用 dag_key 精确定位同一条 plan 流水线。"""
     from omac.core.taskmeta import TaskKind, TaskPhase
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine = _configure_create_mock(tmp_path, monkeypatch)
     MockStore.set_auto_confirm(False)
@@ -1066,7 +1067,7 @@ def test_plan_confirm_dag_key_exactly_selects_waiting_issue(tmp_path, monkeypatc
 def test_plan_resume_reuses_existing_plan_issue_by_dag_key(tmp_path, monkeypatch, capsys):
     """中断后续跑以 dag_key 为锚点,不能按 name 新建第二个 plan issue。"""
     from omac.core.taskmeta import TaskKind, TaskPhase
-    from omac.engines.models import WorkItemStatus
+    from omac.core.workitem import WorkItemStatus
 
     engine = _configure_create_mock(tmp_path, monkeypatch)
     plan_item = engine.store.create_work_item(

@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 
 from omac.core.taskmeta import TaskKind, TaskPhase
-from omac.engines.models import AgentRunObservation, WorkItemStatus
+from omac.core.workitem import AgentRunObservation, WorkItemStatus
 from omac.pipeline.tasks import (
     run_task,
     create_authoring_task,

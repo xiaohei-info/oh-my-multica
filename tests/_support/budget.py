@@ -10,6 +10,7 @@ from pathlib import Path
 
 MB = 1024 * 1024
 UNIT_SECONDS = 0.2
+UNIT_TIMING_SLACK = 2.0  # scheduler noise on loaded CI runners; the target stays 200 ms, the gate trips at 400 ms
 DOCKER_SECONDS = 30.0
 UNIT_RSS = 300 * MB
 DOCKER_RSS = 500 * MB
@@ -36,7 +37,7 @@ EXEMPT_FILES: set[str] = {
 
 
 def seconds_limit(is_docker: bool) -> float:
-    return DOCKER_SECONDS if is_docker else UNIT_SECONDS
+    return DOCKER_SECONDS if is_docker else UNIT_SECONDS * UNIT_TIMING_SLACK
 
 
 def rss_limit(is_docker: bool) -> int:

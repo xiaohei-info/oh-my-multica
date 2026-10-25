@@ -15,7 +15,8 @@ from omac.cli import exit_codes
 from omac.cli.commands.dag import _assemble_engine
 from omac.cli.main import main
 from omac.engines import create_engine
-from omac.engines.models import EngineConfig, WorkItemStatus
+from omac.engines.models import EngineConfig
+from omac.core.workitem import WorkItemStatus
 from omac.engines.mock import MockStore, MockRuntime
 from omac.core.manifest import load_manifest, save_manifest, Node, Manifest
 from omac.pipeline.loop import reconcile
@@ -545,9 +546,7 @@ import traceback
 
 import yaml
 
-from omac.engines.models import (
-    WorkItem, WorkItemControlProjection, WorkItemPayload, WorkItemStatus,
-)
+from omac.core.workitem import WorkItem, WorkItemControlProjection, WorkItemPayload, WorkItemStatus
 from omac.pipeline.loop import tick
 from omac.pipeline.report import build_needs_decision
 

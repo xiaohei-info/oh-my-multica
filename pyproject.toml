@@ -80,10 +80,6 @@ ignore_imports = [
     # Permanent exception: `omac web` is the launcher of the web surface.
     "omac.cli.commands.web -> omac.web.server",
     # ---- Baseline: may only shrink; delete a line when its import is removed ----
-    # Phase 3 (layering cleanup)
-    "omac.core.amendment -> omac.engines.models",
-    "omac.core.stage_recovery -> omac.engines.models",
-    "omac.i18n -> omac.core.config",
     # Phase 8 (mock removal)
     "omac.engines.mock -> omac.pipeline.dispatch",
 ]

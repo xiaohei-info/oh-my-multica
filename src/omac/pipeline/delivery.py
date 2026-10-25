@@ -40,8 +40,10 @@ import shlex
 
 from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
 from ..core.retry_budget import consumed_bounces
-from ..engines.models import (
-    PullRequestCheckResult, PullRequestObservation, PullRequestState,
+from ..core.workitem import (
+    PullRequestCheckResult,
+    PullRequestObservation,
+    PullRequestState,
     WorkItemStatus,
 )
 from ..engines.runtime import AgentRuntime

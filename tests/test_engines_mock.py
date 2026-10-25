@@ -6,9 +6,8 @@ from omac.core.manifest import (
     Contract, EvidenceMode, MISSING_CONSUMES, ProducedArtifact,
 )
 from omac.engines import Engine, create_engine
-from omac.engines.models import (
-    AgentProvisionSpec, EngineConfig, PullRequestState, WorkItemStatus,
-)
+from omac.engines.models import AgentProvisionSpec, EngineConfig
+from omac.core.workitem import PullRequestState, WorkItemStatus
 from omac.engines.mock import MockRuntime, MockStore
 from omac.errors import ValidationError
 

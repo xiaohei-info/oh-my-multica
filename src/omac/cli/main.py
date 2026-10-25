@@ -14,7 +14,7 @@ from .. import __version__
 from ..core import config as config_mod
 from ..core.logsetup import configure_logging, resolve_log_format
 from ..errors import NeedsDecision, OmacError
-from ..i18n import resolve_language, t, ui
+from ..i18n import resolve_language, set_language_resolver, t, ui
 from . import exit_codes
 from .commands import COMMAND_GROUPS
 
@@ -177,6 +177,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    set_language_resolver(lambda: resolve_language(config_mod.load_config()))
     try:
         parser = build_parser()
         args = parser.parse_args(argv)

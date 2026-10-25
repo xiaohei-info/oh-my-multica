@@ -31,7 +31,7 @@ from ..core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, DELIVERY_CONTENT_KEY, TaskKind, TaskPhase,
     make_dag_key,
 )
-from ..engines.models import WorkItem, WorkItemStatus
+from ..core.workitem import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import current_language, ui
 from .convergence import ResolutionState, persist_decision, resolve_convergence

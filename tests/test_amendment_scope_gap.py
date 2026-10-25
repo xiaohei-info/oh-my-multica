@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from omac.core.taskmeta import TaskKind, TaskPhase, review_context_binding
-from omac.engines.models import WorkItem, WorkItemStatus, AgentRunObservation
+from omac.core.workitem import WorkItem, WorkItemStatus, AgentRunObservation
 from omac.errors import ValidationError
 
 
@@ -98,8 +98,7 @@ def test_scope_gap_public_command_returns_twenty_and_blocks_submit(tmp_path, mon
     store.resolve_agent_id.return_value = "planner-id"
     runtime = Mock()
     runtime.list_runs.return_value = [AgentRunObservation("run", "direct", "running", agent_id="planner-id", trigger_kind="issue_assignment")]
-    monkeypatch.setattr(command, "_resolve_store", lambda: store)
-    monkeypatch.setattr(command, "create_engine", lambda *a: SimpleNamespace(runtime=runtime))
+    monkeypatch.setattr(command, "_resolve_engine", lambda: SimpleNamespace(store=store, runtime=runtime))
     report = scope_gap_template(item)
     report.update(run_id="run", reason_code="source-gap", summary="Missing published Source", decision_needed="Publish exact complete current Source")
     file = tmp_path / "gap.json"

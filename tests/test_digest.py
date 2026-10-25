@@ -4,7 +4,7 @@ from enum import Enum
 import pytest
 
 from omac.core.digest import digest, plain, read_attachment
-from omac.engines.models import VerificationAttachmentObservation
+from omac.core.workitem import VerificationAttachmentObservation
 from omac.errors import ValidationError
 
 
