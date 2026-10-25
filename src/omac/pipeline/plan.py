@@ -36,7 +36,7 @@ from ..core import acceptance as acceptance_mod
 from ..core.config import CONFIG_DIR, CONFIG_PATH
 from ..core.gitsync import commit_files, ensure_config_synced, ensure_files_clean
 from ..core.lint import lint
-from ..core.manifest import loads_manifest, save_manifest
+from ..core.manifest import loads_manifest, manifest_files, save_manifest
 from ..core.project_rules import read_agents_snapshot, write_project_rules
 from ..core.repository_files import revision_directory_files
 from ..core.review_preflight import plan_manifest_preflight
@@ -639,7 +639,7 @@ def plan_create(
     if source_issues:
         manifest.meta["source_issues"] = source_issues
     save_manifest(manifest, manifest_path)
-    output_paths = [manifest_path]
+    output_paths = manifest_files(manifest_path)
     if not ctx.no_acceptance:
         output_paths.append(acceptance_path)
     if project_rules_text is not None:
@@ -848,7 +848,7 @@ def plan_resume(
     if source_issues:
         manifest.meta["source_issues"] = source_issues
     save_manifest(manifest, manifest_path)
-    output_paths = [manifest_path]
+    output_paths = manifest_files(manifest_path)
     if not ctx.no_acceptance:
         output_paths.append(acceptance_path)
     if project_rules_text is not None:

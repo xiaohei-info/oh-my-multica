@@ -6,6 +6,7 @@ import os
 
 import omac.engines
 import pytest
+from _support.state import save_literal
 import yaml
 
 from omac.cli import exit_codes
@@ -14,9 +15,7 @@ from omac.core.manifest import Contract, load_manifest, save_manifest, Manifest,
 
 
 def _write_manifest(tmp_path, nodes_yaml):
-    p = tmp_path / "m.yaml"
-    p.write_text(yaml.dump({"meta": {}, "nodes": nodes_yaml}, allow_unicode=True))
-    return str(p)
+    return save_literal(tmp_path / "m.yaml", {"meta": {}, "nodes": nodes_yaml})
 
 
 def _pass_with_nits_fixture(tmp_path, monkeypatch):

@@ -1,6 +1,7 @@
 # manifest.py
 from dataclasses import dataclass, field
 from contextlib import contextmanager
+import copy
 from enum import Enum
 import fcntl
 import hashlib
@@ -285,6 +286,8 @@ def clear_confirmed_merge(node: Node) -> None:
 class Manifest:
     meta: dict
     nodes: dict  # id -> Node
+    # What the last load/save left on disk, so a save rewrites only files whose content changed.
+    _disk: dict = field(default_factory=dict, repr=False, compare=False)
 
 def _build_nodes(raw) -> dict:
     """从已展开的 raw dict 构造 {id: Node}(共享于文件加载与不落盘文本解析)。"""
@@ -314,108 +317,191 @@ def _build_nodes(raw) -> dict:
     return nodes
 
 
-def load_manifest(path: str) -> Manifest:
-    """从文件路径加载 manifest(环境变量展开 + schema 校验)。"""
-    from .state_transport import decode
+_RUNTIME_KEYS = ("work_item_id", "status", "merged", "merged_at", "merge_request_state", "recovery_marker")
+_NODE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_STATE_HEAD = re.compile(rb"# sha256: ([0-9a-f]{64})")
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def state_dir(path: str) -> str:
+    """Directory holding one small runtime-state file per node: ``.omac/<name>.yaml`` -> ``.omac/<name>.state``."""
+    root, ext = os.path.splitext(path)
+    return (root if ext in (".yaml", ".yml") else path) + ".state"
+
+
+def manifest_files(path: str) -> list[str]:
+    """Every file git must carry for this manifest: the definition and, once it exists, the state directory."""
+    return [path, *([state_dir(path)] if os.path.isdir(state_dir(path)) else [])]
+
+
+def _definition_of(n: Node) -> dict:
+    node = {"id": n.id, "worker": n.worker, "blocked_by": list(n.blocked_by)}
+    for name in ("title", "description", "reviewer", "risk", "gate"):
+        if getattr(n, name) is not None:
+            node[name] = getattr(n, name)
+    if n.contract is not None:
+        node["contract"] = _dump_contract(n.contract)
+    return node
+
+
+def _runtime_of(n: Node) -> dict:
+    state = {"work_item_id": n.work_item_id, "status": n.status}
+    if n.merged:
+        state["merged"] = True
+        state["merged_at"] = n.merged_at
+    if n.merge_request_state is not None:
+        state["merge_request_state"] = n.merge_request_state
+    if n.recovery_marker:
+        state["recovery_marker"] = True
+    return state
+
+
+def _apply_runtime(n: Node, state: dict) -> None:
+    n.work_item_id = state.get("work_item_id")
+    n.status = state.get("status", "todo")
+    n.merged = bool(state.get("merged", False))
+    n.merged_at = state.get("merged_at")
+    n.merge_request_state = state.get("merge_request_state")
+    n.recovery_marker = bool(state.get("recovery_marker", False))
+
+
+def _read_state_file(path: str) -> dict:
+    """Read one node state file and verify the sha256 header written with it."""
     with open(path, "rb") as f:
-        return loads_manifest(decode(f.read()).decode("utf-8"))
+        head, _, body = f.read().partition(b"\n")
+    found = _STATE_HEAD.fullmatch(head)
+    if not found or hashlib.sha256(body).hexdigest().encode() != found.group(1):
+        raise ValidationError(ui(
+            f"State file {path} is corrupt or was edited by hand (its sha256 header does not match).\n"
+            f"Restore it from git: `git checkout -- {path}` (`git log -- {path}` lists earlier versions), then rerun.",
+            f"状态文件 {path} 已损坏或被手工修改(sha256 头不匹配)。\n"
+            f"请从 git 恢复: `git checkout -- {path}`(`git log -- {path}` 可查看历史版本),然后重试。"))
+    state = yaml.load(body, Loader=_YAML_LOADER)
+    if not isinstance(state, dict):
+        raise ValidationError(ui(
+            f"State file {path} is not a mapping; restore it with `git checkout -- {path}`.",
+            f"状态文件 {path} 不是映射;请用 `git checkout -- {path}` 恢复。"))
+    return state
+
+
+def _state_bytes(state: dict) -> bytes:
+    body = yaml.dump(state, Dumper=getattr(yaml, "CDumper", yaml.Dumper),
+                     default_flow_style=False, allow_unicode=True, sort_keys=False).encode("utf-8")
+    return b"# sha256: " + hashlib.sha256(body).hexdigest().encode() + b"\n" + body
+
+
+def _reject_1x_state(raw, path: str) -> None:
+    transport = isinstance(raw, dict) and {"payload", "decoded_sha256"} <= set(raw)
+    inline = isinstance(raw, dict) and any(
+        isinstance(n, dict) and n.get("work_item_id") for n in raw.get("nodes") or [])
+    if transport or inline:
+        raise ValidationError(ui(
+            f"{path} holds 1.x run state (single-file manifest); 2.0 does not read or modify it.\n"
+            "Finish that run with omac 1.x or abandon it, then start a new run with 2.0: "
+            "`omac plan create ...`.",
+            f"{path} 是 1.x 的运行状态(单文件 manifest),2.0 不读取也不修改。\n"
+            "请用 omac 1.x 跑完或放弃该运行,再用 2.0 重新开始: `omac plan create ...`。"))
+
+
+def load_manifest(path: str) -> Manifest:
+    """Load the DAG definition plus each node's state file (环境变量展开 + schema 校验)."""
+    target = _canonical_manifest_target(path)
+    with open(target, "rb") as f:
+        raw = yaml.load(f.read().decode("utf-8"), Loader=_YAML_LOADER)
+    _reject_1x_state(raw, path)
+    raw = _expand_env(raw)
+    manifest = Manifest(meta=raw.get("meta", {}), nodes=_build_nodes(raw))
+    directory, states = state_dir(target), {}
+    for key, node in manifest.nodes.items():
+        state_path = os.path.join(directory, f"{key}.yaml")
+        if os.path.exists(state_path):
+            states[key] = _read_state_file(state_path)
+            _apply_runtime(node, states[key])
+    plain = {"meta": copy.deepcopy(manifest.meta),
+             "nodes": [_definition_of(n) for n in manifest.nodes.values()]}
+    inline = any(any(k in n for k in _RUNTIME_KEYS) for n in raw.get("nodes", []))
+    manifest._disk = {"path": target, "def": None if inline else plain, "state": states}
+    return manifest
 
 
 def loads_manifest(text: str) -> Manifest:
     """从 YAML 文本解析 manifest(不落盘,供 pipeline 直接消费 LLM 产出的 manifest)。"""
-    from .state_transport import decode
-    raw = _expand_env(yaml.load(decode(text.encode("utf-8")).decode("utf-8"),
-                              Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)))
+    raw = _expand_env(yaml.load(text, Loader=_YAML_LOADER))
     return Manifest(meta=raw.get("meta", {}), nodes=_build_nodes(raw))
+
 
 def _canonical_manifest_target(path: str) -> str:
     """Return the one filesystem identity used for manifest locking and writes."""
     return os.path.realpath(os.path.abspath(path))
 
 
-def save_manifest(manifest: Manifest, path: str):
-    """把 manifest 原子序列化回 YAML。
-
-    临时文件与目标文件放在同一目录,完整 flush+fsync 后用 os.replace 替换。
-    进程被终止或 dump 失败时,旧 manifest 保持完整,不会留下可被 YAML 当成
-    合法短文件读取的半截状态。
-    """
-    node_list = []
-    for key in manifest.nodes:  # 保留 YAML 里的声明顺序
-        n = manifest.nodes[key]
-        node = {
-            "id": n.id,
-            "worker": n.worker,
-            "blocked_by": list(n.blocked_by),
-            "work_item_id": n.work_item_id,
-            "status": n.status,
-        }
-        if n.title is not None:
-            node["title"] = n.title
-        if n.description is not None:
-            node["description"] = n.description
-        if n.reviewer is not None:
-            node["reviewer"] = n.reviewer
-        if n.risk is not None:
-            node["risk"] = n.risk
-        if n.gate is not None:
-            node["gate"] = n.gate
-        if n.contract is not None:
-            node["contract"] = _dump_contract(n.contract)
-        if n.merged:
-            node["merged"] = True
-            node["merged_at"] = n.merged_at
-        if n.merge_request_state is not None:
-            node["merge_request_state"] = n.merge_request_state
-        if n.recovery_marker:
-            node["recovery_marker"] = True
-        node_list.append(node)
-
-    data = {"meta": manifest.meta, "nodes": node_list}
-    from .state_transport import decode, encode, is_transport, DECODED_MAX, fail
-    target = _canonical_manifest_target(path)
-    selected_transport = False
-    if os.path.exists(target):
-        with open(target, "rb") as stream:
-            previous = stream.read()
-        decode(previous)  # Reject corrupt selected state before any overwrite.
-        selected_transport = is_transport(previous)
-    directory = os.path.dirname(target) or "."
+def _atomic_write(target: str, data: bytes, mode: int | None = None) -> None:
+    """临时文件与目标同目录,flush+fsync 后 os.replace:进程被杀只会留下旧的或新的完整文件。"""
+    directory = os.path.dirname(target)
     os.makedirs(directory, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        prefix=f".{os.path.basename(target)}.", suffix=".tmp", dir=directory)
+    fd, temporary = tempfile.mkstemp(prefix=f".{os.path.basename(target)}.", suffix=".tmp", dir=directory)
     try:
-        if os.path.exists(target):
-            os.chmod(temporary, stat.S_IMODE(os.stat(target).st_mode))
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            if selected_transport:
-                body = yaml.dump(data, Dumper=getattr(yaml, "CDumper", yaml.Dumper),
-                                 default_flow_style=False, allow_unicode=True,
-                                 sort_keys=False).encode("utf-8")
-                f.write(encode(body).decode("utf-8"))
-            else:
-                yaml.dump(data, f, Dumper=getattr(yaml, "CDumper", yaml.Dumper),
-                          default_flow_style=False, allow_unicode=True, sort_keys=False)
-                if f.tell() > DECODED_MAX:
-                    fail("Complete legacy state exceeds256MiB; preserve last valid state")
+        if mode is not None:
+            os.chmod(temporary, mode)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
             f.flush()
             os.fsync(f.fileno())
         os.replace(temporary, target)
-        directory_fd = os.open(directory, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
     except BaseException:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
         try:
             os.unlink(temporary)
         except FileNotFoundError:
             pass
         raise
+
+
+def _fsync_dir(directory: str) -> None:
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def save_manifest(manifest: Manifest, path: str):
+    """Persist only what changed: node state files first, the definition file last.
+
+    Each file is replaced atomically. A save that touches one node rewrites one small file; the
+    definition file (meta + node definitions) is rewritten only by plan or amendment.
+    """
+    target = _canonical_manifest_target(path)
+    directory = state_dir(target)
+    for key in manifest.nodes:
+        if not _NODE_ID.fullmatch(key):
+            raise ValidationError(ui(
+                f"Node id {key!r} cannot be used as a state file name; use letters, digits, '.', '_' or '-'.",
+                f"节点 id {key!r} 不能作为状态文件名;请只用字母、数字、'.'、'_'、'-'。"))
+    disk = manifest._disk if manifest._disk.get("path") == target else {}
+    states = {key: _runtime_of(n) for key, n in manifest.nodes.items()}
+    definition = {"meta": manifest.meta, "nodes": [_definition_of(n) for n in manifest.nodes.values()]}
+    old_states = disk.get("state", {})
+
+    touched = set()
+    for key, state in states.items():
+        if old_states.get(key) != state:
+            _atomic_write(os.path.join(directory, f"{key}.yaml"), _state_bytes(state))
+            touched.add(directory)
+    for key in old_states.keys() - states.keys():
+        try:
+            os.unlink(os.path.join(directory, f"{key}.yaml"))
+        except FileNotFoundError:
+            pass
+        touched.add(directory)
+    if disk.get("def") != definition:
+        mode = stat.S_IMODE(os.stat(target).st_mode) if os.path.exists(target) else None
+        body = yaml.dump(definition, Dumper=getattr(yaml, "CDumper", yaml.Dumper),
+                         default_flow_style=False, allow_unicode=True, sort_keys=False)
+        _atomic_write(target, body.encode("utf-8"), mode)
+        touched.add(os.path.dirname(target))
+    for changed in touched:
+        _fsync_dir(changed)
+    manifest._disk = {"path": target, "def": copy.deepcopy(definition), "state": copy.deepcopy(states)}
 
 
 @contextmanager

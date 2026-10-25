@@ -14,6 +14,7 @@ import time
 from . import logsetup
 from ..errors import NeedsDecision, ValidationError
 from ..i18n import ui
+from .manifest import manifest_files
 
 log = logsetup.get_logger(__name__)
 
@@ -86,7 +87,9 @@ def _files_only_local_commits(repo_root: str, upstream: str,
             return False, touched
         touched.update(
             os.path.normpath(item) for item in changed.stdout.splitlines() if item)
-    return bool(touched) and touched == allowed, touched
+    # A directory in ``allowed`` (the per-node state directory) covers every file beneath it.
+    inside = all(any(item == a or item.startswith(a + os.sep) for a in allowed) for item in touched)
+    return bool(touched) and inside, touched
 
 
 def _has_unpushed_path(repo_root: str, path: str) -> bool:
@@ -364,4 +367,4 @@ def commit_manifest(path: str, message: str, repo_root: str = ".",
     暂时滞后但不阻塞本机推进。不自动 merge —— PR 评审是外部门控。
     """
     return commit_files(
-        [path], message, repo_root=repo_root, engine_type=engine_type)
+        manifest_files(path), message, repo_root=repo_root, engine_type=engine_type)

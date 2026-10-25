@@ -312,8 +312,7 @@ def check(args) -> int:
     if reviewers and not args.no_review:
         reviewer = reviewers[0]
         env_prefix = _work_env_prefix(engine)
-        from ...core.state_transport import decode
-        manifest_source = decode(Path(path).read_bytes()).decode("utf-8")
+        manifest_source = Path(path).read_text(encoding="utf-8")
         run_review(
             engine, engine.store.config.workspace_id,
             title=f"[dag-check] {name}",

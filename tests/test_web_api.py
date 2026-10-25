@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from _support.state import save_literal
 import yaml
 
 import omac.web.server as web_srv
@@ -44,9 +45,7 @@ def orch(tmp_path):
 
 def _write_manifest(dir_path: Path, name: str, nodes: list[dict]) -> Path:
     p = dir_path / f"{name}.yaml"
-    with open(p, "w") as f:
-        yaml.dump({"meta": {"name": name}, "nodes": nodes}, f,
-                  default_flow_style=False, allow_unicode=True, sort_keys=False)
+    save_literal(p, {"meta": {"name": name}, "nodes": nodes})
     return p
 
 

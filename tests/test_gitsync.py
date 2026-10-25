@@ -16,6 +16,7 @@ from omac.core.gitsync import (
     ensure_config_synced,
     sync_enabled,
 )
+from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
 from omac.errors import NeedsDecision, ValidationError
 
 
@@ -671,3 +672,43 @@ class TestCommitManifest:
                 "hint": "Could not abort rebase; inspect the repository manually.",
             },
         )]
+
+
+def _out(cwd, *args):
+    return subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True).stdout
+
+
+def _state_dag(count):
+    return Manifest(meta={"name": "dag"}, nodes={
+        f"n{i}": Node(id=f"n{i}", worker="alice") for i in range(count)})
+
+
+def test_two_machines_advancing_different_nodes_merge_without_conflict(tmp_path):
+    remote = tmp_path / "remote.git"
+    _out(tmp_path, "init", "--bare", "-b", "main", str(remote))
+    clones = {}
+    for name in ("a", "b"):
+        clone = tmp_path / name
+        _out(tmp_path, "clone", "-q", str(remote), str(clone))
+        _out(clone, "config", "user.email", "t@t")
+        _out(clone, "config", "user.name", name)
+        _out(clone, "checkout", "-q", "-B", "main")
+        clones[name] = clone
+    path_a = str(clones["a"] / ".omac" / "dag.yaml")
+    save_manifest(_state_dag(4), path_a)
+    assert commit_manifest(path_a, "plan", repo_root=str(clones["a"]), engine_type="multica")
+    _out(clones["b"], "pull", "-q", "origin", "main")
+    path_b = str(clones["b"] / ".omac" / "dag.yaml")
+
+    manifest_a, manifest_b = load_manifest(path_a), load_manifest(path_b)
+    manifest_a.nodes["n0"].status = "done"
+    save_manifest(manifest_a, path_a)
+    assert commit_manifest(path_a, "a advances n0", repo_root=str(clones["a"]), engine_type="multica")
+    manifest_b.nodes["n3"].status = "in_progress"
+    save_manifest(manifest_b, path_b)
+    assert commit_manifest(path_b, "b advances n3", repo_root=str(clones["b"]), engine_type="multica")
+
+    _out(clones["a"], "pull", "-q", "--rebase", "origin", "main")
+    merged = load_manifest(path_a)
+    assert (merged.nodes["n0"].status, merged.nodes["n3"].status) == ("done", "in_progress")
+    assert _out(clones["a"], "status", "--porcelain").strip() == ""

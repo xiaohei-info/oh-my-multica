@@ -14,7 +14,7 @@ import yaml
 
 from ..core.acceptance import load_acceptance_doc_file
 from ..core.amendment import (
-    amendment_review_binding, apply_amendment, authoring_recovery_node_ids,
+    amendment_review_binding, apply_amendment, manifest_digest as full_manifest_digest, authoring_recovery_node_ids,
     build_reviewed_amendment, parse_proposal, validate_affected, validate_proposal,
 )
 from ..core.manifest import Contract, load_manifest
@@ -102,8 +102,7 @@ def _attempt_context(
     superseded_issue,
 ) -> dict[str, Any]:
     report_digest = hashlib.sha256(report.encode("utf-8")).hexdigest()
-    manifest_digest = hashlib.sha256(
-        Path(manifest_path).read_bytes()).hexdigest()
+    manifest_digest = full_manifest_digest(load_manifest(manifest_path))
     request_digest = hashlib.sha256(json.dumps({
         "manifest_sha256": manifest_digest,
         "report_sha256": report_digest,

@@ -269,13 +269,8 @@ manifest = Path(sys.argv[1])
 
 
 def load_manifest(path):
-    with open(path) as f:
-        raw = yaml.safe_load(f)
-    nodes = raw.get("nodes", [])
-    out = {}
-    for n in nodes:
-        out[n["id"]] = n.get("work_item_id")
-    return out
+    from omac.core.manifest import load_manifest as load
+    return {key: node.work_item_id for key, node in load(str(path)).nodes.items()}
 
 
 def save_output(step, rc, out, err):

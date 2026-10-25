@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+from _support.state import save_literal
 
 import omac.cli.commands.dag as dag_cmd
 import omac.core.amendment as amendment_mod
@@ -236,7 +237,7 @@ def _engine():
 
 def _manifest(tmp_path):
     path = tmp_path / "dag.yaml"
-    path.write_text(yaml.safe_dump({
+    save_literal(path, {
         "meta": {"name": "demo", "closeout_node": "closeout"},
         "nodes": [
             {
@@ -273,7 +274,7 @@ def _manifest(tmp_path):
                 "status": "todo",
             },
         ],
-    }, allow_unicode=True, sort_keys=False))
+    })
     return path
 
 
@@ -299,7 +300,7 @@ def _old_worker_handoff(worker="alice"):
 
 def _topology_manifest(tmp_path):
     path = tmp_path / "topology.yaml"
-    path.write_text(yaml.safe_dump({
+    save_literal(path, {
         "meta": {"name": "topology"},
         "nodes": [
             {
@@ -333,7 +334,7 @@ def _topology_manifest(tmp_path):
                 "status": "todo",
             },
         ],
-    }, allow_unicode=True, sort_keys=False))
+    })
     return path
 
 
@@ -1729,7 +1730,7 @@ def test_responsibility_operation_stays_compact_for_145_large_contracts(tmp_path
         } for index in range(145)],
     }
     path = tmp_path / "scale.yaml"
-    path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    save_literal(path, raw)
     operations = [{
         "op": "update-responsibility",
         "node": f"node-{index}",
@@ -1754,7 +1755,7 @@ def test_responsibility_operation_stays_compact_for_145_large_contracts(tmp_path
 
 def _done_node_manifest(tmp_path):
     path = tmp_path / "done.yaml"
-    path.write_text(yaml.safe_dump({
+    save_literal(path, {
         "meta": {"name": "done-demo"},
         "nodes": [{
             "id": "baseline", "worker": "alice", "reviewer": "bob", "blocked_by": [],
@@ -1772,7 +1773,7 @@ def _done_node_manifest(tmp_path):
                 "pr_base": "main", "scope_paths": ["src"],
             },
         }],
-    }, sort_keys=False))
+    })
     return path
 
 
@@ -1897,7 +1898,7 @@ def test_propose_amendment_passes_authoritative_acceptance_to_reviewer_obligatio
     path = _manifest(tmp_path)
     raw = yaml.safe_load(path.read_text())
     raw["meta"]["acceptance_file"] = "acceptance.yaml"
-    path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    save_literal(path, raw)
     (tmp_path / "acceptance.yaml").write_text(yaml.safe_dump({
         "schema": "omac.acceptance/v2",
         "flows": [{
@@ -4457,15 +4458,15 @@ def test_runtime_drift_is_rebased_but_definition_drift_fails_cas(tmp_path):
     assert reviewed["base"]["manifest_sha256"] == manifest_digest(base)
     assert reviewed["base"]["definition_sha256"] == manifest_definition_digest(base)
 
-    raw = yaml.safe_load(path.read_text())
-    raw["nodes"][1]["status"] = "blocked"
-    path.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+    drifted = load_manifest(str(path))
+    list(drifted.nodes.values())[1].status = "blocked"
+    save_manifest(drifted, str(path))
     apply_amendment(str(path), copy.deepcopy(reviewed), engine.store, {"alice", "bob", "charlie"})
 
     path = _manifest(tmp_path)
-    raw = yaml.safe_load(path.read_text())
-    raw["nodes"][1]["blocked_by"] = []
-    path.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+    drifted = load_manifest(str(path))
+    list(drifted.nodes.values())[1].blocked_by = []
+    save_manifest(drifted, str(path))
     with pytest.raises(ValidationError, match="definition changed"):
         apply_amendment(str(path), reviewed, engine.store, {"alice", "bob", "charlie"})
 

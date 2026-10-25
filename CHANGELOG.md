@@ -11,6 +11,12 @@ This file records public changes to oh-my-multica. The format follows
 ### Changed
 
 - `omac init` now defaults to the `multica` engine when the engine prompt is answered with Enter.
+- Run state is stored as one small plain-text file per node (`.omac/<name>.state/<node>.yaml`, with a sha256
+  header) next to the DAG definition (`.omac/<name>.yaml`). A save rewrites only the files that changed, so a
+  tick writes kilobytes instead of the whole manifest, and machines advancing different nodes merge in git
+  without conflicts. The `gzip+base64` full-state encoding and its 256 MiB limit are gone. 1.x single-file
+  manifests are not read or modified: `omac` stops with an error telling you to finish or abandon that run and
+  start a new one with `omac plan create`.
 
 ### Added
 

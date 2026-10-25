@@ -67,18 +67,18 @@ def test_save_manifest_failure_preserves_previous_file(tmp_path, monkeypatch):
     path = _write(tmp_path, BASIC)
     original = open(path, encoding="utf-8").read()
     manifest = load_manifest(path)
-    manifest.nodes["a"].status = "done"
+    manifest.meta["touched"] = True
 
-    def fail_after_partial_write(data, stream, **kwargs):
-        stream.write("meta:\n  name: truncated\nnodes:\n")
-        raise OSError("simulated interrupted dump")
+    def fail_flush(fd):
+        raise OSError("simulated interrupted write")
 
-    monkeypatch.setattr(manifest_mod.yaml, "dump", fail_after_partial_write)
+    monkeypatch.setattr(manifest_mod.os, "fsync", fail_flush)
 
-    with pytest.raises(OSError, match="interrupted dump"):
+    with pytest.raises(OSError, match="interrupted write"):
         save_manifest(manifest, path)
 
     assert open(path, encoding="utf-8").read() == original
+    assert list(tmp_path.rglob("*.tmp")) == []
 
 
 def test_manifest_write_lock_rejects_second_writer(tmp_path):
@@ -138,20 +138,19 @@ def test_manifest_alias_save_failure_preserves_link_target_and_cleans_temp(
     alias.symlink_to(target)
     original = target.read_text()
     manifest = load_manifest(str(alias))
-    set_node(manifest, "a", status="done")
+    manifest.meta["touched"] = True
 
-    def fail_after_partial_write(data, stream, **kwargs):
-        stream.write("meta:\n  name: partial\n")
-        raise OSError("alias dump failed")
+    def fail_flush(fd):
+        raise OSError("alias write failed")
 
-    monkeypatch.setattr(manifest_mod.yaml, "dump", fail_after_partial_write)
+    monkeypatch.setattr(manifest_mod.os, "fsync", fail_flush)
 
-    with pytest.raises(OSError, match="alias dump failed"):
+    with pytest.raises(OSError, match="alias write failed"):
         save_manifest(manifest, str(alias))
 
     assert alias.is_symlink()
     assert target.read_text() == original
-    assert list(tmp_path.glob(".manifest.yaml.*.tmp")) == []
+    assert list(tmp_path.rglob("*.tmp")) == []
 
 
 def test_scope_paths_optional_roundtrip():
@@ -264,7 +263,7 @@ def test_recovery_marker_loads_legacy_manifest_without_field(tmp_path):
     """旧 manifest(无 recovery_marker 字段)加载为 False,不报错。"""
     legacy = (
         "meta: {}\nnodes:\n"
-        "  - id: a\n    worker: alice\n    work_item_id: \"7\"\n"
+        "  - id: a\n    worker: alice\n"
         "    status: blocked\n"
     )
     m = load_manifest(_write(tmp_path, legacy))

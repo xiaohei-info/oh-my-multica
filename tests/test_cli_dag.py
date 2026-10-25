@@ -11,6 +11,7 @@ import os
 from types import SimpleNamespace
 
 import pytest
+from _support.state import save_literal
 
 from omac.cli import exit_codes
 from omac.cli.commands.dag import _assemble_engine
@@ -61,12 +62,7 @@ def test_dag_engine_maps_config_project_to_multica_batch_capability(
 
 def _manifest_yaml(tmp_path, nodes):
     """Write a manifest YAML from a list of node dicts."""
-    import yaml
-    data = {"meta": {"name": "test-dag"}, "nodes": nodes}
-    path = tmp_path / "dag.yaml"
-    with open(path, "w") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    return str(path)
+    return save_literal(tmp_path / "dag.yaml", {"meta": {"name": "test-dag"}, "nodes": nodes})
 
 
 def test_needs_decision_report_prioritizes_convergence_amendment_action():
@@ -93,11 +89,9 @@ def test_dag_run_rejects_missing_declared_closeout_node(
     path = _manifest_yaml(tmp_path, [
         {"id": "a", "worker": "alice", "status": "todo"},
     ])
-    import yaml
-    raw = yaml.safe_load(open(path, encoding="utf-8"))
-    raw["meta"]["closeout_node"] = "closeout"
-    open(path, "w", encoding="utf-8").write(
-        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+    manifest = load_manifest(path)
+    manifest.meta["closeout_node"] = "closeout"
+    save_manifest(manifest, path)
     monkeypatch.setenv("OMAC_ENGINE", "mock")
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws")
 
@@ -113,12 +107,10 @@ def test_dag_run_rejects_missing_required_acceptance_file(
     path = _manifest_yaml(tmp_path, [
         {"id": "a", "worker": "alice", "status": "todo"},
     ])
-    import yaml
-    raw = yaml.safe_load(open(path, encoding="utf-8"))
-    raw["meta"]["acceptance_required"] = True
-    raw["meta"]["acceptance_file"] = "dag.acceptance.yaml"
-    open(path, "w", encoding="utf-8").write(
-        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+    manifest = load_manifest(path)
+    manifest.meta["acceptance_required"] = True
+    manifest.meta["acceptance_file"] = "dag.acceptance.yaml"
+    save_manifest(manifest, path)
     monkeypatch.setenv("OMAC_ENGINE", "mock")
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws")
 

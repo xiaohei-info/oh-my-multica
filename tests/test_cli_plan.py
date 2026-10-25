@@ -1290,7 +1290,7 @@ def test_create_syncs_manifest_and_acceptance_as_one_plan_output(
     assert main(["plan", "create", "--name", "demo-sync"]) == exit_codes.OK
 
     assert calls == [
-        ([".omac/demo-sync.yaml", ".omac/demo-sync.acceptance.yaml", "AGENTS.md"],
+        ([".omac/demo-sync.yaml", ".omac/demo-sync.state", ".omac/demo-sync.acceptance.yaml", "AGENTS.md"],
          "chore(omac): sync plan outputs"),
     ]
 
