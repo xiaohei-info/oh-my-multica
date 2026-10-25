@@ -32,3 +32,6 @@ test_output/
 .idea/
 .vscode/
 .DS_Store
+
+# 依赖锁文件：仓库流程是 pip + venv，不使用 uv.lock
+uv.lock
