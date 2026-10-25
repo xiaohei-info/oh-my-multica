@@ -364,6 +364,15 @@ def _is_not_found(message: str) -> bool:
     return "not found" in text or "does not exist" in text or "404" in text
 
 
+
+def _as_dict(value: Any, cls: type) -> Any:
+    return value.as_dict() if isinstance(value, cls) else value
+
+
+def _text(value: Optional[int]) -> Optional[str]:
+    return None if value is None else str(value)
+
+
 class MulticaStore(WorkItemStore):
     """数据面:全部经 multica CLI。"""
 
@@ -2105,154 +2114,110 @@ class MulticaStore(WorkItemStore):
         # description；Multica 的 metadata API 会解析并返回整条 issue，
         # 若先写 metadata，恢复流程会在有机会压缩正文前超时。
         if description is not None:
-            try:
-                self._run_multica_with_text_file(
-                    ["issue", "update", item_id], "--description-file", description)
-            except PlatformError as exc:
-                error = str(exc).lower()
-                resolver_timeout = (
-                    "context deadline exceeded" in error
-                    or "client.timeout" in error
-                )
-                if not resolver_timeout:
-                    raise
-                self._put_issue_description_direct(item_id, description)
-        if worker is not None:
-            self._set_metadata(item_id, "worker", worker)
-        if reviewer is not None:
-            self._set_metadata(item_id, "reviewer", reviewer)
-        if blocked_by is not None:
-            self._set_metadata(item_id, "blocked_by", blocked_by)
-        if artifacts is not None:
-            self._set_metadata(item_id, "artifacts", artifacts)
+            self._write_description(item_id, description)
+        self._set_present(item_id, (
+            ("worker", worker), ("reviewer", reviewer),
+            ("blocked_by", blocked_by), ("artifacts", artifacts)))
         if machine_feedback is not None or machine_feedback_source is not None:
-            if machine_feedback_source is None and machine_feedback:
-                machine_feedback_source = dump_machine_feedback(machine_feedback)
-            if machine_feedback_source:
-                parsed = parse_machine_feedback(machine_feedback_source)
-                if parsed is None or (
-                    machine_feedback is not None and machine_feedback != parsed
-                ):
-                    raise ValidationError(ui(
-                        "Machine feedback must use schema omac.machine-feedback/v1",
-                        "machine feedback 必须使用 omac.machine-feedback/v1 schema"))
-                ref = self._publish_payload_comment(
-                    item_id, "machine-feedback", machine_feedback_source, ".json")
-                self._set_metadata(item_id, MACHINE_FEEDBACK_REF_KEY, ref)
-            else:
-                self._set_metadata(item_id, MACHINE_FEEDBACK_REF_KEY, "{}")
-        if review_comment is not None:
-            self._set_metadata(item_id, "review_comment", review_comment)
+            self._write_machine_feedback(item_id, machine_feedback, machine_feedback_source)
+        self._set_present(item_id, (("review_comment", review_comment),))
         if verification is not None and verification_source is None:
             verification_source = json.dumps(verification, ensure_ascii=False, indent=2)
-        if verification_source is not None:
-            ref = self._publish_payload_comment(
-                item_id, "verification", verification_source, ".yaml")
-            self._set_metadata(item_id, VERIFICATION_REF_KEY, ref)
+        self._publish_ref(
+            item_id, "verification", verification_source, ".yaml", VERIFICATION_REF_KEY)
         if review_report is not None and review_report_source is None:
             review_report_source = json.dumps(review_report, ensure_ascii=False, indent=2)
-        if review_report_source is not None:
-            ref = self._publish_payload_comment(
-                item_id, "review-report", review_report_source, ".yaml")
-            self._set_metadata(item_id, REVIEW_REPORT_REF_KEY, ref)
+        self._publish_ref(
+            item_id, "review-report", review_report_source, ".yaml", REVIEW_REPORT_REF_KEY)
         if review_obligations is not None:
-            source = yaml.safe_dump(
-                review_obligations, allow_unicode=True, sort_keys=False)
-            ref = self._publish_payload_comment(
-                item_id, "review-obligations", source, ".yaml")
-            self._set_metadata(item_id, REVIEW_OBLIGATIONS_REF_KEY, ref)
+            self._publish_ref(
+                item_id, "review-obligations",
+                yaml.safe_dump(review_obligations, allow_unicode=True, sort_keys=False),
+                ".yaml", REVIEW_OBLIGATIONS_REF_KEY)
         if review_ledger is not None and review_ledger_source is None:
-            review_ledger_source = json.dumps(
-                review_ledger, ensure_ascii=False, indent=2)
-        if review_ledger_source is not None:
-            ref = self._publish_payload_comment(
-                item_id, "review-ledger", review_ledger_source, ".yaml")
-            self._set_metadata(item_id, REVIEW_LEDGER_REF_KEY, ref)
-        if review_generation is not None:
-            self._set_metadata(item_id, REVIEW_GENERATION_KEY, review_generation)
-        if review_ledger_generation is not None:
-            self._set_metadata(
-                item_id, REVIEW_LEDGER_GENERATION_KEY,
-                review_ledger_generation)
-        if bounce_baseline is not None:
-            self._set_metadata(item_id, BOUNCE_BASELINE_KEY, bounce_baseline)
-        if review_continuation is not None:
-            self._set_metadata(
-                item_id, REVIEW_CONTINUATION_KEY, review_continuation)
-        if reviewer_run_baseline is not None:
-            value = (
-                reviewer_run_baseline.as_dict()
-                if isinstance(reviewer_run_baseline, ReviewerRunBaseline)
-                else reviewer_run_baseline
-            )
-            self._set_metadata(item_id, REVIEWER_RUN_BASELINE_KEY, value)
-        if worker_handoff is not None:
-            value = (
-                worker_handoff.as_dict()
-                if isinstance(worker_handoff, WorkerHandoffIntent)
-                else worker_handoff
-            )
-            self._set_metadata(item_id, WORKER_HANDOFF_KEY, value)
-        if delivery_identity is not None:
-            value = (
-                delivery_identity.as_dict()
-                if isinstance(delivery_identity, DeliveryIdentity)
-                else delivery_identity
-            )
-            self._set_metadata(item_id, DELIVERY_IDENTITY_KEY, value)
-        if review_subject_digest is not None:
-            self._set_metadata(
-                item_id, REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)
+            review_ledger_source = json.dumps(review_ledger, ensure_ascii=False, indent=2)
+        self._publish_ref(
+            item_id, "review-ledger", review_ledger_source, ".yaml", REVIEW_LEDGER_REF_KEY)
+        self._set_present(item_id, (
+            (REVIEW_GENERATION_KEY, review_generation),
+            (REVIEW_LEDGER_GENERATION_KEY, review_ledger_generation),
+            (BOUNCE_BASELINE_KEY, bounce_baseline),
+            (REVIEW_CONTINUATION_KEY, review_continuation),
+            (REVIEWER_RUN_BASELINE_KEY, _as_dict(reviewer_run_baseline, ReviewerRunBaseline)),
+            (WORKER_HANDOFF_KEY, _as_dict(worker_handoff, WorkerHandoffIntent)),
+            (DELIVERY_IDENTITY_KEY, _as_dict(delivery_identity, DeliveryIdentity)),
+            (REVIEW_SUBJECT_DIGEST_KEY, review_subject_digest)))
         if decision_required is not None:
             decision_required = self._prepare_decision_metadata_budget(
                 item_id, decision_required)
-            self._set_metadata(
-                item_id,
-                DECISION_REQUIRED_KEY,
-                decision_required,
-            )
-        if review_nits_acceptance is not None:
-            self._set_metadata(
-                item_id, REVIEW_NITS_ACCEPTANCE_KEY, review_nits_acceptance)
-        if amendment_attempt is not None:
-            self._set_metadata(item_id, AMENDMENT_ATTEMPT_KEY, amendment_attempt)
-        if worker_bounce is not None:
-            self._set_metadata(item_id, WORKER_BOUNCE_KEY, str(worker_bounce))
-        if ci_bounce is not None:
-            self._set_metadata(item_id, CI_BOUNCE_KEY, str(ci_bounce))
-        if review_bounce is not None:
-            self._set_metadata(item_id, REVIEW_BOUNCE_KEY, str(review_bounce))
-        if merge_bounce is not None:
-            self._set_metadata(item_id, MERGE_BOUNCE_KEY, str(merge_bounce))
+            self._set_metadata(item_id, DECISION_REQUIRED_KEY, decision_required)
+        self._set_present(item_id, (
+            (REVIEW_NITS_ACCEPTANCE_KEY, review_nits_acceptance),
+            (AMENDMENT_ATTEMPT_KEY, amendment_attempt),
+            (WORKER_BOUNCE_KEY, _text(worker_bounce)),
+            (CI_BOUNCE_KEY, _text(ci_bounce)),
+            (REVIEW_BOUNCE_KEY, _text(review_bounce)),
+            (MERGE_BOUNCE_KEY, _text(merge_bounce))))
         delivery_refs = []
         if deliverable is not None:
             delivery_refs.append((
                 DELIVERABLE_REF_KEY,
-                self._publish_payload_comment(
-                    item_id, "deliverable", deliverable, ".md"),
+                self._publish_payload_comment(item_id, "deliverable", deliverable, ".md"),
             ))
         if project_rules is not None:
             delivery_refs.append((
                 PROJECT_RULES_REF_KEY,
-                self._publish_payload_comment(
-                    item_id, "project-rules", project_rules, ".md"),
+                self._publish_payload_comment(item_id, "project-rules", project_rules, ".md"),
             ))
-        for key, ref in delivery_refs:
-            self._set_metadata(item_id, key, ref)
-        if source_refs is not None:
-            self._set_metadata(item_id, SOURCE_REFS_KEY, source_refs)
-        if phase is not None:
-            self._set_metadata(item_id, PHASE_KEY, phase.value)
+        self._set_present(item_id, delivery_refs)
+        self._set_present(item_id, (
+            (SOURCE_REFS_KEY, source_refs),
+            (PHASE_KEY, phase.value if phase is not None else None)))
         # verdict 是终态可见信号；所有报告和 ledger 证据必须先持久化。
-        if review_verdict is not None:
-            self._set_metadata(item_id, "review_verdict", review_verdict)
+        self._set_present(item_id, (("review_verdict", review_verdict),))
         if decision_required is not None:
             # Other metadata fields in this same call (for example verdict or
             # phase) are written after the decision branch above. Recheck the
             # aggregate budget at the final write boundary as well.
-            self._prepare_decision_metadata_budget(
-                item_id, decision_required)
+            self._prepare_decision_metadata_budget(item_id, decision_required)
         return self.get_work_item(item_id)
+
+    def _write_description(self, item_id: str, description: str) -> None:
+        try:
+            self._run_multica_with_text_file(
+                ["issue", "update", item_id], "--description-file", description)
+        except PlatformError as exc:
+            error = str(exc).lower()
+            if not ("context deadline exceeded" in error or "client.timeout" in error):
+                raise
+            self._put_issue_description_direct(item_id, description)
+
+    def _set_present(self, item_id: str, pairs) -> None:
+        """Write each (key, value) whose value is not None, in order."""
+        for key, value in pairs:
+            if value is not None:
+                self._set_metadata(item_id, key, value)
+
+    def _publish_ref(self, item_id: str, kind: str, source: Optional[str], suffix: str,
+                     ref_key: str) -> None:
+        if source is not None:
+            self._set_metadata(
+                item_id, ref_key, self._publish_payload_comment(item_id, kind, source, suffix))
+
+    def _write_machine_feedback(self, item_id: str, machine_feedback, machine_feedback_source) -> None:
+        if machine_feedback_source is None and machine_feedback:
+            machine_feedback_source = dump_machine_feedback(machine_feedback)
+        if not machine_feedback_source:
+            self._set_metadata(item_id, MACHINE_FEEDBACK_REF_KEY, "{}")
+            return
+        parsed = parse_machine_feedback(machine_feedback_source)
+        if parsed is None or (machine_feedback is not None and machine_feedback != parsed):
+            raise ValidationError(ui(
+                "Machine feedback must use schema omac.machine-feedback/v1",
+                "machine feedback 必须使用 omac.machine-feedback/v1 schema"))
+        ref = self._publish_payload_comment(
+            item_id, "machine-feedback", machine_feedback_source, ".json")
+        self._set_metadata(item_id, MACHINE_FEEDBACK_REF_KEY, ref)
 
     def restore_authoring_generation(
         self,
