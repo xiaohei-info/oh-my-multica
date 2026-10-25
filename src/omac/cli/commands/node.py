@@ -29,6 +29,7 @@ from ...core.workitem import PullRequestState, WorkItemStatus
 from ...errors import NeedsDecision, OmacError, ValidationError, WorkItemNotFoundError
 from ...i18n import ui
 from ...pipeline.apply import Ports, apply, apply_one
+from ...pipeline.decide_transitions import finish_clearing_decision
 from ...pipeline.decide_effects import UpdateMetadata, UpdateStatus
 
 NAME = "node"
@@ -811,10 +812,7 @@ def _cmd_accept(args) -> int:
                 "否则等待远端确认合入。"))
         node.merged = True
         node.merged_at = observation.merged_at
-    apply([
-        UpdateMetadata(node.work_item_id, {'decision_required': {}}),
-        UpdateStatus(node.work_item_id, WorkItemStatus.DONE),
-    ], Ports(store=engine.store))
+    apply(finish_clearing_decision(node.work_item_id), Ports(store=engine.store))
 
     node.status = "done"
     save_manifest(manifest, args.manifest)

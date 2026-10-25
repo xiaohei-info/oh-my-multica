@@ -37,7 +37,8 @@ from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import ui
 from .tasks import _review_subject_digest as task_review_subject_digest, run_task
 from .apply import Ports, apply, apply_one
-from .decide_effects import UpdateMetadata, UpdateStatus
+from .decide_transitions import finish_clearing_decision
+from .decide_effects import UpdateMetadata
 
 
 def default_amendment_path(manifest_path: str) -> str:
@@ -1050,8 +1051,5 @@ def accept_amendment(
     amendment["human_reason"] = reason
     amendment["apply_result"] = result
     _write_yaml_atomic(amendment_file, amendment)
-    apply([
-        UpdateMetadata(issue_id, {'decision_required': {}}),
-        UpdateStatus(issue_id, WorkItemStatus.DONE),
-    ], Ports(store=engine.store))
+    apply(finish_clearing_decision(issue_id), Ports(store=engine.store))
     return {**result, "issue_id": issue_id, "state": "applied"}

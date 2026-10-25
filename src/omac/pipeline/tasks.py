@@ -39,6 +39,7 @@ from .dispatch import (
     normalize_source_refs, render_issue_body, reviewer_dispatch_stopped,
 )
 from .apply import Ports, apply, apply_one
+from .decide_transitions import block_in_phase, block_if_needed
 from .decide_task import (
     Fact, Stage, TERMINAL, TaskObs, decide_task_step, plan_machine_feedback,
 )
@@ -108,10 +109,7 @@ def _raise_if_reviewer_dispatch_stopped(
     current = store.observe_work_item_control(item_id).work_item
     if not reviewer_dispatch_stopped(current):
         return
-    if current.status != WorkItemStatus.BLOCKED:
-        apply([
-            UpdateStatus(item_id, WorkItemStatus.BLOCKED),
-        ], Ports(store=store))
+    apply(block_if_needed(item_id, current.status), Ports(store=store))
     raise NeedsDecision(
         ui(
             "Reviewer dispatch is blocked by the existing decision or platform status.",
@@ -1006,10 +1004,7 @@ def _guard_resume_authoring_terminal_run(
         "run_id": latest.id,
         "next_action": f"omac node retry <manifest> <node>",
     }
-    apply([
-        UpdateMetadata(item.id, {'decision_required': decision, 'phase': TaskPhase.AUTHORING}),
-        UpdateStatus(item.id, WorkItemStatus.BLOCKED),
-    ], Ports(store=engine.store))
+    apply(block_in_phase(item.id, decision, TaskPhase.AUTHORING), Ports(store=engine.store))
     raise NeedsDecision(
         "The previous authoring Run ended without submitting a deliverable; "
         "no duplicate Run was started.",
@@ -1290,10 +1285,7 @@ class _TaskRun:
             "phase": decision_phase.value,
             "resume_issue_id": self.item_id,
         }
-        apply([
-            UpdateMetadata(self.item_id, {'decision_required': decision, 'phase': decision_phase}),
-            UpdateStatus(self.item_id, WorkItemStatus.BLOCKED),
-        ], Ports(store=self.store))
+        apply(block_in_phase(self.item_id, decision, decision_phase), Ports(store=self.store))
         log.info(
             logsetup.EVT_NEEDS_DECISION,
             kind=self.kind.value,

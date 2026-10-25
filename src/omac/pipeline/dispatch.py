@@ -49,7 +49,8 @@ from omac.i18n import CN, EN, t, ui
 from ..engines.codehost import CodeHost
 from .convergence import ConvergenceResolution, ResolutionState, resolve_convergence
 from .apply import Ports, apply
-from .decide_effects import UpdateMetadata, UpdateStatus
+from .decide_effects import UpdateMetadata
+from .decide_transitions import advance_to_review, block_with_decision, finish_with_delivery
 
 
 
@@ -1136,10 +1137,7 @@ def report_worker_blocker(store: WorkItemStore, issue_id: str, report_file: str,
     if item.decision_required not in (None, {}, decision):
         raise NeedsDecision("An existing decision must be resolved first", report=item.decision_required)
     # Decision first: an interrupted status write still prevents redispatch.
-    apply([
-        UpdateMetadata(item.id, {'decision_required': decision}),
-        UpdateStatus(item.id, WorkItemStatus.BLOCKED),
-    ], Ports(store=store))
+    apply(block_with_decision(item.id, decision), Ports(store=store))
     return {"ok": False, "exit_code": 20, "terminal": True,
             "decision_required": decision, "next_action": "stop"}
 
@@ -1163,19 +1161,7 @@ class _SubmitArgs:
 
 
 def _advance_authoring_to_review(store: WorkItemStore, issue_id: str, **metadata: Any) -> None:
-    apply([
-        UpdateMetadata(issue_id, {
-            'review_verdict': "",
-            'review_comment': "",
-            'machine_feedback': {},
-            'review_subject_digest': "",
-            'decision_required': {},
-            'review_nits_acceptance': {},
-            'phase': TaskPhase.REVIEW,
-            **metadata,
-        }),
-        UpdateStatus(issue_id, WorkItemStatus.IN_REVIEW),
-    ], Ports(store=store))
+    apply(advance_to_review(issue_id, metadata), Ports(store=store))
 
 
 def _authoring_done_message() -> str:
@@ -1210,14 +1196,11 @@ def _submit_develop(store, issue_id, item, kind, phase, a: _SubmitArgs) -> Submi
             raise NeedsDecision('Resolve the current Worker decision before submitting', report=fresh.decision_required)
         if _worker_control_moved(fresh, current):
             raise ValidationError('Worker control changed during verification; re-read work show')
-        apply([
-            UpdateMetadata(issue_id, {
-                'artifacts': artifacts,
-                'verification': verification,
-                'verification_source': verification_source,
-            }),
-            UpdateStatus(issue_id, WorkItemStatus.DONE),
-        ], Ports(store=store))
+        apply(finish_with_delivery(issue_id, {
+            'artifacts': artifacts,
+            'verification': verification,
+            'verification_source': verification_source,
+        }), Ports(store=store))
         return SubmitResult(kind, phase, "verification", WorkItemStatus.DONE)
 
 
@@ -1281,10 +1264,8 @@ def _submit_review(store, issue_id, item, kind, phase, a: _SubmitArgs) -> Submit
 
 def _submit_final_acceptance(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
     _validate_final_acceptance_authoring(a.acceptance_results_file, item)
-    apply([
-        UpdateMetadata(issue_id, {'deliverable': _read_text(a.acceptance_results_file)}),
-        UpdateStatus(issue_id, WorkItemStatus.DONE),
-    ], Ports(store=store))
+    apply(finish_with_delivery(issue_id, {'deliverable': _read_text(a.acceptance_results_file)}),
+          Ports(store=store))
     return SubmitResult(kind, phase, "acceptance_results", WorkItemStatus.DONE)
 
 

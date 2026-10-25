@@ -55,7 +55,8 @@ from .tasks import (
     run_task,
 )
 from .apply import Ports, apply, apply_one
-from .decide_effects import CancelRun, ClearAssignment, ResetReview, UpdateMetadata, UpdateStatus
+from .decide_transitions import rework_to_producer
+from .decide_effects import CancelRun, ClearAssignment, UpdateMetadata, UpdateStatus
 
 
 @dataclass
@@ -385,10 +386,7 @@ def plan_continue_review(
         UpdateMetadata(item.id, {'review_continuation': continuation}),
     ], Ports(store=store))
     if mode == "producer-rework":
-        apply([
-            ResetReview(item.id),
-            UpdateStatus(item.id, WorkItemStatus.TODO),
-        ], Ports(store=store))
+        apply(rework_to_producer(item.id), Ports(store=store))
     elif projected_final_nits:
         apply([
             UpdateMetadata(item.id, {'decision_required': {}}),
@@ -729,10 +727,7 @@ def _resume_plan_stage(ctx: PlanContext, *, plan_key: str, name: Optional[str],
     if not plan_item.project_rules:
         # 历史 plan 只有设计文档时不能绕过新双交付契约。复用原 issue
         # 回到 authoring,由 planner 补交两份文件并重新走确认/review。
-        apply([
-            ResetReview(plan_item.id),
-            UpdateStatus(plan_item.id, WorkItemStatus.TODO),
-        ], Ports(store=store))
+        apply(rework_to_producer(plan_item.id), Ports(store=store))
         plan_item = store.get_work_item(plan_item.id)
     resolved_name = name or _name_from_plan_issue(plan_item)
     item_id, plan_text, rules = _run_plan_stage(
@@ -756,10 +751,7 @@ def _restart_acceptance_item(ctx: PlanContext, acceptance_item, spec: AuthoringT
             UpdateStatus(acceptance_item.id, WorkItemStatus.IN_REVIEW),
         ], Ports(store=store))
         return store.get_work_item(acceptance_item.id)
-    apply([
-        ResetReview(acceptance_item.id),
-        UpdateStatus(acceptance_item.id, WorkItemStatus.TODO),
-    ], Ports(store=store))
+    apply(rework_to_producer(acceptance_item.id), Ports(store=store))
     return refresh_authoring_task(
         ctx.engine, acceptance_item.id, spec, item_snapshot=acceptance_item)
 

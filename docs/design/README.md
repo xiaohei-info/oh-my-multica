@@ -132,12 +132,44 @@ reconcile → result collection (collect_results) → evidence / CI / merge gate
   low-frequency full audit.
 * **result collection** walks each running node through staged functions (`worker blocker`, `handoff convergence`,
   `worker handoff`, `review phase`, then `in_progress | in_review | merging` collectors).
-* **Pure decisions** live in `pipeline/decide_merge.py`, `decide_worker.py` and `decide_review.py`: facts in, a named
-  action out, table-tested without a platform. The shell reads, decides, persists the intent, applies one effect.
+* **Pure decisions** live in the `decide_*` modules (7.3.1): facts in, a named action or an ordered plan of effects out,
+  table-tested without a platform. The shell reads, decides, then applies the plan.
 * **Merge delivery** is a state machine on `merge_request_state` (`None → intent → requested → observed MERGED`). A marker
   is never followed by a second merge request; after an unknown outcome the node stops (exit 20) and `omac node retry`
   is the explicit decision. Success is concluded only from the *observed* pull request, never from the command's exit code.
 * **ready nodes** (就绪节点) are nodes whose blockers are `done` or `abandoned`.
+
+#### 7.3.1 Observation → Plan → apply
+
+Every decision has the same shape. A frozen **`Observation`** holds the facts a decision reads (`decide_effects.py`);
+the decision returns a **`Plan`**: an ordered tuple of frozen **`Effect`** values plus the outcome name the caller reports.
+`pipeline/apply.py::apply(effects, ports, state)` is the only code that turns an effect into a port call: strictly in
+order, one at a time, one result per effect, never retrying and never swallowing an exception. `tests/test_architecture.py`
+(`inline_effects`) fails the build on a `store`/`runtime`/`code_host` write anywhere else in `pipeline` or `cli`.
+
+| Effect | Port call |
+|---|---|
+| `UpdateStatus`, `UpdateMetadata`, `AddComment`, `Assign`, `ClearAssignment`, `ResetReview`, `PrepareReviewCycle`, `CreateWorkItem`, `SetNodeContract`, `SetAuthoringIdentity`, `NormalizeConfirmedMerge` | `WorkItemStore` |
+| `Wake`, `DispatchReviewer`, `CancelRun` | `AgentRuntime` |
+| `RequestMerge` | `CodeHost` |
+| `SetNode`, `SaveState` | the manifest (in memory, then atomically on disk) |
+
+Crash consistency is a property of the plan, not of the executor: the *order* is the contract. `RequestMerge` (an effect
+whose outcome may be unknown and must never be replayed) is rejected by `validate_plan` unless the same plan first has
+`SetNode(merge_request_state="intent")` followed by `SaveState`. Decisions that cannot be a single plan because a read must
+sit between two effects are split at that read; the read is a stage or an explicit step, never hidden inside an effect:
+
+* **Merge** (`decide_merge.py`): precheck → observe → one of {settle, record pending, block, *intent plan + one
+  `RequestMerge`*} → observe again → {settle, bounce, block}. Each arrow that follows a read is a separate call to `apply`.
+* **Authoring task** (`decide_task.py`, `tasks.run_task`): an explicit **stage transition table**
+  `(stage, fact) → (next stage, effects)` with 40 rows. A handler per stage observes (reads, waits for a Run, calls the
+  producer) and names the fact; the table gives the effects to apply before entering the next stage. A budget stop is two
+  rows with a read between them (`MACHINE_GATE → BLOCK_BUDGET → STOPPED`). `tests/test_decide_task.py` pins every row and
+  checks that the table is closed (every stage reachable, only `STOPPED`/`DONE` are terminal, an unknown pair is an error).
+* **Result collection / reconcile** (`decide_loop.py`, `decide_transitions.py`): block, rework and finish transitions are
+  plans (`plan_block`, `decide_done_develop`, `rework_to_producer`...). The Worker/Reviewer handoff checkpoints in `loop.py`
+  are guarded protocols: one effect per checkpoint, each followed by a control read that can stop the handoff, so each
+  `apply` there carries exactly one effect and the guard between two checkpoints is an explicit observation point.
 
 ### 7.4 Stage handoff
 

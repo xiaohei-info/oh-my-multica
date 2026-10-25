@@ -21,15 +21,13 @@ from ..errors import NeedsDecision, ValidationError
 from ..i18n import ui
 from .dispatch import reviewer_dispatch_stopped
 from .apply import Ports, apply, apply_one
+from .decide_transitions import block_if_needed
 from .decide_effects import CreateWorkItem, DispatchReviewer, UpdateMetadata, UpdateStatus
 
 
 def _dispatch_blocked(store, item_id: str, current) -> NeedsDecision:
     """Block the review item (if not yet) and build the exit-20 decision for a stopped dispatch."""
-    if current.status != WorkItemStatus.BLOCKED:
-        apply([
-            UpdateStatus(item_id, WorkItemStatus.BLOCKED),
-        ], Ports(store=store))
+    apply(block_if_needed(item_id, current.status), Ports(store=store))
     return NeedsDecision(
         ui(
             "Reviewer dispatch is blocked by the existing decision or platform status.",
@@ -143,10 +141,7 @@ def _raise_if_run_ended_silently(store, runtime, cur, reviewer: str) -> None:
     ]
     if not terminal_runs:
         return
-    if cur.status != WorkItemStatus.BLOCKED:
-        apply([
-            UpdateStatus(cur.id, WorkItemStatus.BLOCKED),
-        ], Ports(store=store))
+    apply(block_if_needed(cur.id, cur.status), Ports(store=store))
     raise NeedsDecision(
         ui(
             "Reviewer Agent Run ended without submitting a verdict; inspect "
