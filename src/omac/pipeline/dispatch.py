@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -1139,6 +1140,211 @@ def report_worker_blocker(store: WorkItemStore, issue_id: str, report_file: str,
             "decision_required": decision, "next_action": "stop"}
 
 
+@dataclass(frozen=True)
+class _SubmitArgs:
+    """Everything `omac work submit` hands to one kind×phase handler."""
+    code_host: CodeHost | None
+    plan_file: Optional[str]
+    project_rules_file: Optional[str]
+    acceptance_file: Optional[str]
+    manifest_file: Optional[str]
+    amendment_file: Optional[str]
+    pr_url: Optional[str]
+    verification_file: Optional[str]
+    verdict: Optional[str]
+    report_file: Optional[str]
+    acceptance_results_file: Optional[str]
+    pool: Set[str]
+    base_manifest: Optional[Any]
+
+
+def _advance_authoring_to_review(store: WorkItemStore, issue_id: str, **metadata: Any) -> None:
+    store.update_work_item_metadata(
+        issue_id,
+        review_verdict="",
+        review_comment="",
+        machine_feedback={},
+        review_subject_digest="",
+        decision_required={},
+        review_nits_acceptance={},
+        phase=TaskPhase.REVIEW,
+        **metadata,
+    )
+    store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
+
+
+def _authoring_done_message() -> str:
+    return ui(
+        "Authoring is complete. Do not submit a verdict or follow the reviewer protocol; "
+        "wait for the OMAC loop to assign a reviewer or for human confirmation.",
+        "产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。")
+
+
+def _worker_control_moved(current: Any, reference: Any) -> bool:
+    return (current.phase != reference.phase or current.worker_handoff != reference.worker_handoff
+            or current.contract_ref != reference.contract_ref
+            or current.review_generation != reference.review_generation)
+
+
+def _submit_develop(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
+    with store.worker_control_lock(issue_id):
+        current = store.observe_work_item_control(issue_id).work_item
+        if current.decision_required:
+            raise NeedsDecision('Resolve the current Worker decision before submitting', report=current.decision_required)
+        if _worker_control_moved(current, item):
+            raise ValidationError('Worker control changed; re-read work show before submitting')
+        verification, readiness = _validate_develop_authoring(
+            a.code_host, a.pr_url, a.verification_file, item)
+        verification_source = _read_text(a.verification_file)
+        pr_head_sha = readiness.head_sha if readiness is not None else None
+        artifacts = {"pr_url": a.pr_url}
+        if pr_head_sha:
+            artifacts["head_sha"] = pr_head_sha
+        fresh = store.observe_work_item_control(issue_id).work_item
+        if fresh.decision_required:
+            raise NeedsDecision('Resolve the current Worker decision before submitting', report=fresh.decision_required)
+        if _worker_control_moved(fresh, current):
+            raise ValidationError('Worker control changed during verification; re-read work show')
+        store.update_work_item_metadata(
+            issue_id,
+            artifacts=artifacts,
+            verification=verification,
+            verification_source=verification_source,
+        )
+        store.update_status(issue_id, WorkItemStatus.DONE)
+        return SubmitResult(kind, phase, "verification", WorkItemStatus.DONE)
+
+
+def _review_ledger_metadata(item, kind: TaskKind, report: Any, verdict: Optional[str]) -> Dict[str, Any]:
+    """Advance the convergence ledger for a protocol-bound review; empty for legacy items."""
+    if not getattr(item, "review_obligations", None):
+        return {}
+    resolution = resolve_convergence(
+        item, for_next_cycle=True, kind=kind.value,
+        node_id=getattr(item, "dag_key", None))
+    resolution.raise_if_invalid(ValidationError, item.id)
+    if resolution.state is ResolutionState.NEEDS_DECISION:
+        raise NeedsDecision(ui(
+            f"Review history cannot be verified: {resolution.reason}. "
+            f"Re-split the task with `{resolution.decision['next_action']}`; do not "
+            "retry or rewrite legacy facts.",
+            f"无法验证历史 review facts：{resolution.reason}。请用 "
+            f"`{resolution.decision['next_action']}` 重新拆分任务；不要重试或改写 "
+            "legacy facts。",
+        ), report=resolution.decision)
+    ledger = advance_review_ledger(
+        current_review_ledger(item),
+        report,
+        verdict=verdict,
+        subject_digest=item.review_subject_digest or "unknown",
+        round_index=max(1, item.bounces.review + 1),
+    )
+    return {
+        "review_ledger": ledger,
+        "review_ledger_source": yaml.safe_dump(ledger, allow_unicode=True, sort_keys=False),
+        "review_ledger_generation": getattr(item, "review_generation", None) or "",
+    }
+
+
+def _submit_review(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
+    report = _validate_review(kind, a.verdict, a.report_file, item)
+    metadata = _review_ledger_metadata(item, kind, report, a.verdict)
+    store.update_work_item_metadata(
+        issue_id,
+        review_comment="",
+        machine_feedback={},
+        review_report=report,
+        review_report_source=_read_text(a.report_file),
+        review_verdict=a.verdict,
+        phase=TaskPhase.REVIEW,
+        **metadata,
+    )
+    # 状态保持 IN_REVIEW,由 loop / plan 流水线收割判定 done / blocked。
+    return SubmitResult(
+        kind, phase, "review_report", WorkItemStatus.IN_REVIEW,
+        message=ui(
+            "Review submission is complete. Stop now. Do not add an issue comment, "
+            "change status, reassign, rerun, or perform any other platform write; "
+            "the OMAC loop will route the verdict.",
+            "评审提交已完成，请立即停止。不要再添加 issue comment、修改状态、"
+            "重新分配、rerun 或执行任何平台写入；由 OMAC loop 收割并路由 verdict。",
+        ),
+    )
+
+
+def _submit_final_acceptance(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
+    _validate_final_acceptance_authoring(a.acceptance_results_file, item)
+    store.update_work_item_metadata(
+        issue_id,
+        deliverable=_read_text(a.acceptance_results_file),
+    )
+    store.update_status(issue_id, WorkItemStatus.DONE)
+    return SubmitResult(kind, phase, "acceptance_results", WorkItemStatus.DONE)
+
+
+def _submit_plan(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
+    content, project_rules = _validate_plan_authoring(a.plan_file, a.project_rules_file)
+    _advance_authoring_to_review(
+        store, issue_id, deliverable=content, project_rules=project_rules)
+    return SubmitResult(
+        kind, phase, "plan", WorkItemStatus.IN_REVIEW,
+        next_phase=TaskPhase.REVIEW,
+        message=_authoring_done_message(),
+        deliverable_keys=("plan", "project_rules"),
+    )
+
+
+def _submit_acceptance(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
+    content = _validate_acceptance_authoring(a.acceptance_file)
+    _advance_authoring_to_review(store, issue_id, deliverable=content)
+    return SubmitResult(
+        kind, phase, "acceptance", WorkItemStatus.IN_REVIEW,
+        next_phase=TaskPhase.REVIEW, message=_authoring_done_message())
+
+
+def _submit_decompose(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
+    content = _validate_decompose_authoring(
+        a.manifest_file, a.pool, base_manifest=a.base_manifest)
+    _advance_authoring_to_review(store, issue_id, deliverable=content)
+    return SubmitResult(
+        kind, phase, "manifest", WorkItemStatus.IN_REVIEW,
+        next_phase=TaskPhase.REVIEW, message=_authoring_done_message())
+
+
+def _submit_amendment(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
+    with store.worker_control_lock(issue_id):
+        current = store.get_work_item(issue_id)
+        if current.decision_required:
+            raise NeedsDecision("Resolve the terminal amendment decision before submitting", report=current.decision_required)
+        if (current.kind != kind or current.phase != item.phase
+                or current.worker != item.worker or current.review_generation != item.review_generation
+                or current.contract_ref != item.contract_ref):
+            raise ValidationError("Amendment control changed before submission; read work show again")
+        content = _validate_amendment_authoring(a.amendment_file)
+        fresh = store.get_work_item(issue_id)
+        if fresh != current:
+            raise ValidationError("Amendment control changed during submission; read work show again")
+        _advance_authoring_to_review(store, issue_id, deliverable=content)
+    return SubmitResult(
+        kind, phase, "amendment", WorkItemStatus.IN_REVIEW,
+        next_phase=TaskPhase.REVIEW,
+        message=ui(
+            "Amendment authoring is complete. Wait for the independent Reviewer; "
+            "human confirmation happens only after Reviewer pass.",
+            "amendment 产出已完成；等待独立 Reviewer，只有 Reviewer pass 后才进入人工确认。"),
+    )
+
+
+_AUTHORING_SUBMITTERS = {
+    TaskKind.DEVELOP: _submit_develop,
+    TaskKind.FINAL_ACCEPTANCE: _submit_final_acceptance,
+    TaskKind.PLAN: _submit_plan,
+    TaskKind.ACCEPTANCE: _submit_acceptance,
+    TaskKind.DECOMPOSE: _submit_decompose,
+    TaskKind.AMENDMENT: _submit_amendment,
+}
+
+
 def submit(
     store: WorkItemStore,
     issue_id: str,
@@ -1177,7 +1383,16 @@ def submit(
             f"Could not read work item '{issue_id}': {exc}",
             f"无法读取 work item '{issue_id}' —— {exc}")) from exc
 
-    provided = {
+    args = _SubmitArgs(
+        code_host=code_host, plan_file=plan_file, project_rules_file=project_rules_file,
+        acceptance_file=acceptance_file, manifest_file=manifest_file,
+        amendment_file=amendment_file, pr_url=pr_url, verification_file=verification_file,
+        verdict=verdict, report_file=report_file,
+        acceptance_results_file=acceptance_results_file,
+        pool=set(agent_pool) if agent_pool is not None else set(),
+        base_manifest=base_manifest,
+    )
+    validate_params(kind, phase, {
         "plan_file": plan_file,
         "project_rules_file": project_rules_file,
         "acceptance_file": acceptance_file,
@@ -1188,192 +1403,16 @@ def submit(
         "verdict": verdict,
         "report_file": report_file,
         "acceptance_results_file": acceptance_results_file,
-    }
-    validate_params(kind, phase, provided)
+    })
 
-    pool = set(agent_pool) if agent_pool is not None else set()
-
-    def advance_authoring_to_review(**metadata: Any) -> None:
-        store.update_work_item_metadata(
-            issue_id,
-            review_verdict="",
-            review_comment="",
-            machine_feedback={},
-            review_subject_digest="",
-            decision_required={},
-            review_nits_acceptance={},
-            phase=TaskPhase.REVIEW,
-            **metadata,
-        )
-        store.update_status(issue_id, WorkItemStatus.IN_REVIEW)
-
-    # ---------- develop × authoring ----------
-    if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
-        with store.worker_control_lock(issue_id):
-            current = store.observe_work_item_control(issue_id).work_item
-            if current.decision_required:
-                raise NeedsDecision('Resolve the current Worker decision before submitting', report=current.decision_required)
-            if (current.phase != item.phase or current.worker_handoff != item.worker_handoff
-                or current.contract_ref != item.contract_ref or current.review_generation != item.review_generation):
-                raise ValidationError('Worker control changed; re-read work show before submitting')
-            verification, readiness = _validate_develop_authoring(
-                code_host, pr_url, verification_file, item)
-            verification_source = _read_text(verification_file)
-            pr_head_sha = readiness.head_sha if readiness is not None else None
-            artifacts = {"pr_url": pr_url}
-            if pr_head_sha:
-                artifacts["head_sha"] = pr_head_sha
-            fresh = store.observe_work_item_control(issue_id).work_item
-            if fresh.decision_required:
-                raise NeedsDecision('Resolve the current Worker decision before submitting', report=fresh.decision_required)
-            if (fresh.phase != current.phase or fresh.worker_handoff != current.worker_handoff
-                or fresh.contract_ref != current.contract_ref or fresh.review_generation != current.review_generation):
-                raise ValidationError('Worker control changed during verification; re-read work show')
-            store.update_work_item_metadata(
-                issue_id,
-                artifacts=artifacts,
-                verification=verification,
-                verification_source=verification_source,
-            )
-            store.update_status(issue_id, WorkItemStatus.DONE)
-            return SubmitResult(kind, phase, "verification", WorkItemStatus.DONE)
-
-    # ---------- review(各 kind 共用) ----------
-    if phase == TaskPhase.REVIEW:
-        report = _validate_review(kind, verdict, report_file, item)
-        metadata: Dict[str, Any] = {}
-        if getattr(item, "review_obligations", None):
-            resolution = resolve_convergence(
-                item, for_next_cycle=True, kind=kind.value,
-                node_id=getattr(item, "dag_key", None))
-            resolution.raise_if_invalid(ValidationError, item.id)
-            if resolution.state is ResolutionState.NEEDS_DECISION:
-                raise NeedsDecision(ui(
-                    f"Review history cannot be verified: {resolution.reason}. "
-                    f"Re-split the task with `{resolution.decision['next_action']}`; do not "
-                    "retry or rewrite legacy facts.",
-                    f"无法验证历史 review facts：{resolution.reason}。请用 "
-                    f"`{resolution.decision['next_action']}` 重新拆分任务；不要重试或改写 "
-                    "legacy facts。",
-                ), report=resolution.decision)
-            ledger = advance_review_ledger(
-                current_review_ledger(item),
-                report,
-                verdict=verdict,
-                subject_digest=item.review_subject_digest or "unknown",
-                round_index=max(1, item.bounces.review + 1),
-            )
-            metadata.update({
-                "review_ledger": ledger,
-                "review_ledger_source": yaml.safe_dump(
-                    ledger, allow_unicode=True, sort_keys=False),
-                "review_ledger_generation": getattr(
-                    item, "review_generation", None) or "",
-            })
-        store.update_work_item_metadata(
-            issue_id,
-            review_comment="",
-            machine_feedback={},
-            review_report=report,
-            review_report_source=_read_text(report_file),
-            review_verdict=verdict,
-            phase=TaskPhase.REVIEW,
-            **metadata,
-        )
-        # 状态保持 IN_REVIEW,由 loop / plan 流水线收割判定 done / blocked。
-        return SubmitResult(
-            kind, phase, "review_report", WorkItemStatus.IN_REVIEW,
-            message=ui(
-                "Review submission is complete. Stop now. Do not add an issue comment, "
-                "change status, reassign, rerun, or perform any other platform write; "
-                "the OMAC loop will route the verdict.",
-                "评审提交已完成，请立即停止。不要再添加 issue comment、修改状态、"
-                "重新分配、rerun 或执行任何平台写入；由 OMAC loop 收割并路由 verdict。",
-            ),
-        )
-
-    # ---------- final-acceptance × authoring ----------
-    if kind == TaskKind.FINAL_ACCEPTANCE and phase == TaskPhase.AUTHORING:
-        _validate_final_acceptance_authoring(acceptance_results_file, item)
-        store.update_work_item_metadata(
-            issue_id,
-            deliverable=_read_text(acceptance_results_file),
-        )
-        store.update_status(issue_id, WorkItemStatus.DONE)
-        return SubmitResult(kind, phase, "acceptance_results", WorkItemStatus.DONE)
-
-    # ---------- plan × authoring ----------
-    if kind == TaskKind.PLAN and phase == TaskPhase.AUTHORING:
-        content, project_rules = _validate_plan_authoring(
-            plan_file, project_rules_file)
-        advance_authoring_to_review(
-            deliverable=content,
-            project_rules=project_rules,
-        )
-        return SubmitResult(
-            kind, phase, "plan", WorkItemStatus.IN_REVIEW,
-            next_phase=TaskPhase.REVIEW,
-            message=ui(
-                "Authoring is complete. Do not submit a verdict or follow the reviewer protocol; "
-                "wait for the OMAC loop to assign a reviewer or for human confirmation.",
-                "产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。"),
-            deliverable_keys=("plan", "project_rules"),
-        )
-
-    # ---------- acceptance × authoring ----------
-    if kind == TaskKind.ACCEPTANCE and phase == TaskPhase.AUTHORING:
-        content = _validate_acceptance_authoring(acceptance_file)
-        advance_authoring_to_review(deliverable=content)
-        return SubmitResult(
-            kind, phase, "acceptance", WorkItemStatus.IN_REVIEW,
-            next_phase=TaskPhase.REVIEW,
-            message=ui(
-                "Authoring is complete. Do not submit a verdict or follow the reviewer protocol; "
-                "wait for the OMAC loop to assign a reviewer or for human confirmation.",
-                "产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。"),
-        )
-
-    # ---------- decompose × authoring ----------
-    if kind == TaskKind.DECOMPOSE and phase == TaskPhase.AUTHORING:
-        content = _validate_decompose_authoring(
-            manifest_file, pool, base_manifest=base_manifest)
-        advance_authoring_to_review(deliverable=content)
-        return SubmitResult(
-            kind, phase, "manifest", WorkItemStatus.IN_REVIEW,
-            next_phase=TaskPhase.REVIEW,
-            message=ui(
-                "Authoring is complete. Do not submit a verdict or follow the reviewer protocol; "
-                "wait for the OMAC loop to assign a reviewer or for human confirmation.",
-                "产出阶段已结束；不要提交 verdict，不要执行 reviewer 协议。等待 omac loop 转派 reviewer 或人工确认。"),
-        )
-
-    # ---------- amendment × authoring ----------
-    if kind == TaskKind.AMENDMENT and phase == TaskPhase.AUTHORING:
-        with store.worker_control_lock(issue_id):
-            current = store.get_work_item(issue_id)
-            if current.decision_required:
-                raise NeedsDecision("Resolve the terminal amendment decision before submitting", report=current.decision_required)
-            if (current.kind != kind or current.phase != item.phase
-                    or current.worker != item.worker or current.review_generation != item.review_generation
-                    or current.contract_ref != item.contract_ref):
-                raise ValidationError("Amendment control changed before submission; read work show again")
-            content = _validate_amendment_authoring(amendment_file)
-            fresh = store.get_work_item(issue_id)
-            if fresh != current:
-                raise ValidationError("Amendment control changed during submission; read work show again")
-            advance_authoring_to_review(deliverable=content)
-        return SubmitResult(
-            kind, phase, "amendment", WorkItemStatus.IN_REVIEW,
-            next_phase=TaskPhase.REVIEW,
-            message=ui(
-                "Amendment authoring is complete. Wait for the independent Reviewer; "
-                "human confirmation happens only after Reviewer pass.",
-                "amendment 产出已完成；等待独立 Reviewer，只有 Reviewer pass 后才进入人工确认。"),
-        )
-
-    raise ValidationError(ui(
-        f"Unsupported delivery combination: {kind.value} × {phase.value}",
-        f"未支持的交付组合: {kind.value} × {phase.value}"))
+    handler = (
+        _submit_review if phase == TaskPhase.REVIEW
+        else _AUTHORING_SUBMITTERS.get(kind) if phase == TaskPhase.AUTHORING else None)
+    if handler is None:
+        raise ValidationError(ui(
+            f"Unsupported delivery combination: {kind.value} × {phase.value}",
+            f"未支持的交付组合: {kind.value} × {phase.value}"))
+    return handler(store, issue_id, item, kind, phase, args)
 
 
 # ==================== Human-first 派发 issue body ====================
