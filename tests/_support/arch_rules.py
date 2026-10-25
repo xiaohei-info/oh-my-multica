@@ -131,6 +131,28 @@ def function_length(path: str, source: str) -> list[str]:
             and n.end_lineno - n.lineno + 1 > FUNCTION_LINES_MAX]
 
 
+WRITE_METHODS = {
+    "update_status", "update_work_item_metadata", "add_comment", "assign_work_item", "clear_assignment",
+    "reset_review", "prepare_review_cycle", "create_work_item", "set_node_contract", "set_authoring_identity",
+    "normalize_confirmed_merge", "wake", "dispatch_reviewer", "cancel", "request_pull_request_merge",
+    "mark_in_progress", "mark_in_review", "mark_done", "mark_failed", "mark_blocked",
+}
+PORT_NAMES = {"store", "runtime", "code_host"}
+EFFECT_SCOPES = ("src/omac/pipeline/", "src/omac/cli/")
+EFFECT_EXECUTOR = "src/omac/pipeline/apply.py"
+EFFECT_EXEMPT = {"src/omac/cli/commands/init_cmd.py"}  # the interactive setup wizard creates projects and agents
+
+
+def inline_effects(path: str, source: str) -> list[str]:
+    """Port writes happen only in ``pipeline/apply.py``; everything else returns Effect values and applies them."""
+    if not path.startswith(EFFECT_SCOPES) or path == EFFECT_EXECUTOR or path in EFFECT_EXEMPT:
+        return []
+    return [f"{path}:{n.lineno}: port write `{n.func.attr}` outside pipeline/apply.py"
+            for n in ast.walk(_parse(source))
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in WRITE_METHODS
+            and _tail(n.func.value) in PORT_NAMES]
+
+
 def decide_imports(path: str, source: str) -> list[str]:
     """decide_* modules stay pure: no engines or subprocess imports."""
     if not path.rsplit("/", 1)[-1].startswith("decide"):

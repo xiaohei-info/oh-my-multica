@@ -31,6 +31,14 @@ TRANSITIONAL: dict[str, set[str]] = {
     "platform_argv": set(),
     "engine_assembly": set(),
     "function_length": set(),
+    # Port writes still inline; each file is converted to Effect values + apply and then removed from here.
+    "inline_effects": {
+        "src/omac/cli/commands/node.py", "src/omac/cli/commands/plan.py", "src/omac/pipeline/acceptance.py",
+        "src/omac/pipeline/amendment.py", "src/omac/pipeline/amendment_scope_gap.py",
+        "src/omac/pipeline/convergence.py", "src/omac/pipeline/dispatch.py", "src/omac/pipeline/loop.py",
+        "src/omac/pipeline/plan.py", "src/omac/pipeline/review.py", "src/omac/pipeline/tasks.py",
+        "src/omac/pipeline/worker_decision.py",
+    },
 }
 # Fixture entries (names directly under tests/fixtures) that predate the size/content rule.
 TRANSITIONAL_FIXTURES: set[str] = set()
@@ -56,7 +64,7 @@ def _violations():
         found["project_names"] += rules.project_names(rel, source)
         if path.suffix == ".py":
             for name in ("captured_literals", "id_comparisons", "subprocess_use", "platform_argv", "engine_assembly",
-                         "function_length"):
+                         "function_length", "inline_effects"):
                 found[name] += getattr(rules, name)(rel, source)
     return {n: [v for v in vs if v.split(":")[0] not in TRANSITIONAL[n]] for n, vs in found.items()}
 
@@ -177,3 +185,17 @@ def test_decide_module_importing_engines_is_rejected():
 def test_smoke_trigger_rule():
     assert rules.smoke_triggers("on:\n  schedule: []\n  workflow_dispatch:\n") == []
     assert rules.smoke_triggers("on:\n  pull_request:\n  schedule: []\n")
+
+
+def test_port_writes_are_rejected_outside_apply():
+    snippet = "def f(store, c):\n    store.update_status('i', 1)\n    c.store.add_comment('i', 'x')\n"
+    assert len(rules.inline_effects("src/omac/pipeline/loop.py", snippet)) == 2
+    assert len(rules.inline_effects("src/omac/cli/commands/node.py", snippet)) == 2
+
+
+def test_port_writes_are_allowed_in_the_executor_and_reads_are_not_writes():
+    snippet = "def f(store):\n    store.update_status('i', 1)\n"
+    assert rules.inline_effects("src/omac/pipeline/apply.py", snippet) == []
+    assert rules.inline_effects("src/omac/engines/multica.py", snippet) == []
+    assert rules.inline_effects("src/omac/pipeline/loop.py", "def f(store):\n    store.get_work_item('i')\n") == []
+    assert rules.inline_effects("src/omac/pipeline/loop.py", "def f(t):\n    t.cancel()\n") == []
