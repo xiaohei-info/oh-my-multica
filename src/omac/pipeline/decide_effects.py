@@ -122,6 +122,11 @@ class Wake(Effect):
 
 
 @dataclass(frozen=True)
+class AcknowledgeAssignment(Effect):
+    item_id: str
+
+
+@dataclass(frozen=True)
 class DispatchReviewer(Effect):
     item_id: str
     agent: str

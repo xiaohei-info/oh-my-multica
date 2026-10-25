@@ -2498,6 +2498,9 @@ class MulticaRuntime(AgentRuntime):
             for run in runs
         )
 
+    def acknowledge_assignment(self, item_id: str) -> None:
+        self._store._consume_assignment_wake_pending(item_id)
+
     def wake(self, item_id: str, agent: str, role: str) -> None:
         if self._store._consume_assignment_wake_pending(item_id):
             return None

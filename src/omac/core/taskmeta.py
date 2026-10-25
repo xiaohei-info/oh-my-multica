@@ -338,6 +338,9 @@ class WorkerHandoffIntent:
     terminal_observed_at: Optional[str] = None
     # Durable, non-dispatchable stage preparation; removed after read-back.
     authoring_recovery: Optional[dict[str, Any]] = None
+    # Infrastructure reruns already spent since the last business handoff. A rerun starts a new generation whose
+    # baseline absorbs the failed Run, so the Runs alone can no longer show how many provider failures came in a row.
+    transient_retries: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -364,6 +367,7 @@ class WorkerHandoffIntent:
             "terminal_observed_at": self.terminal_observed_at,
             **({"authoring_recovery": deepcopy(self.authoring_recovery)}
                if self.authoring_recovery is not None else {}),
+            **({"transient_retries": self.transient_retries} if self.transient_retries else {}),
         }
 
     def is_complete(self) -> bool:
@@ -627,6 +631,7 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
         target_worker_bounce=int_field("target_worker_bounce"),
         terminal_observed_at=text_field("terminal_observed_at"),
         authoring_recovery=deepcopy(value.get("authoring_recovery")),
+        transient_retries=max(int_field("transient_retries") or 0, 0),
     )
 
 

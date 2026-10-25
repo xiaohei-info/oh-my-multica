@@ -109,9 +109,7 @@ class Kit:
         if metadata:
             self.store.update_work_item_metadata(item.id, **metadata)
         if assign:
-            self.store.assign_work_item(item.id, worker, "worker")
-            # Arranged "by an earlier process": the in-memory note that this assignment already started a Run is gone.
-            self.store._pending_assignment_wakes.discard(item.id)
+            self.assign(item.id, worker)
         if status is not WorkItemStatus.TODO:
             self.store.update_status(item.id, status)
         return self.store.get_work_item(item.id)
@@ -121,6 +119,11 @@ class Kit:
         rows = json.loads(self.stack.multica("issue", "comment", "list", item_id, "--output", "json") or "[]")
         rows = rows.get("comments", rows) if isinstance(rows, dict) else rows
         return [row.get("content", row.get("body", "")) for row in rows]
+
+    def assign(self, item_id: str, worker: str) -> None:
+        """Assign as an earlier process would have: this process keeps no memory of the assignment having started a Run."""
+        self.store.assign_work_item(item_id, worker, "worker")
+        self.store._pending_assignment_wakes.discard(item_id)
 
     def done_dependency(self, key, **extra):
         """A merged upstream node and its Done issue, as the Loop leaves them."""

@@ -5,7 +5,7 @@ import pytest
 from omac.core.workitem import WorkItemStatus
 from omac.pipeline.apply import ManifestState, Ports, apply
 from omac.pipeline.decide_effects import (
-    AddComment, Assign, CancelRun, ClearAssignment, CreateWorkItem, DispatchReviewer, NormalizeConfirmedMerge,
+    AcknowledgeAssignment, AddComment, Assign, CancelRun, ClearAssignment, CreateWorkItem, DispatchReviewer, NormalizeConfirmedMerge,
     Plan, PlanError, PrepareReviewCycle, RequestMerge, ResetReview, SaveState, SetAuthoringIdentity, SetNode,
     SetNodeContract, UpdateMetadata, UpdateStatus, Wake, validate_plan,
 )
@@ -53,6 +53,7 @@ EFFECT_CALLS = [
     (NormalizeConfirmedMerge("i"), ("normalize_confirmed_merge", ("i",), {})),
     (Wake("i", "w", "worker"), ("wake", ("i", "w", "worker"), {})),
     (CancelRun("i"), ("cancel", ("i",), {})),
+    (AcknowledgeAssignment("i"), ("acknowledge_assignment", ("i",), {})),
     (DispatchReviewer("i", "r"), ("dispatch_reviewer", ("STORE", "i", "r"), {})),
 ]
 

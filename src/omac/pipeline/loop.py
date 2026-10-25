@@ -88,6 +88,7 @@ from .decide_loop import (
     plan_return_to_worker_failed, plan_worker_failed,
 )
 from .decide_effects import (
+    AcknowledgeAssignment,
     Assign,
     ClearAssignment,
     CreateWorkItem,
@@ -404,6 +405,7 @@ def _latest_run_failure(
     baseline_direct_run_ids: Tuple[str, ...] = (),
     baseline_cutoff_created_at: str | None = None,
     target_run_id: str | None = None,
+    attempt: int = 1,
 ) -> _RunFailure | None:
     """Return the latest expected failed Run and its derived classification."""
     observed = _observe_direct_run_attempt(
@@ -412,6 +414,7 @@ def _latest_run_failure(
         baseline_direct_run_ids=baseline_direct_run_ids,
         cutoff_created_at=baseline_cutoff_created_at,
         target_run_id=target_run_id,
+        attempt=attempt,
     )
     terminal = observed.terminal
     if terminal is None or terminal.outcome == "finished-without-submit":
@@ -2459,13 +2462,21 @@ def _assign_and_wake(run: _HandoffRun) -> _WorkerHandoffResult:
         except PlatformError as dispatch_error:
             resolved = run.observe_bounded()
             if resolved is not None:
+                _acknowledge_if_assigned(runtime, item_id, kind_label)
                 return resolved
             raise dispatch_error
         resolved = run.observe_bounded()
         if resolved is not None:
+            _acknowledge_if_assigned(runtime, item_id, kind_label)
             return resolved
     raise PlatformError(
         f"Worker handoff dispatch outcome is unknown for work item {item_id}")
+
+
+def _acknowledge_if_assigned(runtime: AgentRuntime, item_id: str, step: str) -> None:
+    """The assignment's own Run was observed and no wake follows: a later rerun must not be swallowed."""
+    if step == "assign":
+        apply_one(AcknowledgeAssignment(item_id), Ports(runtime=runtime))
 
 
 def _dispatch_worker_handoff_locked(
@@ -2677,6 +2688,7 @@ def _next_worker_handoff_attempt(
             if consume_business_bounce else item.bounces.worker
         ),
         terminal_observed_at=None,
+        transient_retries=0 if consume_business_bounce else intent.transient_retries + 1,
     )
 
 
@@ -3752,6 +3764,7 @@ def _collect_worker_handoff(c: _Collect, n: _Node) -> bool:
                 baseline_cutoff_created_at=(
                     n.handoff.intent.baseline_cutoff_created_at),
                 target_run_id=n.handoff.intent.target_run_id,
+                attempt=n.handoff.intent.transient_retries + 1,
             )
             if failure is None:
                 raise PlatformError(

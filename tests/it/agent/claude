@@ -8,6 +8,7 @@ events from stdout. What it *does* comes from the scenario file named by OMAC_SC
 
 steps: {"run": [argv...]}            run a command with the Run's environment ({issue} = the assigned issue id from the prompt); a non-zero exit stops the Run
        {"exit": 3}                   exit with that code now
+       {"fail": "message"}           end the Run as failed with this error text (what a provider outage looks like)
        {"hang": 60}                  sleep (a Run that never finishes)
        {"write": {"path": p, "content": s}}
 Every invocation is appended to OMAC_FAKE_LOG as one JSON line (argv, cwd, MULTICA_* env without secrets).
@@ -41,7 +42,7 @@ def main():
         attempts = json.load(open(scenario_path, encoding="utf-8")).get("attempts", [])
         steps = attempts[min(attempt, len(attempts)) - 1] if attempts else []
     emit({"type": "system", "subtype": "init", "session_id": "it", "model": "scripted"})
-    code = 0
+    code, failure = 0, None
     for step in steps:
         if "run" in step:
             argv = [part.replace("{issue}", issue) for part in step["run"]]
@@ -56,13 +57,16 @@ def main():
         elif "exit" in step:
             code = int(step["exit"])
             break
+        elif "fail" in step:
+            code, failure = 1, str(step["fail"])
+            break
         elif "hang" in step:
             time.sleep(float(step["hang"]))
         elif "write" in step:
             with open(step["write"]["path"], "w", encoding="utf-8") as fh:
                 fh.write(step["write"]["content"])
     emit({"type": "result", "subtype": "success" if code == 0 else "error_during_execution",
-          "is_error": code != 0, "result": "done", "session_id": "it", "duration_ms": 1, "num_turns": 1,
+          "is_error": code != 0, "result": failure or "done", "session_id": "it", "duration_ms": 1, "num_turns": 1,
           "total_cost_usd": 0})
     return code
 

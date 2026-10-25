@@ -15,7 +15,7 @@ from typing import Any, Callable, Iterable
 
 from ..core.manifest import Manifest, save_manifest
 from .decide_effects import (
-    AddComment, Assign, CancelRun, ClearAssignment, CreateWorkItem, DispatchReviewer, Effect,
+    AcknowledgeAssignment, AddComment, Assign, CancelRun, ClearAssignment, CreateWorkItem, DispatchReviewer, Effect,
     NormalizeConfirmedMerge, Plan, PrepareReviewCycle, RequestMerge, ResetReview, SaveState,
     SetAuthoringIdentity, SetNode, SetNodeContract, UpdateMetadata, UpdateStatus, Wake, validate_plan,
 )
@@ -59,6 +59,7 @@ _RUNNERS: dict[type, Callable[[Effect, Ports, ManifestState | None], Any]] = {
         e.item_id, dag_key=e.dag_key, kind=e.kind),
     NormalizeConfirmedMerge: lambda e, p, s: p.store.normalize_confirmed_merge(e.item_id),
     Wake: lambda e, p, s: p.runtime.wake(e.item_id, e.agent, e.role),
+    AcknowledgeAssignment: lambda e, p, s: p.runtime.acknowledge_assignment(e.item_id),
     DispatchReviewer: lambda e, p, s: p.runtime.dispatch_reviewer(
         p.store, e.item_id, e.agent, **({} if e.admission is None else {"admission": e.admission})),
     CancelRun: lambda e, p, s: p.runtime.cancel(e.item_id),

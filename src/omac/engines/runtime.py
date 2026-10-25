@@ -32,6 +32,14 @@ class AgentRuntime(ABC):
         - 无法达成唤醒时抛 PlatformError,编排层据此把节点标 blocked。
         """
 
+    def acknowledge_assignment(self, item_id: str) -> None:
+        """The caller observed the Run that the last assignment started, so no wake is owed for it.
+
+        Adapters that remember "the assignment already started a Run" so the next ``wake`` only confirms it must
+        forget that here; otherwise a later ``wake`` that is meant to rerun a failed Run would be skipped.
+        The default has nothing to forget.
+        """
+
     def wake_reviewer(
         self, store: "WorkItemStore", item_id: str, agent: str, *, admission=None,
     ) -> bool:
