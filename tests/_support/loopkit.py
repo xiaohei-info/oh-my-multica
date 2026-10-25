@@ -171,7 +171,7 @@ class Kit:
             state["calls"] += 1
             if state["calls"] != nth:
                 return original(*args, **kw)
-            state["fired"] = True
+            state["fired"], state["args"], state["kwargs"] = True, args, kw
             failure = error or PlatformError(f"injected timeout in {name}")
             if when == "before":
                 raise failure
