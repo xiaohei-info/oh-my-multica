@@ -5,7 +5,7 @@
 2. build_status_report 内容断言:mixed 状态节点、reconcile 同步、needs_decision
 3. CLI dag status:退出码恒 0、table/json 输出、--output json 可解析
 """
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import json
 import os
 from types import SimpleNamespace
@@ -19,7 +19,7 @@ from omac.cli.main import main
 from omac.engines import create_engine
 from omac.engines.models import EngineConfig
 from omac.core.workitem import WorkItemStatus
-from omac.engines.mock import MockStore, MockRuntime
+from _support.fake_platform import MockStore, MockRuntime
 from omac.core.manifest import load_manifest, save_manifest, Node, Manifest
 from omac.pipeline.loop import reconcile
 from omac.pipeline.report import (

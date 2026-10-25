@@ -68,9 +68,9 @@ class AgentInfo:
 @dataclass
 class EngineConfig:
     """引擎配置。角色映射在 omac 侧(config.yaml),这里只有平台定位与轮询参数。"""
-    engine_type: str            # 'multica' | 'mock'
+    engine_type: str            # 'multica'
     workspace_id: str
-    project_id: Optional[str] = None   # multica 必填(issue 归入该 project);mock 忽略
+    project_id: Optional[str] = None   # multica 必填(issue 归入该 project)
     polling_interval: int = 30
     polling_interval_min: int = 10
     polling_interval_max: int = 300

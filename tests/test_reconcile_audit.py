@@ -12,7 +12,7 @@ from omac.errors import PlatformError, ValidationError
 from omac.cli.commands import dag as dag_cmd
 from omac.pipeline import loop, reconcile_audit
 from omac.pipeline.loop import TickResult, tick
-from omac.engines.mock import MockCodeHost, MockRuntime, MockStore
+from _support.fake_platform import MockCodeHost, MockRuntime, MockStore
 from omac.engines.models import EngineConfig
 from omac.core.workitem import WorkItemStatus
 

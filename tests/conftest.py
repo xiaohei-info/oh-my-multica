@@ -7,6 +7,9 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from _support import budget  # noqa: E402
+from _support import fake_platform  # noqa: E402
+
+fake_platform.install()  # before test modules do `from omac.engines import create_engine`
 
 _session_tmp_bytes = 0
 
@@ -43,11 +46,26 @@ def pytest_runtest_call(item):
     yield
 
 
+@pytest.fixture(scope="session")
+def _gh_stub_dir(tmp_path_factory):
+    """Unit tests never reach a real GitHub: any `gh` the product runs is a no-op that succeeds."""
+    directory = tmp_path_factory.mktemp("gh-stub")
+    stub = directory / "gh"
+    stub.write_text("#!/bin/sh\nexit 0\n")
+    stub.chmod(0o755)
+    return directory
+
+
+@pytest.fixture(autouse=True)
+def _no_real_gh(_gh_stub_dir, monkeypatch, request):
+    if "tests/it" not in str(request.fspath):
+        monkeypatch.setenv("PATH", f"{_gh_stub_dir}{os.pathsep}{os.environ['PATH']}")
+
+
 @pytest.fixture(autouse=True)
 def _reset_mock_state():
     """每个测试前重置 MockStore 的模块级共享状态,保证隔离。"""
-    from omac.engines.mock import MockStore
-    MockStore.reset()
+    fake_platform.MockStore.reset()
     # 测试默认 0 延迟:auto-complete 在首次 wake 即收敛,避免真实等待。
     # 通过 env 传播到所有 in-process main() MockStore 实例
     # (MockStore.__init__ 会按 config.extra 重设全局 delay,而 extra 取自 env)。

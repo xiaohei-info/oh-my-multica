@@ -1,4 +1,8 @@
-"""Mock 引擎 — 内存模拟,撑起全部测试与 CI(现有资产平移,按双接口重组)。
+"""In-memory stand-in for the platform ports, used only by the unit tests (never shipped).
+
+Orchestration tests need a WorkItemStore / AgentRuntime / CodeHost they can drive step by step; real
+Multica behaviour is covered separately on a private Docker instance (tests/it).
+
 
 特性:数据全在内存(模块级共享,CLI 与测试共用同一份);
 assign 后按延迟自动模拟完成/失败/评审通过,
@@ -17,18 +21,18 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import yaml
-from ..core.machine_feedback import (
+from omac.core.machine_feedback import (
     dump_machine_feedback, parse_machine_feedback,
 )
-from ..core.taskmeta import (
+from omac.core.taskmeta import (
     DELIVERY_CONTENT_KEY, DeliveryIdentity, ReviewerRunBaseline, TaskKind,
     TaskPhase, WorkerHandoffIntent, parse_delivery_identity,
     parse_reviewer_run_baseline, parse_worker_handoff, current_review_ledger,
 )
-from ..errors import PlatformError, ValidationError, WorkItemNotFoundError
-from ..i18n import ui
-from .codehost import CodeHost
-from .models import (
+from omac.errors import PlatformError, ValidationError, WorkItemNotFoundError
+from omac.i18n import ui
+from omac.engines.codehost import CodeHost
+from omac.engines.models import (
     AgentInfo,
     AgentProvisionSpec,
     EngineConfig,
@@ -37,7 +41,7 @@ from .models import (
     RuntimeCapabilities,
     WorkspaceInfo,
 )
-from ..core.workitem import (
+from omac.core.workitem import (
     AgentRunObservation,
     MergeCommandResult,
     PullRequestCheckResult,
@@ -49,8 +53,8 @@ from ..core.workitem import (
     WorkItemControlProjection,
     WorkItemStatus,
 )
-from .runtime import AgentRuntime
-from .store import WorkItemStore
+from omac.engines.runtime import AgentRuntime
+from omac.engines.store import WorkItemStore
 
 
 # 模块级共享状态:所有 MockStore 实例共用,CLI 与测试读写同一份
@@ -188,7 +192,7 @@ def _parse_base_manifest(item):
         data = manifest_raw
     if not isinstance(data, dict):
         return None
-    from ..core.manifest import Manifest, Node
+    from omac.core.manifest import Manifest, Node
     nodes = {}
     for n in data.get("nodes", []):
         if not isinstance(n, dict) or "id" not in n:
@@ -213,7 +217,7 @@ class MockStore(WorkItemStore):
         # 实例创建时刷新全局行为设置(以最后一次创建为准)。
         # config.extra 可能为 None:见于 dag.py 在无额外 OMAC_* env 时传 None,
         # 此时沿用模块默认值(与 EngineConfig.extra 默认 factory 一致)。
-        cfg_extra = config.extra or {}
+        cfg_extra = {**{k: v for k, v in os.environ.items() if k.startswith("MOCK_")}, **(config.extra or {})}
         global _shared_auto_complete_enabled, _shared_auto_complete_delay
         global _shared_auto_merge_on_success
         global _shared_provisioned_members
@@ -388,7 +392,7 @@ class MockStore(WorkItemStore):
                 results = _accepted_results.get(item.dag_key)
                 tmp = _write_tmp_json(results)
                 try:
-                    from ..pipeline.dispatch import submit as dispatch_submit
+                    from omac.pipeline.dispatch import submit as dispatch_submit
                     dispatch_submit(self, item.id, acceptance_results_file=tmp)
                 finally:
                     _shared_work_items[item.id] = self.get_work_item(item.id)
@@ -405,7 +409,7 @@ class MockStore(WorkItemStore):
                 base = _parse_base_manifest(item)
                 tmp = _write_tmp_manifest(increment)
                 try:
-                    from ..pipeline.dispatch import submit as dispatch_submit
+                    from omac.pipeline.dispatch import submit as dispatch_submit
                     pool = set(self.list_members(self.config.workspace_id))
                     dispatch_submit(
                         self, item.id, manifest_file=tmp,
@@ -532,7 +536,7 @@ class MockStore(WorkItemStore):
                     "created_at": "2026-01-01T00:00:01Z",
                 }
             if item.review_obligations:
-                from ..core.review_convergence import advance_review_ledger
+                from omac.core.review_convergence import advance_review_ledger
                 item.review_ledger = advance_review_ledger(
                     current_review_ledger(item),
                     item.review_report,
@@ -550,8 +554,8 @@ class MockStore(WorkItemStore):
             del _shared_assigned_items[item_id]
 
     def _mock_verification(self, item_id: str) -> Optional[Dict[str, Any]]:
-        from ..core.manifest import Contract as _Contract
-        from ..core.acceptance_responsibility import evidence_targets
+        from omac.core.manifest import Contract as _Contract
+        from omac.core.acceptance_responsibility import evidence_targets
 
         contract = _shared_contracts_by_item_id.get(item_id)
         if contract is None or not isinstance(contract, _Contract):
@@ -600,9 +604,9 @@ class MockStore(WorkItemStore):
     def _mock_review_report(
         self, item_id: str, verdict: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        from ..core.acceptance_responsibility import evidence_targets
-        from ..core.manifest import Contract as _Contract
-        from ..core.review_convergence import (
+        from omac.core.acceptance_responsibility import evidence_targets
+        from omac.core.manifest import Contract as _Contract
+        from omac.core.review_convergence import (
             REVIEW_PROTOCOL_VERSION, open_blockers)
 
         contract = _shared_contracts_by_item_id.get(item_id)
@@ -1016,7 +1020,7 @@ class MockStore(WorkItemStore):
         if worker_handoff is not None and item.worker_handoff != worker_handoff:
             raise PlatformError("Authoring recovery intent changed before retirement")
         item.contract = contract
-        from ..core.manifest import _dump_contract
+        from omac.core.manifest import _dump_contract
         payload = _dump_contract(contract) if not isinstance(contract, dict) else contract
         source = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
         item.contract_ref = {
@@ -1061,7 +1065,7 @@ class MockStore(WorkItemStore):
         item = _shared_work_items.get(item_id)
         if item is not None:
             item.contract = contract
-            from ..core.manifest import _dump_contract
+            from omac.core.manifest import _dump_contract
             payload = _dump_contract(contract) if not isinstance(contract, dict) else contract
             source = yaml.safe_dump(
                 payload, sort_keys=False, allow_unicode=True)
@@ -1327,7 +1331,7 @@ class MockRuntime(AgentRuntime):
         self, store, item_id: str, agent: str, *, admission=None,
     ) -> bool:
         """Create the mock Run at the guarded wake boundary before callbacks."""
-        from .store import reviewer_dispatch_stopped
+        from omac.engines.store import reviewer_dispatch_stopped
 
         with store.reviewer_dispatch_lock(item_id):
             current = store.observe_work_item_control(item_id).work_item
@@ -1376,7 +1380,7 @@ class MockRuntime(AgentRuntime):
             item.platform_assignee_id = agent_id
             _shared_active_assignments[item_id] = (agent, role)
         if role == "reviewer":
-            from .store import reviewer_dispatch_stopped
+            from omac.engines.store import reviewer_dispatch_stopped
             if reviewer_dispatch_stopped(
                 self._store.observe_work_item_control(item_id).work_item):
                 return None
@@ -1419,3 +1423,41 @@ class MockRuntime(AgentRuntime):
         return ui(
             "mock: assign starts automatic completion; wake is a confirming no-op",
             "mock: assign 即启动自动完成模拟,wake 为确认性 no-op")
+
+
+# ==================== the test seam: `engine: mock` exists only while tests run ====================
+
+def fake_engine(config: EngineConfig):
+    """An Engine of in-memory ports, with the failure/acceptance scripts tests pass through OMAC_MOCK_* env."""
+    from omac.engines import Engine
+    store = MockStore(config)
+    fail_keys = os.environ.get("OMAC_MOCK_FAIL_KEYS")
+    if fail_keys:
+        store.set_fail_keys({k.strip() for k in fail_keys.split(",") if k.strip()})
+    accepted, increments = os.environ.get("OMAC_MOCK_ACCEPTED"), os.environ.get("OMAC_MOCK_INCREMENTS")
+    if accepted or increments:
+        from omac.core.manifest import Manifest, Node
+        scripted = {
+            key: Manifest(meta=payload.get("meta", {}), nodes={
+                n["id"]: Node(id=n["id"], worker=n["worker"], blocked_by=list(n.get("blocked_by", [])))
+                for n in payload.get("nodes", [])})
+            for key, payload in (json.loads(increments) if increments else {}).items()}
+        store.set_acceptance_behaviors(json.loads(accepted) if accepted else {}, scripted)
+    return Engine(store=store, runtime=MockRuntime(store), code_host=MockCodeHost())
+
+
+def install() -> None:
+    """Make `omac.engines` accept `engine: mock` for this test process (called once from tests/conftest.py)."""
+    import omac.engines as engines
+    real_create = engines.create_engine
+    real_code_host = engines.code_host_for
+
+    def create_engine(engine_type, config):
+        return fake_engine(config) if engine_type == "mock" else real_create(engine_type, config)
+
+    def code_host_for(engine_type):
+        return MockCodeHost() if engine_type == "mock" else real_code_host(engine_type)
+
+    engines.create_engine = create_engine
+    engines.code_host_for = code_host_for
+    engines.ENGINE_TYPES = (*engines.ENGINE_TYPES, "mock")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import copy
 from dataclasses import replace
 import hashlib
@@ -39,7 +39,7 @@ from omac.core.workitem import (
     WorkItemPayload,
     WorkItemStatus,
 )
-from omac.engines.mock import MockRuntime, MockStore
+from _support.fake_platform import MockRuntime, MockStore
 from omac.engines.multica import MulticaStore
 from omac.errors import AuthError, PlatformError, WorkItemNotFoundError
 from omac.pipeline import loop

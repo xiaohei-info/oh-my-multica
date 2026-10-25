@@ -14,11 +14,11 @@
 """
 from __future__ import annotations
 
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import pytest
 
 from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
-from omac.engines.mock import MockStore
+from _support.fake_platform import MockStore
 from omac.engines.models import EngineConfig
 from omac.core.workitem import WorkItemStatus
 from omac.pipeline import loop

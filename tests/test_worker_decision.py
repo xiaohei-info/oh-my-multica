@@ -5,7 +5,7 @@ from dataclasses import replace
 from unittest.mock import Mock
 from contextlib import nullcontext
 
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import pytest
 import yaml
 

@@ -13,7 +13,7 @@ config.retry)实现评审 reject 回退,因此本模块只补 CI 门(advance_del
 """
 from __future__ import annotations
 
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import os
 import stat
 import pytest
@@ -24,7 +24,7 @@ from omac.core.manifest import Manifest, Node
 from omac.core.config import DEFAULT_RETRY
 from omac.engines.models import EngineConfig
 from omac.core.workitem import WorkItemStatus
-from omac.engines.mock import MockRuntime, MockStore
+from _support.fake_platform import MockRuntime, MockStore
 from omac.pipeline.delivery import (
     MANIFEST_TO_PLATFORM_STATUS,
     VALID_MANIFEST_STATUSES,

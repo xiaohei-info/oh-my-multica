@@ -18,7 +18,6 @@ PLATFORM_CLIS = {"multica", "gh", "curl"}  # adapters only; "curl" is the multic
 SUBPROCESS_ALLOWED = {
     "src/omac/engines/multica.py",
     "src/omac/engines/github.py",
-    "src/omac/engines/mock.py",  # removed with mock in Phase 8
     "src/omac/core/gitsync.py",
     "src/omac/core/repository_files.py",
     "src/omac/core/review_preflight.py",

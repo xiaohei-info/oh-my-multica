@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from omac.core.review_preflight import run_plan_preflight, run_review_preflight
 from omac.core.taskmeta import TaskKind
 from omac.engines import create_engine
-from omac.engines.mock import MockStore
+from _support.fake_platform import MockStore
 from omac.engines.models import EngineConfig
 from omac.pipeline.tasks import run_task
 

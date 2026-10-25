@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import json
 from unittest.mock import Mock
 

@@ -4,7 +4,7 @@
 - config.yaml 必须已 push 到 main,否则 agent 读不到 → 派单前自动同步(ensure_config_synced)
 - manifest 是编排器状态,跨机 resume 靠它 → tick 后回写(commit_manifest)
 
-开关:真实引擎(multica)默认开(架构要求);mock 本地跑默认关(不碰业务仓库);
+开关:真实引擎(multica)默认开(架构要求);非 multica 引擎默认关(不碰业务仓库);
 OMAC_GIT_SYNC 显式覆盖(truthy 强开 / falsy 强关)。
 """
 import os
@@ -31,7 +31,7 @@ def sync_enabled(engine_type=None) -> bool:
     """是否把 .omac 状态回写 git。
 
     OMAC_GIT_SYNC 显式覆盖优先;未设时默认按引擎:multica 需要(隔离区 agent +
-    跨机编排都靠 main 上的 .omac),mock 不需要。
+    跨机编排都靠 main 上的 .omac),其他引擎不需要。
     """
     env = os.environ.get("OMAC_GIT_SYNC", "").strip().lower()
     if env in _TRUTHY:
@@ -244,7 +244,7 @@ def ensure_config_synced(config_path: str, branch: str = "main",
     - config 不存在 → 引导 `omac init`
     - push 被远程拒(分叉/无 upstream)→ 引导用户手动 pull/rebase 后重试
 
-    sync 关闭(mock 本地跑)时完全 no-op,不碰业务仓库 git。
+    sync 关闭时完全 no-op,不碰业务仓库 git。
     """
     if not sync_enabled(engine_type):
         return

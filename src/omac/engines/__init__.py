@@ -27,7 +27,7 @@ from .codehost import CodeHost
 from .runtime import AgentRuntime
 from .store import WorkItemStore
 
-ENGINE_TYPES = ("multica", "mock")
+ENGINE_TYPES = ("multica",)
 
 
 @dataclass
@@ -38,32 +38,32 @@ class Engine:
     code_host: CodeHost
 
 
+def _unknown_engine(engine_type: str) -> ValidationError:
+    removed = ui(
+        " The built-in `mock` engine was removed in 2.0; run against a Multica workspace "
+        "(tests use a private Docker Multica, see tests/it).",
+        " 内置的 `mock` 引擎已在 2.0 删除;请连接 Multica 工作区(测试使用私有 Docker Multica,见 tests/it)。",
+    ) if engine_type == "mock" else ""
+    return ValidationError(ui(
+        f"Unknown engine type '{engine_type}'. Available: {', '.join(ENGINE_TYPES)}.{removed}",
+        f"未知引擎类型 '{engine_type}',可选: {', '.join(ENGINE_TYPES)}。{removed}"))
+
+
 def code_host_for(engine_type: str) -> CodeHost:
     """The code-host adapter that belongs with a work-item engine type."""
-    if engine_type == "mock":
-        from .mock import MockCodeHost
-        return MockCodeHost()
     if engine_type == "multica":
         from .github import GitHubCodeHost
         return GitHubCodeHost()
-    raise ValidationError(ui(
-        f"Unknown engine type '{engine_type}'. Available: {', '.join(ENGINE_TYPES)}",
-        f"未知引擎类型 '{engine_type}',可选: {', '.join(ENGINE_TYPES)}"))
+    raise _unknown_engine(engine_type)
 
 
 def create_engine(engine_type: str, config: EngineConfig) -> Engine:
     """按类型装配 Engine。未知类型报 ValidationError(报错即教学)。"""
-    if engine_type == "mock":
-        from .mock import MockRuntime, MockStore
-        store = MockStore(config)
-        return Engine(store=store, runtime=MockRuntime(store), code_host=code_host_for(engine_type))
     if engine_type == "multica":
         from .multica import MulticaRuntime, MulticaStore
         store = MulticaStore(config)
         return Engine(store=store, runtime=MulticaRuntime(store), code_host=code_host_for(engine_type))
-    raise ValidationError(ui(
-        f"Unknown engine type '{engine_type}'. Available: {', '.join(ENGINE_TYPES)}",
-        f"未知引擎类型 '{engine_type}',可选: {', '.join(ENGINE_TYPES)}"))
+    raise _unknown_engine(engine_type)
 
 
 def engine_from_config(
@@ -73,13 +73,11 @@ def engine_from_config(
     workspace: str | None = None,
     project: str | None = None,
     engine_extra: Mapping[str, Any] | None = None,
-    default_extra: Mapping[str, Any] | None = None,
     workspace_optional: bool = False,
 ) -> Engine:
     """The one way the CLI assembles an engine: config.yaml < OMAC_* env < explicit arguments.
 
     ``workspace_optional`` serves `omac init`, which lists workspaces before one is chosen.
-    ``default_extra`` is used only when neither config nor environment supplied any extra settings.
     """
     if workspace_optional:
         engine_type = engine or os.environ.get(ENV_ENGINE) or config.get("engine")
@@ -93,13 +91,10 @@ def engine_from_config(
     if config.get("workspace_slug"):
         extra["workspace_slug"] = config["workspace_slug"]
     extra.update(engine_extra or {})
-    # MOCK_* passthrough disappears together with the mock engine (Phase 8).
-    extra.update({k: v for k, v in os.environ.items()
-                  if k.startswith(("OMAC_", "MOCK_")) and k not in (ENV_ENGINE, ENV_WORKSPACE)})
     return create_engine(engine_type, EngineConfig(
         engine_type=engine_type, workspace_id=workspace_id, project_id=project_id,
         polling_interval=(config.get("defaults") or {}).get("poll_interval", DEFAULTS["poll_interval"]),
-        extra=extra or dict(default_extra or {})))
+        extra=extra or None))
 
 
 __all__ = [

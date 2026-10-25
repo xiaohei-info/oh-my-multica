@@ -1,4 +1,4 @@
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 """cli.node: show / retry / abandon —— exit 20 后的显式决策工具(§7.5)。"""
 from copy import deepcopy
 import hashlib

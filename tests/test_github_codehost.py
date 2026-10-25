@@ -49,6 +49,7 @@ def test_github_observe_pull_request_classifies_remote_states(
     assert "isInMergeQueue" not in calls[0][0][-1]
 
 
+@pytest.mark.live  # needs the real gh CLI (unit tests put a no-op gh first on PATH)
 def test_github_pr_view_fields_are_supported_by_local_gh():
     if shutil.which("gh") is None:
         pytest.skip("gh is not installed")

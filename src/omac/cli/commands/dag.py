@@ -105,7 +105,7 @@ def register(parser):
     check = sub.add_parser("check", help="lint + review 一份现成 manifest")
     check.add_argument("manifest", help="manifest 文件路径")
     check.add_argument("--no-review", action="store_true", help="跳过 manifest review 阶段(仅 lint)")
-    check.add_argument("--engine", help="引擎类型(multica|mock),缺省按 config.yaml / 环境变量 OMAC_ENGINE")
+    check.add_argument("--engine", help="引擎类型(multica),缺省按 config.yaml / 环境变量 OMAC_ENGINE")
     check.add_argument("--workspace", help="工作空间 id,缺省按 config.yaml / 环境变量 OMAC_WORKSPACE_ID")
     add_output_flag(check)
 
@@ -229,30 +229,6 @@ def _assemble_engine(args):
         engine=getattr(args, "engine", None),
         workspace=getattr(args, "workspace", None),
         project=getattr(args, "project", None))
-
-    # 测试钩子:OMAC_MOCK_FAIL_KEYS 注入失败节点(逗号分隔 dag_key)。
-    # mock 引擎下可驱动失败场景;真实引擎忽略(set_fail_keys 不存在)。
-    fail_keys = os.environ.get("OMAC_MOCK_FAIL_KEYS")
-    if fail_keys and hasattr(engine.store, "set_fail_keys"):
-        engine.store.set_fail_keys({k.strip() for k in fail_keys.split(",") if k.strip()})
-
-    # 测试钩子:OMAC_MOCK_ACCEPTED / OMAC_MOCK_INCREMENTS 驱动总控验收行为(JSON).
-    # OMAC_MOCK_ACCEPTED={"final-acceptance-r1":[{"id":"f1","status":"pass"}]}
-    # OMAC_MOCK_INCREMENTS={"decompose-r1":{"nodes":[{"id":"fix-f1","worker":"alice","blocked_by":["b"]}]}}
-    import json as _json
-    accepted = os.environ.get("OMAC_MOCK_ACCEPTED")
-    increments = os.environ.get("OMAC_MOCK_INCREMENTS")
-    if (accepted or increments) and hasattr(engine.store, "set_acceptance_behaviors"):
-        acc = _json.loads(accepted) if accepted else {}
-        inc_raw = _json.loads(increments) if increments else {}
-        inc = {}
-        for dk, payload in inc_raw.items():
-            from omac.core.manifest import Manifest, Node
-            nodes = {n["id"]: Node(id=n["id"], worker=n["worker"],
-                                     blocked_by=list(n.get("blocked_by", [])))
-                     for n in payload.get("nodes", [])}
-            inc[dk] = Manifest(meta=payload.get("meta", {}), nodes=nodes)
-        engine.store.set_acceptance_behaviors(acc, inc)
 
     return engine, engine.store.config
 

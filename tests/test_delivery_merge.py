@@ -20,7 +20,7 @@ config.retry.merge + reset_review)门,本模块补 reviewer pass 后的自动 me
 """
 from __future__ import annotations
 
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import os
 import stat
 from types import SimpleNamespace
@@ -31,7 +31,6 @@ from _support.sealing import seal_mock_delivery
 
 from omac.core.config import (
     DEFAULT_GITHUB_MERGE_COMMAND,
-    DEFAULT_MOCK_MERGE_COMMAND,
     DEFAULT_RETRY,
     get_merge_config,
     resolve_retry,
@@ -41,7 +40,7 @@ from omac.core.review_convergence import (
     REVIEW_PROTOCOL_VERSION, open_blockers, review_subject_digest,
 )
 from omac.core.taskmeta import TaskPhase
-from omac.engines.mock import MockRuntime, MockStore
+from _support.fake_platform import MockRuntime, MockStore
 from omac.engines.models import EngineConfig
 from omac.core.workitem import WorkItem, WorkItemStatus
 from omac.errors import AuthError, PlatformError
@@ -159,12 +158,6 @@ class TestMergeConfig:
         assert get_merge_config({"merge": {}}) == expected
         assert get_merge_config({"merge": {"command": ""}}) == expected
 
-    def test_get_merge_config_defaults_to_local_success_for_mock_engine(self):
-        assert get_merge_config({"engine": "mock"}) == {
-            "command": DEFAULT_MOCK_MERGE_COMMAND,
-            "timeout_minutes": 30,
-        }
-
     def test_get_merge_config_present(self):
         cfg = {"merge": {"command": "gh pr merge {pr_url} --squash"}}
         assert get_merge_config(cfg) == cfg["merge"]
@@ -200,7 +193,7 @@ class TestRunMergeDeliveryUnit:
 
             return Proc()
 
-        monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
+        monkeypatch.setattr("_support.fake_platform.subprocess.run", fake_run)
 
         path = _saved_manifest(tmp_path, manifest)
         assert run_merge_delivery({}, manifest, "a", store, _runtime(store),
@@ -228,7 +221,7 @@ class TestRunMergeDeliveryUnit:
 
             return Proc()
 
-        monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
+        monkeypatch.setattr("_support.fake_platform.subprocess.run", fake_run)
 
         path = _saved_manifest(tmp_path, manifest)
         assert run_merge_delivery(
@@ -391,7 +384,7 @@ class TestCollectResultsMerge:
 
             return Proc()
 
-        monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
+        monkeypatch.setattr("_support.fake_platform.subprocess.run", fake_run)
 
         loop.collect_results(store, rt, MockCodeHost(), manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config={})
@@ -726,7 +719,7 @@ class TestMergeClosureRegression:
 
             return Proc()
 
-        monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
+        monkeypatch.setattr("_support.fake_platform.subprocess.run", fake_run)
 
     def test_no_reviewer_node_cannot_be_done_without_confirmed_merge(self, tmp_path):
         code_host = MockCodeHost()

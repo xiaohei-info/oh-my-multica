@@ -8,7 +8,7 @@
 - 不存在任何自动重试路径(blocked 节点在后续 tick 保持 blocked)
 """
 from copy import deepcopy
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import os
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -36,7 +36,7 @@ from omac.core.review_convergence import (
     open_blockers, review_convergence_decision, review_subject_digest,
 )
 from omac.engines import create_engine
-from omac.engines.mock import MockRuntime, MockStore
+from _support.fake_platform import MockRuntime, MockStore
 from omac.core.taskmeta import (
     MACHINE_FEEDBACK_REF_KEY,
     REVIEW_REPORT_REF_KEY,
@@ -80,7 +80,7 @@ def _default_gh_merge_succeeds_in_loop_tests(monkeypatch):
             return Proc()
         return real_run(command, *args, **kwargs)
 
-    monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
+    monkeypatch.setattr("_support.fake_platform.subprocess.run", fake_run)
 
 
 def _config(**extra):
@@ -2614,7 +2614,7 @@ def test_worker_transient_count_excludes_handoff_baseline_history(
 def _reviewer_runtime_failure_fixture(tmp_path):
     import hashlib
 
-    from omac.engines import mock as mock_engine
+    from _support import fake_platform as mock_engine
 
     eng = _engine(MOCK_AUTO_COMPLETE="false")
     contract = _contract()
@@ -3632,7 +3632,7 @@ def test_pending_review_with_existing_decision_fails_closed(
     tmp_path, monkeypatch,
 ):
     """review-convergence decision must block before pending Reviewer dispatch."""
-    from omac.engines import mock as mock_engine
+    from _support import fake_platform as mock_engine
 
     eng, manifest, path, item, _reviewer_id = (
         _reviewer_runtime_failure_fixture(tmp_path))
@@ -3724,7 +3724,7 @@ def test_reviewer_dispatch_rechecks_control_before_final_assignment(
     tmp_path, monkeypatch,
 ):
     """A decision appearing during handoff blocks before assign or wake."""
-    from omac.engines import mock as mock_engine
+    from _support import fake_platform as mock_engine
 
     eng, manifest, _path, item, _reviewer_id = (
         _reviewer_runtime_failure_fixture(tmp_path))
@@ -3774,7 +3774,7 @@ def test_reviewer_pending_review_rechecks_control_before_dispatch(
     tmp_path, monkeypatch,
 ):
     """in_progress/pending_review cannot dispatch after a late decision."""
-    from omac.engines import mock as mock_engine
+    from _support import fake_platform as mock_engine
 
     eng, manifest, path, item, _reviewer_id = (
         _reviewer_runtime_failure_fixture(tmp_path))
@@ -3935,7 +3935,7 @@ def test_initial_develop_reviewer_handoff_assigns_without_starting_run(
         verification=verification,
         verification_source=yaml.safe_dump(verification),
     )
-    from omac.engines import mock as mock_engine
+    from _support import fake_platform as mock_engine
     mock_engine._finish_mock_run(item.id)
     eng.store.update_status(item.id, WorkItemStatus.DONE)
     original_assign = eng.store.assign_work_item
@@ -4021,7 +4021,7 @@ def test_reviewer_dispatch_new_baseline_is_dispatched_then_existing_baseline_is_
 def test_initial_reviewer_dispatch_crash_after_assignment_fails_closed(
     tmp_path, monkeypatch,
 ):
-    from omac.engines import mock as mock_engine
+    from _support import fake_platform as mock_engine
 
     eng, manifest, _path, item, _reviewer_id = (
         _reviewer_runtime_failure_fixture(tmp_path))
@@ -4071,7 +4071,7 @@ def test_initial_reviewer_dispatch_crash_after_assignment_fails_closed(
 def test_initial_reviewer_dispatch_recovery_requires_formal_dispatch(
     tmp_path, monkeypatch, trigger_kind, accepted,
 ):
-    from omac.engines import mock as mock_engine
+    from _support import fake_platform as mock_engine
 
     eng, manifest, _path, item, reviewer_id = (
         _reviewer_runtime_failure_fixture(tmp_path))
@@ -5103,7 +5103,7 @@ class TestFailureInjection:
     def test_provisional_reviewer_completion_is_collected_after_restoration(
         self, tmp_path, monkeypatch,
     ):
-        from omac.engines import mock as mock_engine
+        from _support import fake_platform as mock_engine
 
         (
             eng, manifest, path, item, reviewer_id, runs, target_run_id,
@@ -5396,7 +5396,7 @@ class TestFailureInjection:
     def test_recovered_active_reviewer_completion_preserves_rework_context(
         self, tmp_path, verdict,
     ):
-        from omac.engines import mock as mock_engine
+        from _support import fake_platform as mock_engine
 
         eng, manifest, path, item, _reviewer_id = (
             _reviewer_runtime_failure_fixture(tmp_path)
@@ -6821,7 +6821,7 @@ class TestReviewerRejectBoundedFallback:
         # contract/generation drift must not resurrect it.
         from omac.cli.commands.node import _operator_retry_feedback
         assert _operator_retry_feedback(current, intent)["verdict"] == "reject"
-        from omac.engines.mock import _finish_mock_run
+        from _support.fake_platform import _finish_mock_run
         _finish_mock_run(item.id)
         next_intent = loop._next_worker_handoff_attempt(eng.store, eng.runtime, current)
         assert _previous_review_context(replace(current, worker_handoff=next_intent)) == previous
@@ -6851,7 +6851,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         code_host = MockCodeHost()
         from omac.core.stage_recovery import prepare_stage_recovery
-        from omac.engines.mock import _finish_mock_run
+        from _support.fake_platform import _finish_mock_run
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -6905,7 +6905,7 @@ class TestReviewerRejectBoundedFallback:
     def test_unchanged_rejected_head_does_not_dispatch_reviewer(
             self, tmp_path, monkeypatch):
         """A fresh verification on a rejected head returns to Worker, not Reviewer."""
-        from omac.engines.mock import _finish_mock_run
+        from _support.fake_platform import _finish_mock_run
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
         path = str(tmp_path / "m.yaml")
@@ -8875,7 +8875,7 @@ class TestReviewerRejectBoundedFallback:
             nonlocal worker_assignments
             result = original_assign(item_id, assignee, role, **kwargs)
             if role == "worker":
-                from omac.engines.mock import _finish_mock_run
+                from _support.fake_platform import _finish_mock_run
                 worker_assignments += 1
                 self._submit_revision(eng, item, revision=2)
                 _finish_mock_run(item_id)
@@ -9338,7 +9338,7 @@ class TestReviewerRejectBoundedFallback:
     ):
         """assign 响应未知后只读收割已完成 target Run，不重复 wake。"""
         from omac.engines import create_engine
-        from omac.engines.mock import _finish_mock_run
+        from _support.fake_platform import _finish_mock_run
         from omac.errors import PlatformError
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))

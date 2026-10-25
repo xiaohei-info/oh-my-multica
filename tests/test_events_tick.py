@@ -2,7 +2,7 @@
 node_failed / cascade_blocked / needs_decision。capture_logs 断言,不看渲染。"""
 from __future__ import annotations
 
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import os
 import tempfile
 

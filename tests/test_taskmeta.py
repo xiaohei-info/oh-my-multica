@@ -19,7 +19,7 @@ from omac.core.taskmeta import (
 )
 from omac.engines.metadata_policy import assert_metadata_write_allowed
 from omac.engines.models import EngineConfig
-from omac.engines.mock import MockStore
+from _support.fake_platform import MockStore
 from omac.engines.multica import MulticaStore
 
 

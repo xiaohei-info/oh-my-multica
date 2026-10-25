@@ -66,7 +66,6 @@ markers = [
     "integration: multi-component workflows (real git, local HTTP, subprocesses); included by default.",
     "live: tests that hit a real platform (Multica/GitHub). Skipped by default in CI; run locally with `-m live`.",
     "docker: integration tests on a private Docker Multica (tests/it); 30 s / 500 MB budget, Docker required, never skipped.",
-    "e2e: CLI 子进程级端到端验收(mock 引擎)。稳定回归护栏,无 sleep 竞态(mock delay=0)。",
 ]
 
 [tool.importlinter]
@@ -80,9 +79,7 @@ layers = ["omac.web", "omac.cli", "omac.pipeline", "omac.engines", "omac.core", 
 ignore_imports = [
     # Permanent exception: `omac web` is the launcher of the web surface.
     "omac.cli.commands.web -> omac.web.server",
-    # ---- Baseline: may only shrink; delete a line when its import is removed ----
-    # Phase 8 (mock removal)
-    "omac.engines.mock -> omac.pipeline.dispatch",
+    # ---- Baseline (may only shrink): empty ----
 ]
 
 [[tool.importlinter.contracts]]
@@ -90,5 +87,5 @@ id = "adapters-via-factory"
 name = "Concrete engine adapters are assembled only by the omac.engines factory"
 type = "forbidden"
 source_modules = ["omac.web", "omac.cli", "omac.pipeline", "omac.core"]
-forbidden_modules = ["omac.engines.multica", "omac.engines.mock", "omac.engines.github"]
+forbidden_modules = ["omac.engines.multica", "omac.engines.github"]
 allow_indirect_imports = true

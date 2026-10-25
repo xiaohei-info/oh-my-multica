@@ -3,7 +3,7 @@
 from dataclasses import replace
 from unittest.mock import Mock
 
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import pytest
 
 from omac.core.manifest import Manifest, Node, _load_contract

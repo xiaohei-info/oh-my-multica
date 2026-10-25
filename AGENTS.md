@@ -13,7 +13,7 @@ CI-enforced when that phase of the remediation plan lands.
 | `src/omac/web/` | Read-only web surface. |
 | `src/omac/cli/` | CLI surface and composition root (argument parsing, engine assembly, exit codes). |
 | `src/omac/pipeline/` | Deterministic Loop: reconcile, result collection, gates, dispatch, delivery, acceptance. |
-| `src/omac/engines/` | Ports (`store.py`, `runtime.py`, `models.py`) and adapters (`multica.py`, `mock.py`); `create_engine` is the only factory. |
+| `src/omac/engines/` | Ports (`store.py`, `runtime.py`, `models.py`) and adapters (`multica.py`, `github.py`); `create_engine` is the only factory. |
 | `src/omac/core/` | Domain model, manifest I/O, validation, Git state sync. |
 | `src/omac/guide/`, `src/omac/agents/` | Packaged, machine-consumed guides and Agent templates. |
 | `scripts/check_release.py` | Release metadata check used by `release.yml`. |
@@ -24,7 +24,7 @@ CI-enforced when that phase of the remediation plan lands.
 ### 1. Platform boundary
 
 `multica`, `gh`, and any other platform CLI are executed only inside engine
-adapters (`src/omac/engines/multica.py`, `mock.py`). Code in `pipeline`, `core`,
+adapters (`src/omac/engines/multica.py`, `github.py`). Code in `pipeline`, `core`,
 `cli`, and `web` must not execute them, and must not depend on their command
 syntax or on Agent runtime transcript formats (for example, by matching
 `["multica", "issue", ...]` in session logs). If a fact is needed, add a semantic
@@ -45,7 +45,7 @@ Dependency direction is strictly downward:
 
 - Function-level (lazy) imports count. A lazy import is never a way around a
   layering problem; move the code to the right layer instead.
-- Concrete adapters (`engines.multica`, `engines.mock`) are imported only by
+- Concrete adapters (`engines.multica`, `engines.github`) are imported only by
   `engines.create_engine`. The CLI assembles engines through one helper; do not
   add another assembly path.
 - The only permanent exception is the `omac web` command starting

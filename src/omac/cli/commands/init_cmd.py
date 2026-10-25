@@ -245,7 +245,7 @@ def _create_project_interactive(store, workspace: str, language: str = CN) -> st
 
 def _select_project(args, store, workspace: str, engine: str,
                     language: str = CN) -> Optional[str]:
-    """multica 必须绑定一个 project(issue 归入其下,不裸建);mock 不需要,返回 None。"""
+    """multica 必须绑定一个 project(issue 归入其下,不裸建)。"""
     if engine != "multica":
         return None
     if args.project:
@@ -584,7 +584,7 @@ def _run_setup(args) -> int:
     engine_instance = _build_engine(engine, workspace)
     store = engine_instance.store                         # 带 workspace,跑 list_members / list_projects
     project = _select_project(
-        args, store, workspace, engine, language)  # multica 必选/必建;mock 返回 None
+        args, store, workspace, engine, language)  # multica 必选/必建
     existing_members = store.list_members(workspace)
     if not non_interactive:
         print(_copy("\nExisting Agents:", "\n当前已有 Agent:"))

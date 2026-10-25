@@ -89,7 +89,7 @@ def _reviewers(config: dict) -> List[str]:
 
 
 def _poll_no_op() -> None:
-    """测试用 poll:不 sleep(配合 mock delay=0)."""
+    """测试用 poll:不 sleep。"""
     pass
 
 
@@ -474,7 +474,7 @@ def _read_acceptance_results(store: WorkItemStore, item_id: str) -> List[Dict[st
     """读回 final-acceptance 任务的 acceptance_results。
 
     真实 work submit 路径把 acceptance-results 文件文本写到 item.deliverable,
-    这里解析 JSON/YAML 文本还原为结果列表(兼容旧 mock 直接挂 list/dict)。
+    这里解析 JSON/YAML 文本还原为结果列表(兼容测试替身直接挂 list/dict)。
     """
     item = store.get_work_item(item_id)
     deliverable = getattr(item, "deliverable", None)

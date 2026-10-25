@@ -5,7 +5,7 @@
   - 增量并入:原 done 节点复用、新节点正确依赖、manifest 落盘可续跑
   - max_rounds 耗尽路径 exit 20
 """
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import os
 import yaml
 
@@ -14,7 +14,7 @@ import pytest
 from omac.core.acceptance import load_acceptance_doc
 from omac.core.manifest import Contract, Manifest, Node, load_manifest, save_manifest
 from omac.engines import create_engine
-from omac.engines.mock import MockStore
+from _support.fake_platform import MockStore
 from omac.engines.models import EngineConfig
 from omac.core.workitem import WorkItemStatus
 from omac.errors import NeedsDecision

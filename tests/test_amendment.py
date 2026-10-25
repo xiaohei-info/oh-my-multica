@@ -1,5 +1,5 @@
 import copy
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import json
 import os
 import subprocess
@@ -44,7 +44,7 @@ from omac.core.taskmeta import (
 from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.engines import create_engine
-from omac.engines.mock import MockStore
+from _support.fake_platform import MockStore
 from omac.engines.models import EngineConfig
 from omac.core.workitem import AgentRunObservation, WorkItem, WorkItemStatus
 from omac.errors import NeedsDecision, ValidationError
@@ -4971,6 +4971,11 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, sys.argv[7])
+from _support import fake_platform  # noqa: E402
+
+fake_platform.install()
+
 import omac.pipeline.amendment as amendment_pipeline
 from omac.cli.main import main
 
@@ -5002,7 +5007,7 @@ raise SystemExit(main([
 """
     first = subprocess.Popen(
         [sys.executable, "-c", script, str(ready), str(release),
-         str(manifest_path), str(report), str(docs), str(output_file)],
+         str(manifest_path), str(report), str(docs), str(output_file), str(repo_root / "tests")],
         cwd=repo_root,
         env=env,
         stdout=subprocess.PIPE,

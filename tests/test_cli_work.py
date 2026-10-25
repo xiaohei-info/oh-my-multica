@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import json
 
 import pytest

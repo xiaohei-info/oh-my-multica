@@ -134,7 +134,7 @@ def _contract_to_dict(contract):
 def _build_engine(config: dict):
     """按 config + 环境变量装配引擎;失败返回 None(show 退化为 contract-only)。"""
     try:
-        return engine_from_config(config, default_extra={"MOCK_AUTO_COMPLETE": "false"})
+        return engine_from_config(config)
     except ValidationError:
         return None
 
@@ -568,9 +568,8 @@ def _cmd_retry(args) -> int:
                 or refreshed.decision_required
             )
         except WorkItemNotFoundError:
-            # mock 的跨进程恢复没有持久化 store；陈旧 work_item_id 与 reconcile
-            # 的“平台工单不存在”语义相同。retry 仍保留 ID 以兼容输出契约，
-            # 下一次 dag run 再由 reconcile 清空并重新建单。
+            # 平台工单已不存在(例如被删除):与 reconcile 的“平台工单不存在”语义相同。
+            # retry 仍保留 ID 以兼容输出契约,下一次 dag run 再由 reconcile 清空并重新建单。
             node.recovery_marker = False
 
     # work_item_id 保留(同一 issue 续用)。

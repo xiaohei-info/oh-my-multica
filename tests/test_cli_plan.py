@@ -17,8 +17,8 @@ import yaml
 from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.engines import create_engine
-from omac.engines.mock import MockStore
-from omac.engines.mock import MockRuntime
+from _support.fake_platform import MockStore
+from _support.fake_platform import MockRuntime
 from omac.engines.models import EngineConfig
 from omac.core.workitem import AgentRunObservation, WorkItemStatus
 

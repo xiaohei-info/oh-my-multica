@@ -4,7 +4,7 @@
 优先级:config.yaml < 环境变量(OMAC_*)< 命令行参数。
 
 结构(全部键可选,init 交互式生成):
-    engine: multica | mock
+    engine: multica
     workspace: <id>
     project: <id>                # multica 必填:issue 归入的 project(repo 在 workspace registry)
     roles:
@@ -85,7 +85,6 @@ DEFAULT_RECONCILE = {
 
 DEFAULT_GITHUB_CHECK_COMMAND = "gh pr checks {pr_url} --watch --fail-fast"
 DEFAULT_GITHUB_MERGE_COMMAND = "gh pr merge {pr_url} --squash --delete-branch"
-DEFAULT_MOCK_MERGE_COMMAND = "true"
 
 
 # 环境变量回退(设计文档 §5:全局 flag 带 env 回退)
@@ -270,7 +269,6 @@ def resolve_engine_settings(
     engine / workspace 必须有值,否则 ValidationError(报错即教学:告知三种给法)。
     project 是 **multica 引擎的必填项**(issue 必须归入一个 project,不 fallback 到
     workspace 裸建):multica 下缺 project 即 ValidationError → exit 5;
-    mock 引擎不要求 project(返回 None)。
     """
     engine_type = engine or os.environ.get(ENV_ENGINE) or config.get("engine")
     workspace_id = workspace or os.environ.get(ENV_WORKSPACE) or config.get("workspace")
@@ -336,6 +334,4 @@ def get_merge_config(config: dict) -> dict | None:
     if isinstance(merge, dict) and merge.get("command"):
         return merge
     timeout = merge.get("timeout_minutes", 30) if isinstance(merge, dict) else 30
-    command = DEFAULT_MOCK_MERGE_COMMAND if config.get("engine") == "mock" \
-        else DEFAULT_GITHUB_MERGE_COMMAND
-    return {"command": command, "timeout_minutes": timeout}
+    return {"command": DEFAULT_GITHUB_MERGE_COMMAND, "timeout_minutes": timeout}

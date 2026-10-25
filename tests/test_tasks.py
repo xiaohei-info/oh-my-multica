@@ -28,7 +28,7 @@ from omac.core.taskmeta import (
     WorkerHandoffIntent,
 )
 from omac.engines import create_engine
-from omac.engines.mock import MockStore
+from _support.fake_platform import MockStore
 from omac.engines.models import EngineConfig
 from omac.core.workitem import AgentRunObservation, WorkItem, WorkItemStatus
 from omac.engines.multica import MulticaStore

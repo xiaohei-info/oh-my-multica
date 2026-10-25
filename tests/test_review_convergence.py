@@ -1,5 +1,5 @@
 from copy import deepcopy
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import json
 from types import SimpleNamespace
 
@@ -22,7 +22,7 @@ from omac.core.review_convergence import (
     validate_review_ledger,
 )
 from omac.core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
-from omac.engines.mock import MockStore
+from _support.fake_platform import MockStore
 from omac.engines.models import EngineConfig
 from omac.core.workitem import WorkItemStatus
 from omac.errors import NeedsDecision, ValidationError

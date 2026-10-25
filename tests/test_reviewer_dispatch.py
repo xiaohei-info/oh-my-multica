@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 
 from omac.engines import create_engine
-from omac.engines.mock import MockStore
+from _support.fake_platform import MockStore
 from omac.engines.models import EngineConfig
 from omac.core.workitem import WorkItemStatus
 

@@ -20,7 +20,6 @@ body:
       label: Engine
       options:
         - multica
-        - mock
         - not sure
     validations:
       required: true

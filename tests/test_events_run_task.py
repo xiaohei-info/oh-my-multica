@@ -10,7 +10,7 @@ from omac.core import logsetup
 from omac.core.manifest import Contract
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.engines import create_engine
-from omac.engines.mock import MockStore
+from _support.fake_platform import MockStore
 from omac.engines.models import EngineConfig
 from omac.errors import NeedsDecision
 from omac.pipeline.tasks import run_task

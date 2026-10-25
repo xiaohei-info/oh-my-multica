@@ -740,7 +740,7 @@ def _parse_structured(path: str) -> Any:
 def _contract_from_item(item: WorkItem) -> Any:
     """把 work item 上的 contract 统一成 Contract 对象(若已是则透传)。
 
-    multica 落在 metadata 里,get 回的是 dict;mock 直接把 Contract 挂回 item。
+    multica 落在 metadata 里,get 回的是 dict;测试替身可能直接把 Contract 挂回 item。
     """
     from ..core.manifest import Contract as _Contract
 

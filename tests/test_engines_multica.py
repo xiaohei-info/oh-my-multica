@@ -1,5 +1,5 @@
 import hashlib
-from omac.engines.mock import MockCodeHost
+from _support.fake_platform import MockCodeHost
 import json
 from pathlib import Path
 from types import SimpleNamespace

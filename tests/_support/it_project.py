@@ -33,6 +33,14 @@ class Project:
         subprocess.run("git add -A && git commit -qm init && git push -q -u origin main", shell=True, cwd=self.work,
                        check=True, capture_output=True)
 
+    def configure(self, **updates) -> None:
+        """Merge ``updates`` (nested dicts) into .omac/config.yaml; omac commits and pushes it before dispatching."""
+        path = self.work / ".omac" / "config.yaml"
+        config = yaml.safe_load(path.read_text())
+        for key, value in updates.items():
+            config[key] = {**config.get(key, {}), **value} if isinstance(value, dict) else value
+        path.write_text(yaml.safe_dump(config))
+
     def manifest(self, name: str, nodes: list[dict]) -> str:
         path = self.work / ".omac" / f"{name}.yaml"
         save_literal(path, {"meta": {"name": name}, "nodes": nodes})

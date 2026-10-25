@@ -4,7 +4,7 @@
     cli/       命令树 / help / 退出码 / 输出层
     pipeline/  plan 流水线 / dag loop / 派发·回收
     core/      manifest · lint · graph · evidence · config
-    engines/   WorkItemStore + AgentRuntime 双接口(multica · mock)
+    engines/   WorkItemStore + AgentRuntime 双接口(multica)
     guide/     知识分发 topic 文本
 """
 

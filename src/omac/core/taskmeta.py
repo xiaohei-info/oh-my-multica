@@ -117,7 +117,7 @@ DECISION_REQUIRED_SCHEMA = "omac.decision-required/v1"
 AMENDMENT_ATTEMPT_KEY = "amendment_attempt"
 SOURCE_REFS_KEY = "source_refs"
 
-# run_task 交付 dict 的 key(按 kind 承载交付正文)——单一来源,tasks/plan/mock 共用。
+# run_task 交付 dict 的 key(按 kind 承载交付正文)——单一来源,tasks/plan 共用。
 # decompose 正文是 manifest(≠ kind.value),故不能用 kind.value 直接推。
 DELIVERY_CONTENT_KEY = {
     TaskKind.PLAN: "plan",
