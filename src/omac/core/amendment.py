@@ -7,7 +7,7 @@ Amendment 只描述 manifest 定义变更；work_item_id、状态、PR/verificat
 from __future__ import annotations
 
 import copy
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 import hashlib
 import json
 import shlex
@@ -628,6 +628,139 @@ def _apply_definition(manifest: Manifest, proposal: dict[str, Any]) -> Manifest:
     return amended
 
 
+def _validate_add_operation(manifest: Manifest, operation: dict, prefix: str, seen: set[str],
+                            errors: list[str]) -> None:
+    raw_node = operation.get("value") or {}
+    runtime_fields = set(raw_node) & _RUNTIME_FIELDS
+    if runtime_fields:
+        errors.append(
+            f"{prefix}.value contains runtime fields: "
+            + ", ".join(sorted(runtime_fields)))
+    try:
+        added = _node_from_mapping(raw_node)
+    except (KeyError, TypeError, ValueError) as exc:
+        errors.append(f"{prefix}: {exc}")
+        return
+    if added.id in manifest.nodes or added.id in seen:
+        errors.append(f"{prefix}: node {added.id!r} already exists")
+    if added.contract is None:
+        errors.append(f"{prefix}: added node requires a complete contract")
+    if not isinstance(raw_node.get("blocked_by", []), list):
+        errors.append(f"{prefix}.value.blocked_by must be a list")
+    seen.add(added.id)
+
+
+def _validate_responsibility_op(node, operation: dict, prefix: str, errors: list[str]) -> None:
+    responsibility_errors = _validate_responsibility_operation(node, operation, prefix)
+    errors.extend(responsibility_errors)
+    if not responsibility_errors and not operation.get("historical_contract_correction"):
+        after = copy.deepcopy(node)
+        after.contract = _responsibility_contract(node, operation)
+        if not _responsibility_allowed_diff(node, after):
+            errors.append(
+                f"{prefix}: update-responsibility must change at least one "
+                "acceptance responsibility field")
+
+
+def _validate_update_operation(node, node_id: str, operation: dict, prefix: str, acceptance: Any,
+                               errors: list[str]) -> None:
+    start = len(errors)
+    changes = operation.get("set")
+    if not isinstance(changes, dict) or not changes:
+        errors.append(f"{prefix}.set must be a non-empty object")
+        return
+    unknown = set(changes) - _NODE_FIELDS
+    if unknown:
+        errors.append(f"{prefix}.set contains unsupported fields: {', '.join(sorted(unknown))}")
+    if any(field in changes for field in _RUNTIME_FIELDS):
+        errors.append(f"{prefix}: runtime fields cannot be patched")
+    if "blocked_by" in changes and not isinstance(changes["blocked_by"], list):
+        errors.append(f"{prefix}.set.blocked_by must be a list")
+    if "contract" in changes and not isinstance(changes["contract"], dict):
+        errors.append(f"{prefix}.set.contract must be a complete object")
+    errors.extend(_contract_boundary_replacement_errors(node, operation, prefix))
+    responsibility_fields = {"acceptance_claims", "acceptance_contributions", "acceptance_refs"}
+    if acceptance is not None:
+        responsibility_fields.add("acceptance")
+    if (
+        "contract" in changes
+        and isinstance(changes["contract"], dict)
+        and _contract_changes(node, changes["contract"]) & responsibility_fields
+    ):
+        errors.append(
+            f"{prefix}: responsibility migration must use {_RESPONSIBILITY_OPERATION}")
+    if node.work_item_id and _requires_ownership_migration(node, changes):
+        migration = operation.get("migration") or {}
+        if not isinstance(migration, dict):
+            errors.append(f"{prefix}.migration must be an object")
+        elif migration.get("ownership_transfer") is not True or not isinstance(
+                migration.get("reason"), str) or not migration["reason"].strip():
+            errors.append(
+                f"{prefix}: executed node ownership migration requires "
+                "migration.ownership_transfer=true and a reason")
+    if len(errors) == start and operation.get("op") == "update":
+        _validate_update_changes_definition(node, changes, prefix, errors)
+
+
+def _validate_update_changes_definition(node, changes: dict, prefix: str, errors: list[str]) -> None:
+    try:
+        after = copy.deepcopy(node)
+        for key, value in changes.items():
+            if key == "contract":
+                after.contract = _load_contract(value)
+            elif key == "blocked_by":
+                after.blocked_by = list(value or [])
+            else:
+                setattr(after, key, copy.deepcopy(value))
+    except (KeyError, TypeError, ValueError):
+        # Let the guarded full proposal application below report the
+        # malformed nested contract instead of leaking a raw exception.
+        return
+    if _node_dict(node, include_runtime=False) == _node_dict(after, include_runtime=False):
+        errors.append(f"{prefix}: update must change at least one node definition field")
+
+
+def _validate_operation(manifest: Manifest, operation: Any, prefix: str, seen: set[str],
+                        acceptance: Any, errors: list[str]) -> None:
+    if not isinstance(operation, dict):
+        errors.append(f"{prefix} must be an object")
+        return
+    op = operation.get("op")
+    if op not in {"update", "add", "remove", "resume", _RESPONSIBILITY_OPERATION}:
+        errors.append(
+            f"{prefix}.op must be update, add, remove, resume, or "
+            f"{_RESPONSIBILITY_OPERATION}")
+        return
+    if "clear_contract_boundary" in operation and op != "update":
+        errors.append(
+            f"{prefix}.clear_contract_boundary is valid only for update operations")
+    if op == "add":
+        _validate_add_operation(manifest, operation, prefix, seen, errors)
+        return
+    node_id = str(operation.get("node") or "").strip()
+    node = manifest.nodes.get(node_id)
+    if node is None:
+        errors.append(f"{prefix}: unknown node {node_id!r}")
+        return
+    if node_id in seen:
+        errors.append(f"{prefix}: node {node_id!r} has multiple operations")
+    seen.add(node_id)
+    if op == _RESPONSIBILITY_OPERATION:
+        _validate_responsibility_op(node, operation, prefix, errors)
+        return
+    if node.status == "done" or node.merged:
+        errors.append(f"{prefix}: done/merged node {node_id!r} is immutable")
+        return
+    if op == "remove":
+        if node.work_item_id or node.status != "todo":
+            errors.append(f"{prefix}: only untouched todo nodes may be removed")
+    elif op == "resume":
+        if operation.get("stage") not in {"review", "authoring", "merging"}:
+            errors.append(f"{prefix}.stage must be review, authoring, or merging")
+    else:
+        _validate_update_operation(node, node_id, operation, prefix, acceptance, errors)
+
+
 def validate_proposal(
     manifest: Manifest,
     proposal_source: str | dict[str, Any],
@@ -651,130 +784,7 @@ def validate_proposal(
 
     seen: set[str] = set()
     for index, operation in enumerate(operations):
-        prefix = f"operations[{index}]"
-        if not isinstance(operation, dict):
-            errors.append(f"{prefix} must be an object")
-            continue
-        op = operation.get("op")
-        if op not in {"update", "add", "remove", "resume", _RESPONSIBILITY_OPERATION}:
-            errors.append(
-                f"{prefix}.op must be update, add, remove, resume, or "
-                f"{_RESPONSIBILITY_OPERATION}")
-            continue
-        if "clear_contract_boundary" in operation and op != "update":
-            errors.append(
-                f"{prefix}.clear_contract_boundary is valid only for update operations")
-        if op == "add":
-            raw_node = operation.get("value") or {}
-            runtime_fields = set(raw_node) & _RUNTIME_FIELDS
-            if runtime_fields:
-                errors.append(
-                    f"{prefix}.value contains runtime fields: "
-                    + ", ".join(sorted(runtime_fields)))
-            try:
-                added = _node_from_mapping(raw_node)
-            except (KeyError, TypeError, ValueError) as exc:
-                errors.append(f"{prefix}: {exc}")
-                continue
-            if added.id in manifest.nodes or added.id in seen:
-                errors.append(f"{prefix}: node {added.id!r} already exists")
-            if added.contract is None:
-                errors.append(f"{prefix}: added node requires a complete contract")
-            if not isinstance(raw_node.get("blocked_by", []), list):
-                errors.append(f"{prefix}.value.blocked_by must be a list")
-            seen.add(added.id)
-            continue
-
-        node_id = str(operation.get("node") or "").strip()
-        node = manifest.nodes.get(node_id)
-        if node is None:
-            errors.append(f"{prefix}: unknown node {node_id!r}")
-            continue
-        if node_id in seen:
-            errors.append(f"{prefix}: node {node_id!r} has multiple operations")
-        seen.add(node_id)
-        if op == _RESPONSIBILITY_OPERATION:
-            responsibility_errors = _validate_responsibility_operation(
-                node, operation, prefix)
-            errors.extend(responsibility_errors)
-            if not responsibility_errors and not operation.get(
-                    "historical_contract_correction"):
-                after = copy.deepcopy(node)
-                after.contract = _responsibility_contract(node, operation)
-                if not _responsibility_allowed_diff(node, after):
-                    errors.append(
-                        f"{prefix}: update-responsibility must change at least one "
-                        "acceptance responsibility field")
-            continue
-        if node.status == "done" or node.merged:
-            errors.append(f"{prefix}: done/merged node {node_id!r} is immutable")
-            continue
-        if op == "remove":
-            if node.work_item_id or node.status != "todo":
-                errors.append(f"{prefix}: only untouched todo nodes may be removed")
-            continue
-        if op == "resume":
-            if operation.get("stage") not in {"review", "authoring", "merging"}:
-                errors.append(f"{prefix}.stage must be review, authoring, or merging")
-            continue
-        operation_error_count = len(errors)
-        changes = operation.get("set")
-        if not isinstance(changes, dict) or not changes:
-            errors.append(f"{prefix}.set must be a non-empty object")
-            continue
-        unknown = set(changes) - _NODE_FIELDS
-        if unknown:
-            errors.append(f"{prefix}.set contains unsupported fields: {', '.join(sorted(unknown))}")
-        if any(field in changes for field in _RUNTIME_FIELDS):
-            errors.append(f"{prefix}: runtime fields cannot be patched")
-        if "blocked_by" in changes and not isinstance(changes["blocked_by"], list):
-            errors.append(f"{prefix}.set.blocked_by must be a list")
-        if "contract" in changes and not isinstance(changes["contract"], dict):
-            errors.append(f"{prefix}.set.contract must be a complete object")
-        errors.extend(_contract_boundary_replacement_errors(
-            node, operation, prefix))
-        responsibility_fields = {
-            "acceptance_claims", "acceptance_contributions", "acceptance_refs",
-        }
-        if acceptance is not None:
-            responsibility_fields.add("acceptance")
-        if (
-            "contract" in changes
-            and isinstance(changes["contract"], dict)
-            and _contract_changes(node, changes["contract"])
-            & responsibility_fields
-        ):
-            errors.append(
-                f"{prefix}: responsibility migration must use "
-                f"{_RESPONSIBILITY_OPERATION}")
-        if node.work_item_id and _requires_ownership_migration(node, changes):
-            migration = operation.get("migration") or {}
-            if not isinstance(migration, dict):
-                errors.append(f"{prefix}.migration must be an object")
-            elif migration.get("ownership_transfer") is not True or not isinstance(
-                    migration.get("reason"), str) or not migration["reason"].strip():
-                errors.append(
-                    f"{prefix}: executed node ownership migration requires "
-                    "migration.ownership_transfer=true and a reason")
-        if len(errors) == operation_error_count and op == "update":
-            try:
-                after = copy.deepcopy(node)
-                for key, value in changes.items():
-                    if key == "contract":
-                        after.contract = _load_contract(value)
-                    elif key == "blocked_by":
-                        after.blocked_by = list(value or [])
-                    else:
-                        setattr(after, key, copy.deepcopy(value))
-            except (KeyError, TypeError, ValueError):
-                # Let the guarded full proposal application below report the
-                # malformed nested contract instead of leaking a raw exception.
-                after = None
-            if after is not None and _node_dict(node, include_runtime=False) == _node_dict(
-                    after, include_runtime=False):
-                errors.append(
-                    f"{prefix}: update must change at least one node definition field")
-
+        _validate_operation(manifest, operation, f"operations[{index}]", seen, acceptance, errors)
     if errors:
         return errors
     try:
@@ -1354,6 +1364,188 @@ def validate_affected(manifest: Manifest, proposal: dict[str, Any], store: Any) 
                 f"(`omac work show {node.work_item_id}`), then propose the amendment again")
 
 
+@dataclass
+class _EntryFlags:
+    """Which legacy/re-observation path a per-node apply-ledger entry takes."""
+    state: Any
+    missing_generation: bool
+    legacy_synced_authoring: bool
+    reobserve_synced_authoring: bool
+    legacy_repair_needs_baseline: bool
+
+
+def _entry_flags(entry: dict, node: Any) -> _EntryFlags:
+    state = entry.get("state")
+    authoring = entry.get("stage") == "authoring"
+    missing = authoring and not entry.get("expected_review_generation")
+    legacy = authoring and (state == "repairing" or (state == "synced" and missing))
+    return _EntryFlags(
+        state=state,
+        missing_generation=missing,
+        legacy_synced_authoring=legacy,
+        reobserve_synced_authoring=(
+            authoring and state == "synced" and bool(entry.get("expected_review_generation"))),
+        legacy_repair_needs_baseline=(
+            legacy and missing and node is not None and bool(node.work_item_id)),
+    )
+
+
+def _classify_entry(entry: dict, baseline: Any, current: Any, *, with_subject: bool = True) -> str:
+    return classify_stage_recovery_observation(
+        entry["stage"],
+        baseline or {},
+        current,
+        expected_contract_sha256=entry.get("expected_contract_sha256") or "",
+        **({"expected_review_subject": entry.get("expected_review_subject")} if with_subject else {}),
+        expected_review_generation=entry.get("expected_review_generation"),
+        expected_bounce_baseline=entry.get("bounce_baseline"),
+    )
+
+
+def _reobserve_synced_authoring(manifest: Manifest, manifest_path: str, ledger: dict, entry: dict,
+                                node_id: str, node: Any, current: Any, observation: str,
+                                flags: _EntryFlags) -> tuple[str, bool]:
+    """Re-verify a node already marked synced. Returns (observation, finished)."""
+    expected_generation = entry.get("expected_review_generation")
+    expected_contract = entry.get("expected_contract_sha256")
+    unverifiable = ValidationError(
+        f"node {node_id}: synced authoring recovery observation "
+        "is missing a valid recovery contract or snapshot")
+    if (
+        not isinstance(expected_generation, str) or not expected_generation
+        or not isinstance(expected_contract, str) or not expected_contract
+        or not _is_structured_recovery_snapshot(current)
+    ):
+        raise unverifiable
+    if not _is_structured_recovery_snapshot(entry.get("baseline")):
+        # 修复前的 repair 路径可能把 legacy 残缺 baseline 原样留在
+        # synced entry 上,无法拿它做回退对比。仅当当前观测恰好就是
+        # 恢复目标(authoring_target,与 baseline 无关)时,把 baseline
+        # 升级为结构化快照以保证后续重入可复验;否则保持 fail-closed。
+        if _classify_entry(entry, current, current) != "reached":
+            raise unverifiable
+        entry["baseline"] = current
+        _save_ledger(manifest, manifest_path, ledger)
+        observation = _classify_entry(entry, entry.get("baseline"), current)
+    if observation not in {"reached", "safe", "progressed"}:
+        raise ValidationError(
+            f"node {node_id}: synced authoring recovery observation "
+            f"is unknown: {observation!r}")
+    if observation == "reached":
+        if _normalize_recovered_authoring_node(entry.get("stage"), node, current):
+            _save_ledger(manifest, manifest_path, ledger)
+        return observation, True
+    flags.legacy_synced_authoring = (
+        current.get("contract_sha256") == expected_contract
+        and _legacy_authoring_projection_is_repairable(current))
+    if observation == "safe" and not flags.legacy_synced_authoring:
+        raise ValidationError(
+            f"node {node_id}: synced authoring recovery cannot be safely repaired")
+    return observation, False
+
+
+def _repair_ledger_entry(manifest: Manifest, manifest_path: str, store: Any, ledger: dict,
+                         entry: dict, node_id: str, node: Any, current: Any,
+                         flags: _EntryFlags) -> None:
+    """Re-run stage recovery for a node whose work item is still at the pre-amendment state."""
+    entry["state"] = "repairing" if flags.legacy_synced_authoring else "syncing"
+    entry["attempt_baseline"] = current
+    _save_ledger(manifest, manifest_path, ledger)
+    prepare_stage_recovery(
+        node,
+        store,
+        entry["stage"],
+        expected_review_subject=entry.get("expected_review_subject"),
+        expected_review_generation=entry.get("expected_review_generation"),
+        expected_bounce_baseline=entry.get("bounce_baseline"),
+        sync_contract=entry.get("sync_contract", entry["stage"] != "merging"),
+    )
+    observed = recovery_control_snapshot(store.get_work_item(node.work_item_id))
+    entry["observed"] = observed
+    if entry["stage"] == "authoring":
+        after = _classify_entry(entry, entry.get("attempt_baseline"), observed, with_subject=False)
+        if after != "reached":
+            entry["state"] = "repairing"
+            _save_ledger(manifest, manifest_path, ledger)
+            raise ValidationError(
+                f"node {node_id}: authoring recovery did not reach its target; "
+                "repeat the same amendment accept command")
+    if (
+        entry.get("stage") == "authoring"
+        and not _is_structured_recovery_snapshot(entry.get("baseline"))
+    ):
+        # repair 收敛后把 legacy 残缺 baseline 升级为结构化快照,
+        # 否则下次重入 accept 的 reobserve 分支无法复验。
+        entry["baseline"] = observed
+    _normalize_recovered_authoring_node(entry.get("stage"), node, observed)
+    entry["state"] = "synced"
+    _save_ledger(manifest, manifest_path, ledger)
+
+
+def _resume_ledger_entry(manifest: Manifest, manifest_path: str, store: Any, ledger: dict,
+                         node_id: str, entry: dict, summary: dict[str, list[str]]) -> None:
+    node = manifest.nodes.get(node_id)
+    flags = _entry_flags(entry, node)
+    if flags.missing_generation and not flags.legacy_repair_needs_baseline:
+        entry["expected_review_generation"] = _authoring_review_generation(
+            str(ledger.get("amendment_id") or ""), node_id)
+        if flags.legacy_synced_authoring:
+            entry["state"] = flags.state = "repairing"
+        _save_ledger(manifest, manifest_path, ledger)
+    if (
+        flags.state in {"synced", "observed_progress"}
+        and not flags.legacy_synced_authoring
+        and not flags.reobserve_synced_authoring
+    ):
+        summary["already_complete"].append(node_id)
+        return
+    if node is None or not node.work_item_id:
+        entry["state"] = "synced"
+        entry["reason"] = "no existing work item side effect"
+        _save_ledger(manifest, manifest_path, ledger)
+        summary["synced"].append(node_id)
+        return
+    item = store.get_work_item(node.work_item_id)
+    if ledger.get("budget_policy") == "preserve":
+        _check_preserved_budget_item(node_id, entry.get("budget_binding"), item,
+            completed=flags.state in {"synced", "observed_progress"},
+            target_contract=entry.get("expected_contract_sha256"))
+    current = recovery_control_snapshot(item)
+    if flags.legacy_repair_needs_baseline:
+        entry["expected_review_generation"] = _authoring_review_generation(
+            str(ledger.get("amendment_id") or ""), node_id)
+        entry["state"] = "repairing"
+        entry["attempt_baseline"] = current
+        _save_ledger(manifest, manifest_path, ledger)
+    observation = _classify_entry(entry, entry.get("baseline"), current)
+    if flags.reobserve_synced_authoring:
+        observation, finished = _reobserve_synced_authoring(
+            manifest, manifest_path, ledger, entry, node_id, node, current, observation, flags)
+        if finished:
+            summary["already_complete"].append(node_id)
+            return
+    if observation == "reached":
+        _normalize_recovered_authoring_node(entry.get("stage"), node, current)
+        entry["state"] = "synced"
+        entry["observed"] = current
+        _save_ledger(manifest, manifest_path, ledger)
+        summary["synced"].append(node_id)
+        return
+    if observation == "progressed" and not (
+        flags.legacy_synced_authoring and _legacy_authoring_projection_is_repairable(current)
+    ):
+        entry["state"] = "observed_progress"
+        entry["observed"] = current
+        entry["reason"] = (
+            "work item changed after definition apply; skipped to prevent rollback"
+        )
+        _save_ledger(manifest, manifest_path, ledger)
+        summary["observed_progress"].append(node_id)
+        return
+    _repair_ledger_entry(manifest, manifest_path, store, ledger, entry, node_id, node, current, flags)
+    summary["synced"].append(node_id)
+
+
 def _resume_apply_ledger(
     manifest: Manifest,
     manifest_path: str,
@@ -1367,202 +1559,7 @@ def _resume_apply_ledger(
     _preflight_preserved_budget_items(manifest, ledger, store)
     summary = {"synced": [], "observed_progress": [], "already_complete": []}
     for node_id, entry in ledger.get("nodes", {}).items():
-        state = entry.get("state")
-        missing_authoring_generation = (
-            entry.get("stage") == "authoring"
-            and not entry.get("expected_review_generation")
-        )
-        legacy_synced_authoring = (
-            entry.get("stage") == "authoring"
-            and (
-                state == "repairing"
-                or (state == "synced" and missing_authoring_generation)
-            )
-        )
-        reobserve_synced_authoring = (
-            entry.get("stage") == "authoring"
-            and state == "synced"
-            and bool(entry.get("expected_review_generation"))
-        )
-        node = manifest.nodes.get(node_id)
-        legacy_repair_needs_baseline = (
-            legacy_synced_authoring
-            and missing_authoring_generation
-            and node is not None
-            and bool(node.work_item_id)
-        )
-        if missing_authoring_generation and not legacy_repair_needs_baseline:
-            entry["expected_review_generation"] = _authoring_review_generation(
-                str(ledger.get("amendment_id") or ""), node_id)
-            if legacy_synced_authoring:
-                entry["state"] = "repairing"
-                state = "repairing"
-            _save_ledger(manifest, manifest_path, ledger)
-        if (
-            state in {"synced", "observed_progress"}
-            and not legacy_synced_authoring
-            and not reobserve_synced_authoring
-        ):
-            summary["already_complete"].append(node_id)
-            continue
-        if node is None or not node.work_item_id:
-            entry["state"] = "synced"
-            entry["reason"] = "no existing work item side effect"
-            _save_ledger(manifest, manifest_path, ledger)
-            summary["synced"].append(node_id)
-            continue
-        item = store.get_work_item(node.work_item_id)
-        if ledger.get("budget_policy") == "preserve":
-            _check_preserved_budget_item(node_id, entry.get("budget_binding"), item,
-                completed=state in {"synced", "observed_progress"},
-                target_contract=entry.get("expected_contract_sha256"))
-        current = recovery_control_snapshot(item)
-        if legacy_repair_needs_baseline:
-            entry["expected_review_generation"] = _authoring_review_generation(
-                str(ledger.get("amendment_id") or ""), node_id)
-            entry["state"] = "repairing"
-            entry["attempt_baseline"] = current
-            state = "repairing"
-            _save_ledger(manifest, manifest_path, ledger)
-        observation = classify_stage_recovery_observation(
-            entry["stage"],
-            entry.get("baseline") or {},
-            current,
-            expected_contract_sha256=entry.get("expected_contract_sha256") or "",
-            expected_review_subject=entry.get("expected_review_subject"),
-            expected_review_generation=entry.get(
-                "expected_review_generation"),
-            expected_bounce_baseline=entry.get("bounce_baseline"),
-        )
-        if reobserve_synced_authoring:
-            expected_generation = entry.get("expected_review_generation")
-            expected_contract = entry.get("expected_contract_sha256")
-            if (
-                not isinstance(expected_generation, str)
-                or not expected_generation
-                or not isinstance(expected_contract, str)
-                or not expected_contract
-                or not _is_structured_recovery_snapshot(current)
-            ):
-                raise ValidationError(
-                    f"node {node_id}: synced authoring recovery observation "
-                    "is missing a valid recovery contract or snapshot")
-            if not _is_structured_recovery_snapshot(entry.get("baseline")):
-                # 修复前的 repair 路径可能把 legacy 残缺 baseline 原样留在
-                # synced entry 上,无法拿它做回退对比。仅当当前观测恰好就是
-                # 恢复目标(authoring_target,与 baseline 无关)时,把 baseline
-                # 升级为结构化快照以保证后续重入可复验;否则保持 fail-closed。
-                if classify_stage_recovery_observation(
-                        entry["stage"],
-                        current,
-                        current,
-                        expected_contract_sha256=expected_contract,
-                        expected_review_subject=entry.get(
-                            "expected_review_subject"),
-                        expected_review_generation=expected_generation,
-                        expected_bounce_baseline=entry.get("bounce_baseline"),
-                ) != "reached":
-                    raise ValidationError(
-                        f"node {node_id}: synced authoring recovery observation "
-                        "is missing a valid recovery contract or snapshot")
-                entry["baseline"] = current
-                _save_ledger(manifest, manifest_path, ledger)
-                observation = classify_stage_recovery_observation(
-                    entry["stage"],
-                    entry.get("baseline") or {},
-                    current,
-                    expected_contract_sha256=(
-                        entry.get("expected_contract_sha256") or ""),
-                    expected_review_subject=entry.get(
-                        "expected_review_subject"),
-                    expected_review_generation=entry.get(
-                        "expected_review_generation"),
-                    expected_bounce_baseline=entry.get("bounce_baseline"),
-                )
-            if observation not in {"reached", "safe", "progressed"}:
-                raise ValidationError(
-                    f"node {node_id}: synced authoring recovery observation "
-                    f"is unknown: {observation!r}")
-            if observation == "reached":
-                if _normalize_recovered_authoring_node(
-                        entry.get("stage"), node, current):
-                    _save_ledger(manifest, manifest_path, ledger)
-                summary["already_complete"].append(node_id)
-                continue
-            legacy_synced_authoring = (
-                current.get("contract_sha256") == expected_contract
-                and _legacy_authoring_projection_is_repairable(current)
-            )
-            if observation == "safe" and not legacy_synced_authoring:
-                raise ValidationError(
-                    f"node {node_id}: synced authoring recovery cannot be "
-                    "safely repaired")
-        if observation == "reached":
-            _normalize_recovered_authoring_node(
-                entry.get("stage"), node, current)
-            entry["state"] = "synced"
-            entry["observed"] = current
-            _save_ledger(manifest, manifest_path, ledger)
-            summary["synced"].append(node_id)
-            continue
-        if observation == "progressed" and not (
-            legacy_synced_authoring
-            and _legacy_authoring_projection_is_repairable(current)
-        ):
-            entry["state"] = "observed_progress"
-            entry["observed"] = current
-            entry["reason"] = (
-                "work item changed after definition apply; skipped to prevent rollback"
-            )
-            _save_ledger(manifest, manifest_path, ledger)
-            summary["observed_progress"].append(node_id)
-            continue
-        entry["state"] = (
-            "repairing" if legacy_synced_authoring else "syncing")
-        entry["attempt_baseline"] = current
-        _save_ledger(manifest, manifest_path, ledger)
-        prepare_stage_recovery(
-            node,
-            store,
-            entry["stage"],
-            expected_review_subject=entry.get("expected_review_subject"),
-            expected_review_generation=entry.get(
-                "expected_review_generation"),
-            expected_bounce_baseline=entry.get("bounce_baseline"),
-            sync_contract=entry.get(
-                "sync_contract", entry["stage"] != "merging"),
-        )
-        observed = recovery_control_snapshot(
-            store.get_work_item(node.work_item_id))
-        entry["observed"] = observed
-        if entry["stage"] == "authoring":
-            after = classify_stage_recovery_observation(
-                entry["stage"],
-                entry.get("attempt_baseline") or {},
-                observed,
-                expected_contract_sha256=(
-                    entry.get("expected_contract_sha256") or ""),
-                expected_review_generation=entry.get(
-                    "expected_review_generation"),
-                expected_bounce_baseline=entry.get("bounce_baseline"),
-            )
-            if after != "reached":
-                entry["state"] = "repairing"
-                _save_ledger(manifest, manifest_path, ledger)
-                raise ValidationError(
-                    f"node {node_id}: authoring recovery did not reach its target; "
-                    "repeat the same amendment accept command")
-        if (
-            entry.get("stage") == "authoring"
-            and not _is_structured_recovery_snapshot(entry.get("baseline"))
-        ):
-            # repair 收敛后把 legacy 残缺 baseline 升级为结构化快照,
-            # 否则下次重入 accept 的 reobserve 分支无法复验。
-            entry["baseline"] = observed
-        _normalize_recovered_authoring_node(entry.get("stage"), node, observed)
-        entry["state"] = "synced"
-        _save_ledger(manifest, manifest_path, ledger)
-        summary["synced"].append(node_id)
+        _resume_ledger_entry(manifest, manifest_path, store, ledger, node_id, entry, summary)
     return summary
 
 
@@ -1591,17 +1588,8 @@ def _validate_stage_preconditions(
                 f"node {node_id}: {exc}") from exc
 
 
-def apply_amendment(
-    manifest_path: str,
-    amendment_source: str | dict[str, Any],
-    store: Any,
-    agent_pool: set[str],
-    *,
-    amendment_file: str | None = None,
-    acceptance: Any = None,
-    runtime: Any = None,
-) -> dict[str, Any]:
-    amendment = parse_proposal(amendment_source)
+def _amendment_identity(amendment: dict) -> tuple[dict, dict, dict, Any]:
+    """Validate the reviewed envelope; returns (review, base, identity kwargs for _amendment_id, budget_bindings)."""
     review = amendment.get("review")
     if not isinstance(review, dict) or review.get("verdict") not in {
         "pass", "pass-with-nits",
@@ -1616,12 +1604,9 @@ def apply_amendment(
     if identity_schema not in {None, AMENDMENT_IDENTITY_SCHEMA}:
         raise ValidationError(
             f"Amendment identity schema is unsupported: {identity_schema!r}")
-    analysis = amendment.get("analysis")
-    if analysis is None and identity_schema is None:
-        # Legacy reviewed files occasionally omitted the optional analysis
-        # projection; preserve their original identity/application path.
-        analysis = {}
-    elif not isinstance(analysis, dict):
+    if amendment.get("analysis") is not None and not isinstance(amendment.get("analysis"), dict):
+        raise ValidationError("Amendment analysis must be an object")
+    if amendment.get("analysis") is None and identity_schema is not None:
         raise ValidationError("Amendment analysis must be an object")
     identity_kwargs = {}
     if identity_schema == AMENDMENT_IDENTITY_SCHEMA:
@@ -1646,6 +1631,13 @@ def apply_amendment(
         identity_kwargs["budget_bindings"] = budget_bindings
     elif budget_bindings is not None:
         raise ValidationError("Budget bindings require explicit preserve policy")
+    return review, base, identity_kwargs, budget_bindings
+
+
+def _verify_amendment_identity(amendment: dict, base: dict, identity_kwargs: dict) -> None:
+    # Legacy reviewed files occasionally omitted the optional analysis
+    # projection; preserve their original identity/application path.
+    analysis = amendment.get("analysis") or {}
     expected_id = _amendment_id(
         base.get("definition_sha256") or "",
         amendment,
@@ -1658,109 +1650,128 @@ def apply_amendment(
         raise ValidationError(
             "Amendment identity does not match its reviewed proposal and analysis")
 
-    nits_issue = None
-    if review.get("verdict") == "pass-with-nits":
-        try:
-            nits_issue = store.get_work_item(review.get("issue_id"))
-        except Exception as exc:
+
+def _verify_nits_acceptance(store: Any, review: dict, amendment: dict) -> None:
+    if review.get("verdict") != "pass-with-nits":
+        return
+    try:
+        nits_issue = store.get_work_item(review.get("issue_id"))
+    except Exception as exc:
+        raise ValidationError(
+            "Cannot read the amendment review issue for pass-with-nits acceptance"
+        ) from exc
+    issue_kind = getattr(getattr(nits_issue, "kind", None), "value", None)
+    if issue_kind is None:
+        issue_kind = getattr(nits_issue, "kind", None)
+    if issue_kind != "amendment":
+        raise ValidationError(
+            "pass-with-nits amendment review.issue_id must reference an amendment work item")
+    binding = amendment_review_binding(nits_issue)
+    for field in (
+        "review_subject_digest", "review_report_ref", "review_ledger_ref",
+        "deliverable_sha256",
+    ):
+        if review.get(field) != binding[field]:
             raise ValidationError(
-                "Cannot read the amendment review issue for pass-with-nits acceptance"
-            ) from exc
-        issue_kind = getattr(getattr(nits_issue, "kind", None), "value", None)
-        if issue_kind is None:
-            issue_kind = getattr(nits_issue, "kind", None)
-        if issue_kind != "amendment":
-            raise ValidationError(
-                "pass-with-nits amendment review.issue_id must reference an amendment work item")
-        binding = amendment_review_binding(nits_issue)
-        for field in (
-            "review_subject_digest", "review_report_ref", "review_ledger_ref",
-            "deliverable_sha256",
-        ):
-            if review.get(field) != binding[field]:
-                raise ValidationError(
-                    "Amendment pass-with-nits review facts changed after review")
-        marker = getattr(nits_issue, "review_nits_acceptance", None)
-        if not _amendment_nits_marker_matches(marker, amendment, nits_issue):
-            raise ValidationError(
-                "Amendment pass-with-nits requires explicit operator acceptance "
-                "bound to the current issue, review, ledger, and deliverable")
+                "Amendment pass-with-nits review facts changed after review")
+    marker = getattr(nits_issue, "review_nits_acceptance", None)
+    if not _amendment_nits_marker_matches(marker, amendment, nits_issue):
+        raise ValidationError(
+            "Amendment pass-with-nits requires explicit operator acceptance "
+            "bound to the current issue, review, ledger, and deliverable")
+
+
+def _verify_amendment_applicable(current: Manifest, amendment: dict, store: Any, agent_pool: set[str],
+                                 acceptance: Any, budget_bindings: Any):
+    """Re-check every reviewed fact against the current manifest. Returns (minimal rerun, corrections, runtime_rebased)."""
+    validate_affected(current, amendment, store)
+    runtime_rebased = _verify_base(current, amendment)
+    expected_acceptance = (amendment.get("base") or {}).get("acceptance_sha256")
+    if expected_acceptance and _acceptance_digest(acceptance) != expected_acceptance:
+        raise ValidationError(ui(
+            "The authoritative acceptance document changed after amendment review. "
+            "Generate and review a new amendment.",
+            "amendment 评审后权威 acceptance 文档已变化；请重新生成并评审 amendment。"))
+    errors = validate_proposal(current, amendment, agent_pool, acceptance=acceptance)
+    if errors:
+        raise ValidationError("Amendment validation failed:\n  - " + "\n  - ".join(errors))
+    recomputed_minimal, _, immutable = _minimal_rerun(current, amendment)
+    if immutable:
+        raise ValidationError(
+            "Amendment affects immutable downstream nodes: " + ", ".join(immutable))
+    if recomputed_minimal != ((amendment.get("analysis") or {}).get("minimal_rerun") or {}):
+        raise ValidationError(ui(
+            "The minimum recovery set changed after amendment review. Rebase and review again.",
+            "amendment 评审后最小恢复集合已变化；请基于最新事实 rebase 并重新评审。"))
+    corrections = _historical_contract_corrections(
+        current, amendment, (amendment.get("base") or {}).get("evidence_sha256") or {})
+    if corrections != (amendment.get("analysis") or {}).get("historical_contract_corrections", []):
+        raise ValidationError(
+            "Historical contract correction audit changed after amendment review. "
+            "Generate and review a new amendment.")
+    if budget_bindings is not None:
+        for key, binding in budget_bindings.get("nodes", {}).items():
+            node = current.nodes.get(key)
+            if node is None or node.work_item_id != binding.get("work_item_id"):
+                raise ValidationError(f"node {key}: preserved work item identity changed after review")
+        if _capture_preserved_budgets(current, recomputed_minimal, store, amendment) != budget_bindings:
+            raise ValidationError("Budget facts changed after amendment review; inspect and review a fresh amendment")
+    _verify_evidence(current, amendment, store)
+    return recomputed_minimal, corrections, runtime_rebased
+
+
+_RESUME_STAGE_STATUS = {"review": "in_review", "authoring": "todo", "merging": "merging"}
+
+
+def _apply_new_amendment(current: Manifest, manifest_path: str, amendment: dict, store: Any,
+                         agent_pool: set[str], acceptance: Any, amendment_file: str | None,
+                         budget_bindings: Any):
+    """Persist the amended definition together with its apply ledger in one atomic manifest save."""
+    minimal, corrections, runtime_rebased = _verify_amendment_applicable(
+        current, amendment, store, agent_pool, acceptance, budget_bindings)
+    amended = _apply_definition(current, amendment)
+    _validate_stage_preconditions(amended, minimal, store)
+    for stage, node_ids in minimal.items():
+        for node_id in node_ids:
+            if node_id in amended.nodes:
+                amended.nodes[node_id].status = _RESUME_STAGE_STATUS[stage]
+                if stage != "merging":
+                    amended.nodes[node_id].merge_request_state = None
+    amended.meta["amendment_revision"] = int(amended.meta.get("amendment_revision") or 0) + 1
+    merging_responsibility_nodes = {
+        str(operation.get("node"))
+        for operation in amendment.get("operations") or []
+        if _is_responsibility_operation(operation) and operation.get("resume_stage") == "merging"
+    }
+    amended.meta["amendment_apply"] = _prepare_apply_ledger(
+        amended, amendment["amendment_id"], minimal, corrections, store, amendment_file,
+        merging_responsibility_nodes, budget_bindings=budget_bindings)
+    amended.meta["last_amendment_id"] = amendment.get("amendment_id")
+    save_manifest(amended, manifest_path)
+    return amended, minimal, runtime_rebased
+
+
+def apply_amendment(
+    manifest_path: str,
+    amendment_source: str | dict[str, Any],
+    store: Any,
+    agent_pool: set[str],
+    *,
+    amendment_file: str | None = None,
+    acceptance: Any = None,
+    runtime: Any = None,
+) -> dict[str, Any]:
+    amendment = parse_proposal(amendment_source)
+    review, base, identity_kwargs, budget_bindings = _amendment_identity(amendment)
+    _verify_amendment_identity(amendment, base, identity_kwargs)
+    _verify_nits_acceptance(store, review, amendment)
 
     current = load_manifest(manifest_path)
     _preflight_authoring_repair_ledger(current)
-    already_applied = current.meta.get("last_amendment_id") == amendment.get("amendment_id")
-    runtime_rebased = False
-    if not already_applied:
-        validate_affected(current, amendment, store)
-        runtime_rebased = _verify_base(current, amendment)
-        expected_acceptance = (amendment.get("base") or {}).get(
-            "acceptance_sha256")
-        if expected_acceptance and _acceptance_digest(acceptance) != expected_acceptance:
-            raise ValidationError(ui(
-                "The authoritative acceptance document changed after amendment review. "
-                "Generate and review a new amendment.",
-                "amendment 评审后权威 acceptance 文档已变化；请重新生成并评审 amendment。"))
-        errors = validate_proposal(
-            current, amendment, agent_pool, acceptance=acceptance)
-        if errors:
-            raise ValidationError("Amendment validation failed:\n  - " + "\n  - ".join(errors))
-        recomputed_minimal, _, immutable = _minimal_rerun(current, amendment)
-        if immutable:
-            raise ValidationError(
-                "Amendment affects immutable downstream nodes: "
-                + ", ".join(immutable))
-        reviewed_minimal = (amendment.get("analysis") or {}).get("minimal_rerun") or {}
-        if recomputed_minimal != reviewed_minimal:
-            raise ValidationError(ui(
-                "The minimum recovery set changed after amendment review. Rebase and review again.",
-                "amendment 评审后最小恢复集合已变化；请基于最新事实 rebase 并重新评审。"))
-        corrections = _historical_contract_corrections(
-            current, amendment,
-            (amendment.get("base") or {}).get("evidence_sha256") or {})
-        if corrections != (amendment.get("analysis") or {}).get(
-                "historical_contract_corrections", []):
-            raise ValidationError(
-                "Historical contract correction audit changed after amendment review. "
-                "Generate and review a new amendment.")
-        if budget_bindings is not None:
-            for key, binding in budget_bindings.get("nodes", {}).items():
-                node = current.nodes.get(key)
-                if node is None or node.work_item_id != binding.get("work_item_id"):
-                    raise ValidationError(f"node {key}: preserved work item identity changed after review")
-            if _capture_preserved_budgets(current, recomputed_minimal, store, amendment) != budget_bindings:
-                raise ValidationError("Budget facts changed after amendment review; inspect and review a fresh amendment")
-        _verify_evidence(current, amendment, store)
-        amended = _apply_definition(current, amendment)
-        minimal = recomputed_minimal
-        _validate_stage_preconditions(amended, minimal, store)
-        for stage, node_ids in minimal.items():
-            for node_id in node_ids:
-                if node_id in amended.nodes:
-                    amended.nodes[node_id].status = {
-                        "review": "in_review",
-                        "authoring": "todo",
-                        "merging": "merging",
-                    }[stage]
-                    if stage != "merging":
-                        amended.nodes[node_id].merge_request_state = None
-        amended.meta["amendment_revision"] = int(
-            amended.meta.get("amendment_revision") or 0) + 1
-        amended.meta["amendment_apply"] = _prepare_apply_ledger(
-            amended, amendment["amendment_id"], minimal, corrections, store,
-            amendment_file,
-            {
-                str(operation.get("node"))
-                for operation in amendment.get("operations") or []
-                if (
-                    _is_responsibility_operation(operation)
-                    and operation.get("resume_stage") == "merging"
-                )
-            },
-            budget_bindings=budget_bindings,
-        )
-        amended.meta["last_amendment_id"] = amendment.get("amendment_id")
-        save_manifest(amended, manifest_path)
-        current = amended
+    if current.meta.get("last_amendment_id") != amendment.get("amendment_id"):
+        current, minimal, runtime_rebased = _apply_new_amendment(
+            current, manifest_path, amendment, store, agent_pool, acceptance,
+            amendment_file, budget_bindings)
     else:
         runtime_rebased = True
         minimal = amendment.get("analysis", {}).get("minimal_rerun") or {}
