@@ -44,7 +44,7 @@ from ..core.manifest import (
 )
 from ..pipeline.delivery import (
     advance_delivery, block_unproven_merge_request,
-    merge_bounce_attempt, merge_request_state_is_valid, run_merge_delivery,
+    run_merge_delivery,
 )
 from ..core.workitem import (
     AgentRunObservation,
@@ -61,6 +61,7 @@ from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import AuthError, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
+from .decide_merge import merge_bounce_attempt, merge_request_state_is_valid
 from .convergence import (
     ConvergenceResolution, ResolutionState, persist_decision,
     resolve_convergence,
@@ -3558,6 +3559,953 @@ def _reconcile_candidate(
 # ==================== collect_results(SYNC) ====================
 
 
+@dataclass
+class _Collect:
+    """Everything one result-collection pass shares across nodes."""
+
+    store: WorkItemStore
+    runtime: AgentRuntime
+    code_host: CodeHost
+    manifest: Manifest
+    manifest_path: str
+    limits: dict
+    config: dict | None
+    no_submit_runs: int
+    failures: Dict[str, str] = field(default_factory=dict)
+    pending_review: List[Tuple[str, str, str]] = field(default_factory=list)  # (key, item_id, reviewer)
+
+
+@dataclass
+class _Node:
+    """The node being collected; ``item`` and friends are replaced as stages recover newer facts."""
+
+    key: str
+    node: Any
+    projection: WorkItemControlProjection
+    item: Any
+    worker_gate_errors: Any = None
+    handoff: Any = None
+    decision_class: str | None = None
+
+
+def _collect_worker_blocker(c: _Collect, n: _Node) -> bool:
+    """A structured worker blocker is an operator decision, not a no-submit failure."""
+    key, node = n.key, n.node
+    # Structured worker blockers are operator decisions, not no-submit failures.
+    if n.item.phase == TaskPhase.AUTHORING and n.item.decision_required:
+        if n.item.status != WorkItemStatus.BLOCKED:
+            c.store.update_status(n.item.id, WorkItemStatus.BLOCKED)
+        set_node(c.manifest, key, status="blocked")
+        c.failures[key] = str(n.item.decision_required.get("reason_code", "worker-decision-required"))
+        return True
+    return False
+
+
+def _collect_handoff_convergence(c: _Collect, n: _Node) -> bool:
+    """A persisted review handoff belongs to the ledger that created it: re-evaluate convergence before touching it."""
+    key, node = n.key, n.node
+    # A persisted review handoff belongs to the review ledger that created
+    # it.  Re-evaluate the one authoritative convergence policy before
+    # observing, retrying, assigning, or waking that handoff.  Explicit
+    # operator/amendment dispatches use a different gate and are not
+    # reinterpreted as stale review rework.
+    handoff_intent = n.item.worker_handoff
+    if (
+        handoff_intent is not None
+        and handoff_intent.gate in {"review", "review-nits"}
+    ):
+        resolution = _resolve_handoff_review_convergence(
+            n.item, handoff_intent, key, store=c.store)
+        if resolution.state is ResolutionState.NEEDS_DECISION:
+            c.failures[key] = _block_review_non_convergence(
+                c.store, c.manifest, key, n.item, resolution)
+            return True
+    return False
+
+
+def _collect_legacy_delivery(c: _Collect, n: _Node) -> bool:
+    """Legacy rework deliveries cannot be reused; require one explicit node retry."""
+    key, node = n.key, n.node
+    if _legacy_delivery_requires_retry(c.manifest, key, node, n.item):
+        if any(run.kind == "direct" and run.active
+               for run in c.runtime.list_runs(node.work_item_id)):
+            return True
+        retry = f"omac node retry {c.manifest_path} {key}"
+        reason = ui(
+            "Legacy rework delivery lacks an immutable submitted head or "
+            f"controller-sealed delivery identity. Run `{retry}`; the old "
+            "verification and Reviewer verdict cannot be reused.",
+            "旧返工交付缺少不可变 submitted head 或 Controller 封存的 "
+            f"delivery identity。请运行 `{retry}`；旧 verification 和 "
+            "Reviewer verdict 不得复用。",
+        )
+        decision = {
+            "schema": DECISION_REQUIRED_SCHEMA, "reason_code": "legacy-delivery-retry-required",
+            "kind": TaskKind.DEVELOP.value, "phase": TaskPhase.AUTHORING.value,
+            "gate": "delivery-identity", "resume_issue_id": node.work_item_id,
+            "node_id": key, "next_action": retry,
+        }
+        if n.item.decision_required != decision:
+            _mark_recovery_pending(c.manifest, key)
+            c.store.update_work_item_metadata(
+                node.work_item_id, decision_required=decision)
+            c.store.add_comment(node.work_item_id, reason)
+        if n.item.status != WorkItemStatus.BLOCKED:
+            c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+        set_node(c.manifest, key, status="blocked")
+        c.failures[key] = reason
+        return True
+    return False
+
+
+def _collect_legacy_initial_worker(c: _Collect, n: _Node) -> bool:
+    """Recover a legacy initial worker before treating its handoff as current."""
+    key, node = n.key, n.node
+    n.item, legacy_failure = _recover_legacy_initial_worker(
+        c.store, c.runtime, c.manifest, key, n.item, c.manifest_path)
+    if legacy_failure:
+        c.failures[key] = legacy_failure
+        return True
+    if n.item is not n.projection.work_item:
+        n.projection = replace(n.projection, work_item=n.item)
+    return False
+
+
+def _collect_worker_handoff(c: _Collect, n: _Node) -> bool:
+    """Observe or retry the persisted Worker handoff; completed handoffs continue into the worker stage."""
+    key, node = n.key, n.node
+    if n.item.worker_handoff is not None:
+        handoff_intent = n.item.worker_handoff
+        if not handoff_intent.is_causally_bound():
+            raise PlatformError(
+                f"Worker handoff for {node.work_item_id} predates causal "
+                "delivery identity support; refusing to infer completion")
+        n.handoff = _dispatch_worker_handoff(
+            c.store, c.runtime, c.code_host, c.manifest, key,
+            projection=n.projection)
+        if n.handoff.state == "needs-decision":
+            set_node(c.manifest, key, status="blocked")
+            c.failures[key] = "worker-decision-required"
+            return True
+        if n.handoff.state in {
+            "transient-failure", "nonretryable-failure",
+        }:
+            failure = _latest_run_failure(
+                c.runtime,
+                node.work_item_id,
+                n.handoff.intent.target_agent_id,
+                baseline_direct_run_ids=(
+                    n.handoff.intent.baseline_direct_run_ids),
+                baseline_cutoff_created_at=(
+                    n.handoff.intent.baseline_cutoff_created_at),
+                target_run_id=n.handoff.intent.target_run_id,
+            )
+            if failure is None:
+                raise PlatformError(
+                    f"Failed Worker Run facts changed for work item "
+                    f"{node.work_item_id}")
+            if failure.classification == "nonretryable" or failure.exhausted:
+                reason = _block_runtime_failure(
+                    c.store, c.manifest, c.manifest_path, key, n.item,
+                    "worker", failure)
+                c.failures[key] = reason
+                log.info(
+                    logsetup.EVT_NODE_FAILED,
+                    kind=_DAG_KIND,
+                    node=key,
+                    id=node.work_item_id,
+                    reason=reason,
+                    run_id=failure.run.id,
+                )
+                return True
+            time.sleep(
+                _TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS
+                * failure.consecutive_runs)
+            n.handoff = _retry_worker_handoff(
+                c.store, c.runtime, c.code_host, c.manifest, key, n.item, consume_business_bounce=False)
+            if n.handoff.state == "needs-decision":
+                set_node(c.manifest, key, status="blocked")
+                c.failures[key] = "worker-decision-required"
+                return True
+            if n.handoff.state == "complete":
+                finalized = _finalize_worker_handoff_or_defer(
+                    c.store, c.manifest, key, node, n.handoff,
+                )
+                if finalized is None:
+                    return True
+                n.item, n.worker_gate_errors = finalized
+                set_node(c.manifest, key, status="in_progress")
+            else:
+                set_node(c.manifest, key, status="in_progress")
+                return True
+        elif n.handoff.state == "finished-without-submit":
+            set_node(c.manifest, key, status="in_progress")
+            n.item = replace(
+                c.store.observe_work_item_control(
+                    node.work_item_id).work_item,
+                agent_run_finished_without_submit=True,
+            )
+        elif n.handoff.state == "complete-unsealed":
+            cleared = c.store.update_work_item_metadata(
+                node.work_item_id, worker_handoff={})
+            _clear_recovery_pending(c.manifest, key, cleared)
+            n.item = n.handoff.projection.work_item
+            set_node(c.manifest, key, status="in_progress")
+        elif n.handoff.state != "complete":
+            set_node(c.manifest, key, status="in_progress")
+            return True
+        else:
+            finalized = _finalize_worker_handoff_or_defer(
+                c.store, c.manifest, key, node, n.handoff)
+            if finalized is None:
+                return True
+            n.item, n.worker_gate_errors = finalized
+            set_node(c.manifest, key, status="in_progress")
+    return False
+
+
+def _collect_stale_review(c: _Collect, n: _Node) -> bool:
+    """Old handoffs and a cleared intent can leave a review node on an authoring item: reset and re-dispatch the Reviewer."""
+    key, node = n.key, n.node
+    if node.status == "in_review" and n.item.phase == TaskPhase.AUTHORING:
+        # 兼容旧版本 handoff，及 wake 成功、intent 已清但 manifest 尚未落盘
+        # 的最后窗口。只有 review projection 已完全清空时才可直达 worker；
+        # 否则按 stale delivery 失效旧判定并补 fresh Reviewer。
+        if (
+            n.item.status in {
+                WorkItemStatus.IN_REVIEW, WorkItemStatus.IN_PROGRESS,
+            }
+            and not _review_projection_present(n.item)
+        ):
+            return True
+        if node.reviewer:
+            if n.item.decision_required not in (None, {}):
+                c.failures[key] = _block_existing_reviewer_decision(
+                    c.store, c.manifest, key, n.item)
+                return True
+            c.store.reset_review(node.work_item_id)
+            _dispatch_reviewer_for_current_subject(
+                c.store, c.runtime, c.code_host, c.manifest, key)
+            if c.manifest.nodes[key].status == "blocked":
+                c.failures[key] = ui(
+                    "Reviewer dispatch is blocked by the existing decision.",
+                    "reviewer 派发被已有 decision 阻塞。",
+                )
+                return True
+            set_node(c.manifest, key, status="in_review")
+            return True
+    return False
+
+
+def _collect_review_phase(c: _Collect, n: _Node) -> bool:
+    """An in_progress node whose item is already in the review phase follows its review projection."""
+    key, node = n.key, n.node
+    if (
+        node.status == "in_progress"
+        and node.reviewer
+        and n.item.phase == TaskPhase.REVIEW
+    ):
+        dispatch_block = _guard_reviewer_dispatch_control(
+            c.store, c.manifest, key, n.item.id)
+        if dispatch_block is not None:
+            c.failures[key] = dispatch_block
+            return True
+        if not _review_subject_is_current(c.manifest, key, n.item):
+            c.pending_review.append(
+                (key, node.work_item_id, node.reviewer))
+            return True
+        if n.item.review_verdict:
+            set_node(c.manifest, key, status="in_review")
+        else:
+            c.pending_review.append(
+                (key, node.work_item_id, node.reviewer))
+            return True
+
+    if (
+        node.status == "in_progress"
+        and n.item.status == WorkItemStatus.IN_REVIEW
+        and getattr(n.item, "phase", TaskPhase.AUTHORING) == TaskPhase.AUTHORING
+        and n.item.worker_handoff is None
+    ):
+        return True
+    return False
+
+
+def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
+    """The Worker Run ended without delivering: retry, recover a late delivery, or block."""
+    key, node = n.key, n.node
+    if n.item.worker_handoff is None:
+        retry = f"omac node retry {c.manifest_path} {key}"
+        reason = ui(
+            "Worker run ended without a causal handoff delivery. "
+            f"Run `{retry}` to authorize one explicit retry.",
+            "worker run 已结束但没有因果 handoff 交付。"
+            f"请运行 `{retry}` 显式授权一次重试。",
+        )
+        decision = {
+            "schema": DECISION_REQUIRED_SCHEMA,
+            "reason_code": "worker-retry-intent-required",
+            "kind": TaskKind.DEVELOP.value,
+            "phase": TaskPhase.AUTHORING.value,
+            "gate": "worker",
+            "resume_issue_id": node.work_item_id,
+            "node_id": key,
+            "next_action": retry,
+        }
+        if n.item.decision_required != decision:
+            _mark_recovery_pending(c.manifest, key)
+            c.store.update_work_item_metadata(
+                node.work_item_id, decision_required=decision)
+        c.store.update_status(
+            node.work_item_id, WorkItemStatus.BLOCKED)
+        set_node(c.manifest, key, status="blocked")
+        c.failures[key] = reason
+        return True
+    worker_limit = c.limits.get("worker", DEFAULT_RETRY["worker"])
+    cur_bounce = n.item.bounces.worker
+    consumed = consumed_bounces(
+        c.manifest, key, n.item, "worker")
+    reason = ui(
+        "Worker run ended without delivery through `omac work submit`.",
+        "worker run 已结束但未通过 omac work submit 交付")
+    limit_exhausted = worker_limit == 0 or consumed >= worker_limit
+    late_delivery = (
+        _recover_late_worker_delivery(
+            c.store, c.runtime, c.code_host, c.manifest, key, node, n.handoff)
+        if limit_exhausted else None
+    )
+    if late_delivery is not None:
+        n.item, n.worker_gate_errors = late_delivery
+        set_node(c.manifest, key, status="in_progress")
+    elif limit_exhausted:
+        c.store.clear_assignment(node.work_item_id)
+        cleared = c.store.update_work_item_metadata(
+            node.work_item_id, worker_handoff={})
+        _clear_recovery_pending(c.manifest, key, cleared)
+        c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+        set_node(c.manifest, key, status="blocked")
+        c.failures[key] = ui(
+            f"Worker did not deliver; retry limit {worker_limit} exhausted: {reason}",
+            f"worker 未交付(回退上界 {worker_limit} 已耗尽): {reason}")
+        log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                 id=node.work_item_id,
+                 absolute_audit=cur_bounce,
+                 current_generation_consumed=consumed,
+                 reason=ui(
+                     f"Worker delivery retry limit ({worker_limit}) exhausted",
+                     f"worker 未交付回退上界({worker_limit})已耗尽"))
+    else:
+        try:
+            n.handoff = _retry_worker_handoff(
+                c.store, c.runtime, c.code_host, c.manifest, key, n.item)
+            if n.handoff.state == "needs-decision":
+                set_node(c.manifest, key, status="blocked")
+                c.failures[key] = "worker-decision-required"
+                return True
+            if n.handoff.state == "complete":
+                finalized = _finalize_worker_handoff_or_defer(
+                    c.store, c.manifest, key, node, n.handoff,
+                )
+                if finalized is None:
+                    return True
+                n.item, n.worker_gate_errors = finalized
+            else:
+                set_node(c.manifest, key, status="in_progress")
+                log.info(
+                    logsetup.EVT_REVISION,
+                    kind=_DAG_KIND,
+                    node=key,
+                    id=node.work_item_id,
+                    gate="worker",
+                    round=cur_bounce + 1,
+                    max=worker_limit,
+                    **bounce_log_fields(
+                        n.item, "worker", manifest=c.manifest, node_id=key,
+                        absolute_count=cur_bounce + 1,
+                        limit=worker_limit),
+                )
+                return True
+            set_node(c.manifest, key, status="in_progress")
+            log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
+                     id=node.work_item_id, gate="worker",
+                     round=cur_bounce + 1, max=worker_limit,
+                     **bounce_log_fields(
+                         n.item, "worker", manifest=c.manifest, node_id=key,
+                         absolute_count=cur_bounce + 1,
+                         limit=worker_limit))
+        except PlatformError as exc:
+            c.store.update_work_item_metadata(
+                node.work_item_id, worker_bounce=cur_bounce)
+            c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+            c.store.add_comment(
+                node.work_item_id,
+                ui(
+                    f"Failed to return delivery to worker {node.worker}; retry count rolled back: {exc}",
+                    f"回退到 worker {node.worker} 继续交付失败"
+                    f"(已回滚回退计数): {exc}"),
+            )
+            set_node(c.manifest, key, status="blocked")
+            c.failures[key] = ui(
+                f"Failed to return delivery to worker {node.worker}: {exc}",
+                f"回退到 worker {node.worker} 继续交付失败: {exc}")
+    if late_delivery is None:
+        return True
+    return False
+
+
+def _collect_in_progress(c: _Collect, n: _Node) -> None:
+    """Worker stage: collect a finished delivery through the evidence, CI and merge gates."""
+    key, node = n.key, n.node
+    if n.item.agent_run_finished_without_submit and _worker_finished_without_submit(c, n):
+        return
+    if n.item.status == WorkItemStatus.IN_PROGRESS:
+        return None
+    if n.item.status == WorkItemStatus.DONE:
+        gate_errors = (
+            n.worker_gate_errors
+            if n.worker_gate_errors is not None
+            else validate_worker_evidence(node, n.item)
+        )
+        if gate_errors:
+            reason = "; ".join(gate_errors)
+            c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+            c.store.add_comment(node.work_item_id, ui(
+                f"Evidence gate failed: {reason}", f"证据门未通过: {reason}"))
+            set_node(c.manifest, key, status="blocked")
+            c.failures[key] = ui(
+                f"Worker evidence gate failed: {reason}",
+                f"worker 证据门未通过: {reason}")
+            log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                     id=node.work_item_id, reason=ui(
+                         f"Worker evidence gate: {reason}",
+                         f"worker 证据门: {reason}"))
+            return None
+        # worker 证据已过门 → CI 门(§7.3)。配置 ci 时运行 CI,绿才进评审;
+        # 失败/超时 → 有界「回到 worker」(retry_limits["ci"])。
+        # advance_delivery 已处理节点状态与平台状态切换;返回 'pass' 继续,
+        # 'bounce' 已转回 worker(本 tick 不再推进), 'blocked' 则阻止后续。
+        ci_action = advance_delivery(
+            c.config or {}, c.manifest, key, c.store, c.runtime, c.code_host, c.limits,
+            project_root=_project_root_from_manifest_path(c.manifest_path))
+        if ci_action == "bounce":
+            c.failures[key] = ui(
+                "CI failed; returned to the worker for resubmission.",
+                "CI 未通过,已转回 worker(上界未耗尽,待重交)")
+            log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
+                     id=node.work_item_id, gate="ci")
+            return None
+        if ci_action == "blocked":
+            c.failures[key] = ui(
+                "CI failed and retry.ci is exhausted.",
+                "CI 检查未通过,回退上界(retry.ci)已耗尽")
+            log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                     id=node.work_item_id, reason=ui(
+                         "CI retry limit exhausted", "CI 回退上界已耗尽"))
+            return None
+        # 只有绑定当前 worker delivery subject 的通过结论才能进入 merge。
+        if _current_delivery_passed_review(n.item):
+            merge_action = _complete_merge_if_confirmed(
+                c.store, c.runtime, c.code_host, c.manifest, key, c.limits, c.config or {}, c.manifest_path)
+            if merge_action == "pass":
+                c.store.reset_review(node.work_item_id)
+            elif merge_action == "blocked":
+                c.failures[key] = ui(
+                    "Merge failed and retry.merge is exhausted.",
+                    "merge 失败,回退上界(retry.merge)已耗尽")
+                log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                         id=node.work_item_id, reason=ui(
+                             "Merge retry limit exhausted", "merge 回退上界已耗尽"))
+        elif node.reviewer:
+            c.pending_review.append((key, node.work_item_id, node.reviewer))
+        else:
+            merge_action = _complete_merge_if_confirmed(
+                c.store, c.runtime, c.code_host, c.manifest, key, c.limits, c.config or {}, c.manifest_path)
+            if merge_action == "blocked":
+                c.failures[key] = ui(
+                    "Merge outcome cannot be confirmed.",
+                    "无法确认 merge 结果。")
+                log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                         id=node.work_item_id, reason=ui(
+                             "Merge confirmation failed", "merge 确认失败"))
+    elif n.item.status == WorkItemStatus.FAILED:
+        c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+        c.store.add_comment(node.work_item_id, ui(
+            "Worker execution failed", "worker 执行失败"))
+        set_node(c.manifest, key, status="blocked")
+        c.failures[key] = ui("Worker execution failed", "worker 执行失败")
+        log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                 id=node.work_item_id, reason=ui(
+                     "Worker execution failed", "worker 执行失败"))
+    elif n.item.status == WorkItemStatus.BLOCKED:
+        set_node(c.manifest, key, status="blocked")
+        c.failures[key] = ui(
+            "Worker platform status is blocked", "worker 平台状态 blocked")
+        log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                 id=node.work_item_id, reason=ui(
+                     "Worker is blocked on the platform", "worker 平台 blocked"))
+
+
+def _review_blocked_by_decision(c: _Collect, n: _Node) -> bool:
+    """A blocking recovery decision, or a stale review subject, stops the review stage before any verdict is read."""
+    key, node = n.key, n.node
+    n.decision_class = _classify_reviewer_recovery_decision(
+        c.manifest_path, key, n.item)
+    if n.decision_class in {"other", "explicit-review-retry"}:
+        if n.item.status != WorkItemStatus.BLOCKED:
+            c.store.update_status(n.item.id, WorkItemStatus.BLOCKED)
+        set_node(c.manifest, key, status="blocked")
+        c.failures[key] = ui(
+            "Reviewer recovery is blocked by the existing decision.",
+            "reviewer 恢复被现有 decision 阻塞。",
+        )
+        return True
+    if (
+        node.reviewer
+        and n.item.phase == TaskPhase.REVIEW
+        and not _review_subject_is_current(c.manifest, key, n.item)
+    ):
+        c.pending_review.append(
+            (key, node.work_item_id, node.reviewer))
+        return True
+    return False
+
+
+def _observe_reviewer_run(c: _Collect, n: _Node) -> bool:
+    """Observe the one intended Reviewer Run: classify failures, retry within budget, or wait."""
+    key, node = n.key, n.node
+    reviewer_id = c.store.resolve_agent_id(node.reviewer)
+    baseline, baseline_error = (
+        _reviewer_run_baseline_for_observation(
+            c.store, c.runtime, c.manifest, key, n.item,
+            node.reviewer, reviewer_id)
+    )
+    if baseline_error is not None:
+        c.failures[key] = _block_reviewer(
+            c.store, c.manifest, c.manifest_path, key, n.item,
+            "reviewer-run-baseline-unavailable", baseline_error)
+        return True
+    observed = _observe_direct_run_attempt(
+        c.runtime.list_runs(node.work_item_id), reviewer_id,
+        baseline_direct_run_ids=baseline.baseline_direct_run_ids,
+        cutoff_created_at=baseline.cutoff_created_at,
+        target_run_id=baseline.target_run_id,
+        attempt=baseline.attempt)
+    if observed.state == "unexpected":
+        c.failures[key] = _block_reviewer(
+            c.store, c.manifest, c.manifest_path, key, n.item,
+            "reviewer-run-baseline-unavailable", observed.detail)
+        return True
+    if observed.target_run_id != baseline.target_run_id:
+        baseline = replace(
+            baseline, target_run_id=observed.target_run_id)
+        c.store.update_work_item_metadata(
+            n.item.id, reviewer_run_baseline=baseline)
+    if (
+        observed.state == "missing" and baseline.attempt > 1
+        and baseline.target_run_id is None
+    ):
+        c.failures[key] = _block_reviewer(
+            c.store, c.manifest, c.manifest_path, key, n.item,
+            "reviewer-run-dispatch-unresolved",
+            "persisted retry generation has no target Run")
+        return True
+    if (
+        observed.state == "missing"
+        and baseline.attempt == 1
+        and baseline.target_run_id is None
+        and n.item.status == WorkItemStatus.IN_REVIEW
+        and n.item.phase == TaskPhase.REVIEW
+        and not n.item.reviewer
+        and not n.item.platform_assignee_id
+    ):
+        # A current subject can be prepared without dispatching.
+        # Reuse guarded initial dispatch; assigned or bound
+        # attempts stay on their existing observation path.
+        c.pending_review.append(
+            (key, node.work_item_id, node.reviewer))
+        return True
+    reviewer_terminal = observed.terminal
+    retry_kind = None
+    if reviewer_terminal:
+        dispatch_block = _guard_reviewer_dispatch_control(
+            c.store, c.manifest, key, n.item.id)
+        if dispatch_block is not None:
+            c.failures[key] = dispatch_block
+            return True
+    if reviewer_terminal and reviewer_terminal.outcome != "finished-without-submit":
+        reviewer_failure = _RunFailure(
+            reviewer_terminal.run,
+            (
+                "transient"
+                if reviewer_terminal.outcome == "transient-failure"
+                else "nonretryable"
+            ),
+            reviewer_terminal.consecutive_runs,
+        )
+        if (
+            reviewer_failure.classification == "nonretryable"
+            or reviewer_failure.exhausted
+        ):
+            c.failures[key] = (
+                _block_runtime_failure(
+                    c.store, c.manifest, c.manifest_path, key, n.item,
+                    "reviewer", reviewer_failure)
+            )
+            return True
+        time.sleep(_TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS)
+        retry_kind = "infrastructure_retry"
+    elif reviewer_terminal:
+        grace_state = _reviewer_no_submit_grace_state(
+            c.store, c.runtime, n.item, baseline, reviewer_terminal)
+        if grace_state in {"submitted", "waiting"}:
+            return True
+        if grace_state == "blocked":
+            dispatch_block = _guard_reviewer_dispatch_control(
+                c.store, c.manifest, key, n.item.id)
+            if dispatch_block is not None:
+                c.failures[key] = dispatch_block
+            return True
+        if grace_state == "unavailable":
+            c.failures[key] = _block_reviewer(
+                c.store, c.manifest, c.manifest_path, key, n.item,
+                "reviewer-run-terminal-time-unavailable",
+                "terminal timestamp is unavailable",
+                reviewer_terminal.run.id)
+            return True
+        if (
+            reviewer_terminal.consecutive_runs
+            >= c.no_submit_runs
+        ):
+            c.failures[key] = _block_reviewer(
+                c.store, c.manifest, c.manifest_path, key, n.item,
+                "reviewer-run-no-submit-retry-exhausted",
+                f"reviewer exhausted no-submit attempts "
+                f"(budget {c.no_submit_runs})",
+                reviewer_terminal.run.id)
+            return True
+        retry_kind = "finished_without_submit"
+    if retry_kind:
+        dispatch_block = _guard_reviewer_dispatch_control(
+            c.store, c.manifest, key, n.item.id)
+        if dispatch_block is not None:
+            c.failures[key] = dispatch_block
+            return True
+        retry_error = _retry_reviewer_attempt(
+            c.store, c.runtime, node, n.item, baseline,
+            manifest=c.manifest, key=key)
+        if retry_error:
+            if c.manifest.nodes[key].status == "blocked":
+                c.failures[key] = ui(
+                    "Reviewer dispatch is blocked by the existing decision or platform status.",
+                    "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
+                )
+                return True
+            c.failures[key] = _block_reviewer(
+                c.store, c.manifest, c.manifest_path, key, n.item,
+                "reviewer-run-dispatch-unresolved", retry_error)
+            return True
+        set_node(c.manifest, key, status="in_review")
+        log.info(
+            logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND,
+            node=key, id=node.work_item_id,
+            reviewer=node.reviewer, recovered=True,
+            **{retry_kind: True})
+        return True
+    return False
+
+
+def _review_without_verdict(c: _Collect, n: _Node) -> None:
+    """The Reviewer has not submitted a verdict yet."""
+    key, node = n.key, n.node
+    if node.reviewer and _observe_reviewer_run(c, n):
+        return
+    if _reviewer_run_needs_resume(n.item):
+        try:
+            resumed = _resume_reviewer_run(
+                c.store, c.runtime, node, manifest=c.manifest, key=key)
+            if resumed:
+                set_node(c.manifest, key, status="in_review")
+                log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND,
+                         node=key, id=node.work_item_id,
+                         reviewer=node.reviewer, recovered=True)
+                return None
+            if c.manifest.nodes[key].status == "blocked":
+                c.failures[key] = ui(
+                    "Reviewer dispatch is blocked by the existing decision or platform status.",
+                    "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
+                )
+                return None
+        except PlatformError as exc:
+            c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+            c.store.add_comment(node.work_item_id, ui(
+                f"Failed to resume reviewer {node.reviewer}: {exc}",
+                f"恢复 reviewer {node.reviewer} 失败: {exc}"))
+            set_node(c.manifest, key, status="blocked")
+            c.failures[key] = ui(
+                f"Failed to resume reviewer {node.reviewer}: {exc}",
+                f"恢复 reviewer {node.reviewer} 失败: {exc}")
+            return None
+    # reviewer 已落终态但缺结构化 review_verdict → blocked(无证据不予通过)
+    if n.item.status in (WorkItemStatus.DONE, WorkItemStatus.FAILED, WorkItemStatus.BLOCKED):
+        c.store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
+        c.store.add_comment(
+            node.work_item_id,
+            ui(
+                f"Reviewer platform status is {n.item.status.value}, but structured review_verdict evidence is missing.",
+                f"reviewer 平台 {n.item.status.value} 但缺 review_verdict 结构化证据"),
+        )
+        set_node(c.manifest, key, status="blocked")
+        c.failures[key] = ui(
+            "Reviewer is missing review_verdict", "reviewer 缺 review_verdict")
+        log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                 id=node.work_item_id, reason=ui(
+                     "Reviewer is missing review_verdict", "reviewer 缺 review_verdict"))
+
+
+def _review_consume_baseline(c: _Collect, n: _Node) -> bool:
+    """Clear the dedicated baseline-unavailable decision just before consuming the preserved verdict."""
+    key, node = n.key, n.node
+    if n.decision_class == "canonical-baseline-unavailable":
+        reviewer_id = c.store.resolve_agent_id(node.reviewer)
+        marker_error = _delayed_reviewer_recovery_marker_error(
+            c.manifest, c.manifest_path, key, n.item,
+            node.reviewer, reviewer_id,
+            require_target=True,
+        )
+        if marker_error is not None:
+            if n.item.status != WorkItemStatus.BLOCKED:
+                c.store.update_status(n.item.id, WorkItemStatus.BLOCKED)
+            set_node(c.manifest, key, status="blocked")
+            c.failures[key] = ui(
+                f"Reviewer recovery is unsafe: {marker_error}.",
+                f"reviewer 恢复不安全：{marker_error}。",
+            )
+            return True
+        # The dedicated decision is the durable recovery marker. Only
+        # the Runner that is about to consume this exact verdict clears
+        # it. An unknown write result stops this tick; restart either
+        # retries the marker clear or observes it cleared and consumes
+        # the still-preserved verdict normally.
+        cleared = c.store.update_work_item_metadata(
+            n.item.id, decision_required={})
+        _clear_recovery_pending(c.manifest, key, cleared)
+    return False
+
+
+def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
+    """Apply a submitted verdict: merge on pass, bounded rework on reject or invalid evidence."""
+    key, node = n.key, n.node
+    log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
+             id=node.work_item_id, verdict=verdict)
+    gate_errors = validate_review_evidence(node, n.item)
+    configured_review_limit = c.limits.get(
+        "review", DEFAULT_RETRY["review"])
+    rework_budget = review_rework_budget(
+        c.manifest, key, n.item, configured_review_limit)
+    if verdict == "reject" and not gate_errors:
+        boundary_conflicts = contract_boundary_conflicts(
+            c.manifest, node, n.item)
+        if boundary_conflicts:
+            decision = build_contract_boundary_decision(
+                n.item, node, boundary_conflicts)
+            _mark_recovery_pending(c.manifest, key)
+            c.store.update_work_item_metadata(
+                node.work_item_id,
+                decision_required=decision,
+                phase=TaskPhase.REVIEW,
+            )
+            c.store.update_status(
+                node.work_item_id, WorkItemStatus.BLOCKED)
+            set_node(c.manifest, key, status="blocked")
+            c.failures[key] = ui(
+                "Reviewer required inputs outside the typed node contract; "
+                "operator decision is required before rework.",
+                "Reviewer 要求了 typed node contract 边界之外的输入；"
+                "继续返工前需要人工决策。",
+            )
+            log.info(
+                logsetup.EVT_NEEDS_DECISION,
+                kind=_DAG_KIND,
+                node=key,
+                id=node.work_item_id,
+                gate="review-boundary",
+            )
+            return None
+        resolution = resolve_convergence(n.item, node_id=key)
+        resolution.raise_if_invalid(PlatformError, n.item.id)
+        if resolution.state is ResolutionState.NEEDS_DECISION:
+            c.failures[key] = _block_review_non_convergence(
+                c.store, c.manifest, key, n.item, resolution)
+            return None
+    if verdict == "pass-with-nits" and not gate_errors:
+        if not _review_nits_acceptance_matches(c.manifest, key, n.item):
+            c.failures[key] = _block_review_nits_acceptance(
+                c.store, c.manifest, c.manifest_path, key, n.item)
+            return None
+        log.info(
+            logsetup.EVT_VERDICT,
+            kind=_DAG_KIND,
+            node=key,
+            id=node.work_item_id,
+            verdict=verdict,
+            operator_acceptance=True,
+        )
+    if not gate_errors and verdict != "reject":
+        # reviewer pass → P4.2 自动 merge 门。命令与远端观察均由引擎适配器执行。
+        merge_action = _complete_merge_if_confirmed(
+            c.store, c.runtime, c.code_host, c.manifest, key, c.limits, c.config or {}, c.manifest_path)
+        if merge_action == "blocked":
+            c.failures[key] = ui(
+                "Merge failed and retry.merge is exhausted.",
+                "merge 失败,回退上界(retry.merge)已耗尽")
+            log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                     id=node.work_item_id, reason=ui(
+                         "Merge retry limit exhausted", "merge 回退上界已耗尽"))
+        # else "bounce": 节点已转回 in_progress,本 tick 不再推进。
+    else:
+        # reviewer reject 或评审证据不合格:有界「回到 worker」回退,
+        # 受 retry_limits["review"] 约束。
+        reason = "; ".join(gate_errors) if gate_errors else "reviewer reject"
+        if not rework_budget.allows_rework:
+            c.failures[key] = _block_review_rework_budget(
+                c.store,
+                c.manifest,
+                key,
+                n.item,
+                rework_budget,
+                gate=("review-evidence" if gate_errors else "review"),
+                reason=reason,
+            )
+        else:
+            # 有界「回到 worker」由持久化 intent 串起各 checkpoint；
+            # 任一步结果未知都保留 intent 与绝对 bounce，交给 restart 幂等续跑。
+            n.handoff = _dispatch_worker_handoff(
+                c.store, c.runtime, c.code_host, c.manifest, key,
+                review_bounce=rework_budget.next_round,
+                gate="review",
+                projection=n.projection,
+            )
+            if n.handoff.state == "complete":
+                _finalize_worker_handoff_or_defer(
+                    c.store, c.manifest, key, node, n.handoff)
+            set_node(c.manifest, key, status="in_progress")
+            log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
+                     id=node.work_item_id, gate="review",
+                     round=rework_budget.next_round,
+                     max=rework_budget.authorized_through_round)
+
+
+def _collect_in_review(c: _Collect, n: _Node) -> None:
+    """Reviewer stage: observe the Run until a verdict exists, then apply it."""
+    if _review_blocked_by_decision(c, n):
+        return
+    verdict = n.item.review_verdict
+    if not verdict:
+        _review_without_verdict(c, n)
+        return
+    if _review_consume_baseline(c, n):
+        return
+    _review_apply_verdict(c, n, verdict)
+
+
+def _collect_merging(c: _Collect, n: _Node) -> None:
+    """A merging node only confirms the merge outcome."""
+    key, node = n.key, n.node
+    merge_action = _complete_merge_if_confirmed(
+        c.store, c.runtime, c.code_host, c.manifest, key, c.limits,
+        c.config or {}, c.manifest_path)
+    if merge_action == "blocked":
+        c.failures[key] = ui(
+            "Merge outcome cannot be confirmed.",
+            "无法确认 merge 结果。")
+        log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
+                 id=node.work_item_id, reason=ui(
+                     "Merge confirmation failed", "merge 确认失败"))
+
+
+def _dispatch_pending_reviews(c: _Collect) -> None:
+    """Reviewer transitions run after the node walk so they cannot disturb it."""
+    # ---- reviewer 阶段过渡(遍历后执行,避免改 manifest 影响遍历)----
+    for key, item_id, reviewer in c.pending_review:
+        try:
+            dispatched = _dispatch_reviewer_for_current_subject(
+                c.store, c.runtime, c.code_host, c.manifest, key)
+            if c.manifest.nodes[key].status == "blocked":
+                c.failures[key] = ui(
+                    "Reviewer dispatch is blocked by the existing decision.",
+                    "reviewer 派发被已有 decision 阻塞。",
+                )
+                continue
+            set_node(c.manifest, key, status="in_review")
+            if dispatched:
+                log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,
+                         id=item_id, reviewer=reviewer)
+        except _ReviewerDispatchUnresolved as exc:
+            c.failures[key] = _block_reviewer(
+                c.store, c.manifest, c.manifest_path, key,
+                c.store.get_work_item(item_id),
+                "reviewer-run-dispatch-unresolved", str(exc))
+        except PlatformError as exc:
+            c.failures[key] = _block_reviewer(
+                c.store, c.manifest, c.manifest_path, key,
+                c.store.get_work_item(item_id),
+                "reviewer-run-baseline-unavailable", str(exc))
+
+
+def _running_observations(store, manifest, observations):
+    """Projections of every running node: fresh reconcile observations when given, else a complete read."""
+    if observations is None:
+        return {
+            key: WorkItemControlProjection(store.get_work_item(node.work_item_id))
+            for key, node in manifest.nodes.items()
+            if node.status in RUNNING_STATUSES and node.work_item_id
+        }
+    else:
+        running_observations = {}
+        for key, node in manifest.nodes.items():
+            if node.status not in RUNNING_STATUSES or not node.work_item_id:
+                continue
+            projection = observations.get(key)
+            if projection is None:
+                raise PlatformError(
+                    f"Fresh reconcile observation is missing for running node {key}")
+            required = _build_work_item_hydration_plan(node, projection)
+            missing = required & projection.deferred_payloads
+            if missing:
+                names = ", ".join(sorted(payload.value for payload in missing))
+                raise PlatformError(
+                    f"Fresh reconcile observation lacks collect evidence for "
+                    f"running node {key}: {names}")
+            running_observations[key] = projection
+    return running_observations
+
+
+
+_PRELUDE_STAGES = (
+    _collect_worker_blocker,
+    _collect_handoff_convergence,
+    _collect_legacy_delivery,
+    _collect_legacy_initial_worker,
+    _collect_worker_handoff,
+    _collect_stale_review,
+    _collect_review_phase,
+)
+_STATUS_COLLECTORS = {
+    "in_progress": _collect_in_progress,
+    "in_review": _collect_in_review,
+    "merging": _collect_merging,
+}
+
+
+def _collect_node(c: _Collect, n: _Node) -> None:
+    for stage in _PRELUDE_STAGES:
+        if stage(c, n):
+            return
+    collector = _STATUS_COLLECTORS.get(n.node.status)
+    if collector is not None:
+        collector(c, n)
+
+
 def collect_results(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -3586,835 +4534,27 @@ def collect_results(
     in_review 节点:
       reviewer pass → merge(if configured) → done;reject → blocked(P4 前先 blocked)
     """
-    # Standalone callers retain the complete-read fallback.  ``tick`` passes
-    # the fresh, atomic reconcile observations so collection does not repeat
-    # the same Issue and attachment reads.
     manifest._recovery_manifest_path = manifest_path
-    if observations is None:
-        running_observations = {
-            key: WorkItemControlProjection(store.get_work_item(node.work_item_id))
-            for key, node in manifest.nodes.items()
-            if node.status in RUNNING_STATUSES and node.work_item_id
-        }
-    else:
-        running_observations = {}
-        for key, node in manifest.nodes.items():
-            if node.status not in RUNNING_STATUSES or not node.work_item_id:
-                continue
-            projection = observations.get(key)
-            if projection is None:
-                raise PlatformError(
-                    f"Fresh reconcile observation is missing for running node {key}")
-            required = _build_work_item_hydration_plan(node, projection)
-            missing = required & projection.deferred_payloads
-            if missing:
-                names = ", ".join(sorted(payload.value for payload in missing))
-                raise PlatformError(
-                    f"Fresh reconcile observation lacks collect evidence for "
-                    f"running node {key}: {names}")
-            running_observations[key] = projection
-    failures: Dict[str, str] = {}
-    pending_review: List[Tuple[str, str, str]] = []  # (key, item_id, reviewer)
-
+    running = _running_observations(store, manifest, observations)
     limits = dict(DEFAULT_RETRY)
     if retry_limits:
         for k, v in retry_limits.items():
             if k in limits:
                 limits[k] = v
-    # reviewer no-submit 续跑预算(config.retry.no_submit_runs,缺省 2)。
-    # 与基础设施瞬时失败预算 _TRANSIENT_RUNTIME_MAX_RUNS 语义不同,后者固定。
-    no_submit_runs = resolve_no_submit_runs(config or {})
-
+    c = _Collect(
+        store, runtime, code_host, manifest, manifest_path, limits, config,
+        # reviewer no-submit 续跑预算(config.retry.no_submit_runs,缺省 2)。
+        # 与基础设施瞬时失败预算 _TRANSIENT_RUNTIME_MAX_RUNS 语义不同,后者固定。
+        resolve_no_submit_runs(config or {}))
     for key, node in manifest.nodes.items():
         if node.status not in RUNNING_STATUSES or not node.work_item_id:
             continue
-        projection = running_observations[key]
-        item = projection.work_item
-        worker_gate_errors = None
-        # Structured worker blockers are operator decisions, not no-submit failures.
-        if item.phase == TaskPhase.AUTHORING and item.decision_required:
-            if item.status != WorkItemStatus.BLOCKED:
-                store.update_status(item.id, WorkItemStatus.BLOCKED)
-            set_node(manifest, key, status="blocked")
-            failures[key] = str(item.decision_required.get("reason_code", "worker-decision-required"))
-            continue
-
-        # A persisted review handoff belongs to the review ledger that created
-        # it.  Re-evaluate the one authoritative convergence policy before
-        # observing, retrying, assigning, or waking that handoff.  Explicit
-        # operator/amendment dispatches use a different gate and are not
-        # reinterpreted as stale review rework.
-        handoff_intent = item.worker_handoff
-        if (
-            handoff_intent is not None
-            and handoff_intent.gate in {"review", "review-nits"}
-        ):
-            resolution = _resolve_handoff_review_convergence(
-                item, handoff_intent, key, store=store)
-            if resolution.state is ResolutionState.NEEDS_DECISION:
-                failures[key] = _block_review_non_convergence(
-                    store, manifest, key, item, resolution)
-                continue
-
-        if _legacy_delivery_requires_retry(manifest, key, node, item):
-            if any(run.kind == "direct" and run.active
-                   for run in runtime.list_runs(node.work_item_id)):
-                continue
-            retry = f"omac node retry {manifest_path} {key}"
-            reason = ui(
-                "Legacy rework delivery lacks an immutable submitted head or "
-                f"controller-sealed delivery identity. Run `{retry}`; the old "
-                "verification and Reviewer verdict cannot be reused.",
-                "旧返工交付缺少不可变 submitted head 或 Controller 封存的 "
-                f"delivery identity。请运行 `{retry}`；旧 verification 和 "
-                "Reviewer verdict 不得复用。",
-            )
-            decision = {
-                "schema": DECISION_REQUIRED_SCHEMA, "reason_code": "legacy-delivery-retry-required",
-                "kind": TaskKind.DEVELOP.value, "phase": TaskPhase.AUTHORING.value,
-                "gate": "delivery-identity", "resume_issue_id": node.work_item_id,
-                "node_id": key, "next_action": retry,
-            }
-            if item.decision_required != decision:
-                _mark_recovery_pending(manifest, key)
-                store.update_work_item_metadata(
-                    node.work_item_id, decision_required=decision)
-                store.add_comment(node.work_item_id, reason)
-            if item.status != WorkItemStatus.BLOCKED:
-                store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-            set_node(manifest, key, status="blocked")
-            failures[key] = reason
-            continue
-
-        item, legacy_failure = _recover_legacy_initial_worker(
-            store, runtime, manifest, key, item, manifest_path)
-        if legacy_failure:
-            failures[key] = legacy_failure
-            continue
-        if item is not projection.work_item:
-            projection = replace(projection, work_item=item)
-
-        if item.worker_handoff is not None:
-            handoff_intent = item.worker_handoff
-            if not handoff_intent.is_causally_bound():
-                raise PlatformError(
-                    f"Worker handoff for {node.work_item_id} predates causal "
-                    "delivery identity support; refusing to infer completion")
-            handoff = _dispatch_worker_handoff(
-                store, runtime, code_host, manifest, key,
-                projection=projection)
-            if handoff.state == "needs-decision":
-                set_node(manifest, key, status="blocked")
-                failures[key] = "worker-decision-required"
-                continue
-            if handoff.state in {
-                "transient-failure", "nonretryable-failure",
-            }:
-                failure = _latest_run_failure(
-                    runtime,
-                    node.work_item_id,
-                    handoff.intent.target_agent_id,
-                    baseline_direct_run_ids=(
-                        handoff.intent.baseline_direct_run_ids),
-                    baseline_cutoff_created_at=(
-                        handoff.intent.baseline_cutoff_created_at),
-                    target_run_id=handoff.intent.target_run_id,
-                )
-                if failure is None:
-                    raise PlatformError(
-                        f"Failed Worker Run facts changed for work item "
-                        f"{node.work_item_id}")
-                if failure.classification == "nonretryable" or failure.exhausted:
-                    reason = _block_runtime_failure(
-                        store, manifest, manifest_path, key, item,
-                        "worker", failure)
-                    failures[key] = reason
-                    log.info(
-                        logsetup.EVT_NODE_FAILED,
-                        kind=_DAG_KIND,
-                        node=key,
-                        id=node.work_item_id,
-                        reason=reason,
-                        run_id=failure.run.id,
-                    )
-                    continue
-                time.sleep(
-                    _TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS
-                    * failure.consecutive_runs)
-                handoff = _retry_worker_handoff(
-                    store, runtime, code_host, manifest, key, item, consume_business_bounce=False)
-                if handoff.state == "needs-decision":
-                    set_node(manifest, key, status="blocked")
-                    failures[key] = "worker-decision-required"
-                    continue
-                if handoff.state == "complete":
-                    finalized = _finalize_worker_handoff_or_defer(
-                        store, manifest, key, node, handoff,
-                    )
-                    if finalized is None:
-                        continue
-                    item, worker_gate_errors = finalized
-                    set_node(manifest, key, status="in_progress")
-                else:
-                    set_node(manifest, key, status="in_progress")
-                    continue
-            elif handoff.state == "finished-without-submit":
-                set_node(manifest, key, status="in_progress")
-                item = replace(
-                    store.observe_work_item_control(
-                        node.work_item_id).work_item,
-                    agent_run_finished_without_submit=True,
-                )
-            elif handoff.state == "complete-unsealed":
-                cleared = store.update_work_item_metadata(
-                    node.work_item_id, worker_handoff={})
-                _clear_recovery_pending(manifest, key, cleared)
-                item = handoff.projection.work_item
-                set_node(manifest, key, status="in_progress")
-            elif handoff.state != "complete":
-                set_node(manifest, key, status="in_progress")
-                continue
-            else:
-                finalized = _finalize_worker_handoff_or_defer(
-                    store, manifest, key, node, handoff)
-                if finalized is None:
-                    continue
-                item, worker_gate_errors = finalized
-                set_node(manifest, key, status="in_progress")
-
-        if node.status == "in_review" and item.phase == TaskPhase.AUTHORING:
-            # 兼容旧版本 handoff，及 wake 成功、intent 已清但 manifest 尚未落盘
-            # 的最后窗口。只有 review projection 已完全清空时才可直达 worker；
-            # 否则按 stale delivery 失效旧判定并补 fresh Reviewer。
-            if (
-                item.status in {
-                    WorkItemStatus.IN_REVIEW, WorkItemStatus.IN_PROGRESS,
-                }
-                and not _review_projection_present(item)
-            ):
-                continue
-            if node.reviewer:
-                if item.decision_required not in (None, {}):
-                    failures[key] = _block_existing_reviewer_decision(
-                        store, manifest, key, item)
-                    continue
-                store.reset_review(node.work_item_id)
-                _dispatch_reviewer_for_current_subject(
-                    store, runtime, code_host, manifest, key)
-                if manifest.nodes[key].status == "blocked":
-                    failures[key] = ui(
-                        "Reviewer dispatch is blocked by the existing decision.",
-                        "reviewer 派发被已有 decision 阻塞。",
-                    )
-                    continue
-                set_node(manifest, key, status="in_review")
-                continue
-
-        if (
-            node.status == "in_progress"
-            and node.reviewer
-            and item.phase == TaskPhase.REVIEW
-        ):
-            dispatch_block = _guard_reviewer_dispatch_control(
-                store, manifest, key, item.id)
-            if dispatch_block is not None:
-                failures[key] = dispatch_block
-                continue
-            if not _review_subject_is_current(manifest, key, item):
-                pending_review.append(
-                    (key, node.work_item_id, node.reviewer))
-                continue
-            if item.review_verdict:
-                set_node(manifest, key, status="in_review")
-            else:
-                pending_review.append(
-                    (key, node.work_item_id, node.reviewer))
-                continue
-
-        if (
-            node.status == "in_progress"
-            and item.status == WorkItemStatus.IN_REVIEW
-            and getattr(item, "phase", TaskPhase.AUTHORING) == TaskPhase.AUTHORING
-            and item.worker_handoff is None
-        ):
-            continue
-
-        # ---- in_progress: worker 阶段回收 ----
-        if node.status == "in_progress":
-            if item.agent_run_finished_without_submit:
-                if item.worker_handoff is None:
-                    retry = f"omac node retry {manifest_path} {key}"
-                    reason = ui(
-                        "Worker run ended without a causal handoff delivery. "
-                        f"Run `{retry}` to authorize one explicit retry.",
-                        "worker run 已结束但没有因果 handoff 交付。"
-                        f"请运行 `{retry}` 显式授权一次重试。",
-                    )
-                    decision = {
-                        "schema": DECISION_REQUIRED_SCHEMA,
-                        "reason_code": "worker-retry-intent-required",
-                        "kind": TaskKind.DEVELOP.value,
-                        "phase": TaskPhase.AUTHORING.value,
-                        "gate": "worker",
-                        "resume_issue_id": node.work_item_id,
-                        "node_id": key,
-                        "next_action": retry,
-                    }
-                    if item.decision_required != decision:
-                        _mark_recovery_pending(manifest, key)
-                        store.update_work_item_metadata(
-                            node.work_item_id, decision_required=decision)
-                    store.update_status(
-                        node.work_item_id, WorkItemStatus.BLOCKED)
-                    set_node(manifest, key, status="blocked")
-                    failures[key] = reason
-                    continue
-                worker_limit = limits.get("worker", DEFAULT_RETRY["worker"])
-                cur_bounce = item.bounces.worker
-                consumed = consumed_bounces(
-                    manifest, key, item, "worker")
-                reason = ui(
-                    "Worker run ended without delivery through `omac work submit`.",
-                    "worker run 已结束但未通过 omac work submit 交付")
-                limit_exhausted = worker_limit == 0 or consumed >= worker_limit
-                late_delivery = (
-                    _recover_late_worker_delivery(
-                        store, runtime, code_host, manifest, key, node, handoff)
-                    if limit_exhausted else None
-                )
-                if late_delivery is not None:
-                    item, worker_gate_errors = late_delivery
-                    set_node(manifest, key, status="in_progress")
-                elif limit_exhausted:
-                    store.clear_assignment(node.work_item_id)
-                    cleared = store.update_work_item_metadata(
-                        node.work_item_id, worker_handoff={})
-                    _clear_recovery_pending(manifest, key, cleared)
-                    store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                    set_node(manifest, key, status="blocked")
-                    failures[key] = ui(
-                        f"Worker did not deliver; retry limit {worker_limit} exhausted: {reason}",
-                        f"worker 未交付(回退上界 {worker_limit} 已耗尽): {reason}")
-                    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id,
-                             absolute_audit=cur_bounce,
-                             current_generation_consumed=consumed,
-                             reason=ui(
-                                 f"Worker delivery retry limit ({worker_limit}) exhausted",
-                                 f"worker 未交付回退上界({worker_limit})已耗尽"))
-                else:
-                    try:
-                        handoff = _retry_worker_handoff(
-                            store, runtime, code_host, manifest, key, item)
-                        if handoff.state == "needs-decision":
-                            set_node(manifest, key, status="blocked")
-                            failures[key] = "worker-decision-required"
-                            continue
-                        if handoff.state == "complete":
-                            finalized = _finalize_worker_handoff_or_defer(
-                                store, manifest, key, node, handoff,
-                            )
-                            if finalized is None:
-                                continue
-                            item, worker_gate_errors = finalized
-                        else:
-                            set_node(manifest, key, status="in_progress")
-                            log.info(
-                                logsetup.EVT_REVISION,
-                                kind=_DAG_KIND,
-                                node=key,
-                                id=node.work_item_id,
-                                gate="worker",
-                                round=cur_bounce + 1,
-                                max=worker_limit,
-                                **bounce_log_fields(
-                                    item, "worker", manifest=manifest, node_id=key,
-                                    absolute_count=cur_bounce + 1,
-                                    limit=worker_limit),
-                            )
-                            continue
-                        set_node(manifest, key, status="in_progress")
-                        log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
-                                 id=node.work_item_id, gate="worker",
-                                 round=cur_bounce + 1, max=worker_limit,
-                                 **bounce_log_fields(
-                                     item, "worker", manifest=manifest, node_id=key,
-                                     absolute_count=cur_bounce + 1,
-                                     limit=worker_limit))
-                    except PlatformError as exc:
-                        store.update_work_item_metadata(
-                            node.work_item_id, worker_bounce=cur_bounce)
-                        store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                        store.add_comment(
-                            node.work_item_id,
-                            ui(
-                                f"Failed to return delivery to worker {node.worker}; retry count rolled back: {exc}",
-                                f"回退到 worker {node.worker} 继续交付失败"
-                                f"(已回滚回退计数): {exc}"),
-                        )
-                        set_node(manifest, key, status="blocked")
-                        failures[key] = ui(
-                            f"Failed to return delivery to worker {node.worker}: {exc}",
-                            f"回退到 worker {node.worker} 继续交付失败: {exc}")
-                if late_delivery is None:
-                    continue
-            if item.status == WorkItemStatus.IN_PROGRESS:
-                continue
-            if item.status == WorkItemStatus.DONE:
-                gate_errors = (
-                    worker_gate_errors
-                    if worker_gate_errors is not None
-                    else validate_worker_evidence(node, item)
-                )
-                if gate_errors:
-                    reason = "; ".join(gate_errors)
-                    store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                    store.add_comment(node.work_item_id, ui(
-                        f"Evidence gate failed: {reason}", f"证据门未通过: {reason}"))
-                    set_node(manifest, key, status="blocked")
-                    failures[key] = ui(
-                        f"Worker evidence gate failed: {reason}",
-                        f"worker 证据门未通过: {reason}")
-                    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id, reason=ui(
-                                 f"Worker evidence gate: {reason}",
-                                 f"worker 证据门: {reason}"))
-                    continue
-                # worker 证据已过门 → CI 门(§7.3)。配置 ci 时运行 CI,绿才进评审;
-                # 失败/超时 → 有界「回到 worker」(retry_limits["ci"])。
-                # advance_delivery 已处理节点状态与平台状态切换;返回 'pass' 继续,
-                # 'bounce' 已转回 worker(本 tick 不再推进), 'blocked' 则阻止后续。
-                ci_action = advance_delivery(
-                    config or {}, manifest, key, store, runtime, code_host, limits,
-                    project_root=_project_root_from_manifest_path(manifest_path))
-                if ci_action == "bounce":
-                    failures[key] = ui(
-                        "CI failed; returned to the worker for resubmission.",
-                        "CI 未通过,已转回 worker(上界未耗尽,待重交)")
-                    log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id, gate="ci")
-                    continue
-                if ci_action == "blocked":
-                    failures[key] = ui(
-                        "CI failed and retry.ci is exhausted.",
-                        "CI 检查未通过,回退上界(retry.ci)已耗尽")
-                    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id, reason=ui(
-                                 "CI retry limit exhausted", "CI 回退上界已耗尽"))
-                    continue
-                # 只有绑定当前 worker delivery subject 的通过结论才能进入 merge。
-                if _current_delivery_passed_review(item):
-                    merge_action = _complete_merge_if_confirmed(
-                        store, runtime, code_host, manifest, key, limits, config or {}, manifest_path)
-                    if merge_action == "pass":
-                        store.reset_review(node.work_item_id)
-                    elif merge_action == "blocked":
-                        failures[key] = ui(
-                            "Merge failed and retry.merge is exhausted.",
-                            "merge 失败,回退上界(retry.merge)已耗尽")
-                        log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                                 id=node.work_item_id, reason=ui(
-                                     "Merge retry limit exhausted", "merge 回退上界已耗尽"))
-                elif node.reviewer:
-                    pending_review.append((key, node.work_item_id, node.reviewer))
-                else:
-                    merge_action = _complete_merge_if_confirmed(
-                        store, runtime, code_host, manifest, key, limits, config or {}, manifest_path)
-                    if merge_action == "blocked":
-                        failures[key] = ui(
-                            "Merge outcome cannot be confirmed.",
-                            "无法确认 merge 结果。")
-                        log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                                 id=node.work_item_id, reason=ui(
-                                     "Merge confirmation failed", "merge 确认失败"))
-            elif item.status == WorkItemStatus.FAILED:
-                store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                store.add_comment(node.work_item_id, ui(
-                    "Worker execution failed", "worker 执行失败"))
-                set_node(manifest, key, status="blocked")
-                failures[key] = ui("Worker execution failed", "worker 执行失败")
-                log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                         id=node.work_item_id, reason=ui(
-                             "Worker execution failed", "worker 执行失败"))
-            elif item.status == WorkItemStatus.BLOCKED:
-                set_node(manifest, key, status="blocked")
-                failures[key] = ui(
-                    "Worker platform status is blocked", "worker 平台状态 blocked")
-                log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                         id=node.work_item_id, reason=ui(
-                             "Worker is blocked on the platform", "worker 平台 blocked"))
-
-        # ---- in_review: reviewer 阶段回收 ----
-        elif node.status == "in_review":
-            decision_class = _classify_reviewer_recovery_decision(
-                manifest_path, key, item)
-            if decision_class in {"other", "explicit-review-retry"}:
-                if item.status != WorkItemStatus.BLOCKED:
-                    store.update_status(item.id, WorkItemStatus.BLOCKED)
-                set_node(manifest, key, status="blocked")
-                failures[key] = ui(
-                    "Reviewer recovery is blocked by the existing decision.",
-                    "reviewer 恢复被现有 decision 阻塞。",
-                )
-                continue
-            if (
-                node.reviewer
-                and item.phase == TaskPhase.REVIEW
-                and not _review_subject_is_current(manifest, key, item)
-            ):
-                pending_review.append(
-                    (key, node.work_item_id, node.reviewer))
-                continue
-            verdict = item.review_verdict
-            if not verdict:
-                if node.reviewer:
-                    reviewer_id = store.resolve_agent_id(node.reviewer)
-                    baseline, baseline_error = (
-                        _reviewer_run_baseline_for_observation(
-                            store, runtime, manifest, key, item,
-                            node.reviewer, reviewer_id)
-                    )
-                    if baseline_error is not None:
-                        failures[key] = _block_reviewer(
-                            store, manifest, manifest_path, key, item,
-                            "reviewer-run-baseline-unavailable", baseline_error)
-                        continue
-                    observed = _observe_direct_run_attempt(
-                        runtime.list_runs(node.work_item_id), reviewer_id,
-                        baseline_direct_run_ids=baseline.baseline_direct_run_ids,
-                        cutoff_created_at=baseline.cutoff_created_at,
-                        target_run_id=baseline.target_run_id,
-                        attempt=baseline.attempt)
-                    if observed.state == "unexpected":
-                        failures[key] = _block_reviewer(
-                            store, manifest, manifest_path, key, item,
-                            "reviewer-run-baseline-unavailable", observed.detail)
-                        continue
-                    if observed.target_run_id != baseline.target_run_id:
-                        baseline = replace(
-                            baseline, target_run_id=observed.target_run_id)
-                        store.update_work_item_metadata(
-                            item.id, reviewer_run_baseline=baseline)
-                    if (
-                        observed.state == "missing" and baseline.attempt > 1
-                        and baseline.target_run_id is None
-                    ):
-                        failures[key] = _block_reviewer(
-                            store, manifest, manifest_path, key, item,
-                            "reviewer-run-dispatch-unresolved",
-                            "persisted retry generation has no target Run")
-                        continue
-                    if (
-                        observed.state == "missing"
-                        and baseline.attempt == 1
-                        and baseline.target_run_id is None
-                        and item.status == WorkItemStatus.IN_REVIEW
-                        and item.phase == TaskPhase.REVIEW
-                        and not item.reviewer
-                        and not item.platform_assignee_id
-                    ):
-                        # A current subject can be prepared without dispatching.
-                        # Reuse guarded initial dispatch; assigned or bound
-                        # attempts stay on their existing observation path.
-                        pending_review.append(
-                            (key, node.work_item_id, node.reviewer))
-                        continue
-                    reviewer_terminal = observed.terminal
-                    retry_kind = None
-                    if reviewer_terminal:
-                        dispatch_block = _guard_reviewer_dispatch_control(
-                            store, manifest, key, item.id)
-                        if dispatch_block is not None:
-                            failures[key] = dispatch_block
-                            continue
-                    if reviewer_terminal and reviewer_terminal.outcome != "finished-without-submit":
-                        reviewer_failure = _RunFailure(
-                            reviewer_terminal.run,
-                            (
-                                "transient"
-                                if reviewer_terminal.outcome == "transient-failure"
-                                else "nonretryable"
-                            ),
-                            reviewer_terminal.consecutive_runs,
-                        )
-                        if (
-                            reviewer_failure.classification == "nonretryable"
-                            or reviewer_failure.exhausted
-                        ):
-                            failures[key] = (
-                                _block_runtime_failure(
-                                    store, manifest, manifest_path, key, item,
-                                    "reviewer", reviewer_failure)
-                            )
-                            continue
-                        time.sleep(_TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS)
-                        retry_kind = "infrastructure_retry"
-                    elif reviewer_terminal:
-                        grace_state = _reviewer_no_submit_grace_state(
-                            store, runtime, item, baseline, reviewer_terminal)
-                        if grace_state in {"submitted", "waiting"}:
-                            continue
-                        if grace_state == "blocked":
-                            dispatch_block = _guard_reviewer_dispatch_control(
-                                store, manifest, key, item.id)
-                            if dispatch_block is not None:
-                                failures[key] = dispatch_block
-                            continue
-                        if grace_state == "unavailable":
-                            failures[key] = _block_reviewer(
-                                store, manifest, manifest_path, key, item,
-                                "reviewer-run-terminal-time-unavailable",
-                                "terminal timestamp is unavailable",
-                                reviewer_terminal.run.id)
-                            continue
-                        if (
-                            reviewer_terminal.consecutive_runs
-                            >= no_submit_runs
-                        ):
-                            failures[key] = _block_reviewer(
-                                store, manifest, manifest_path, key, item,
-                                "reviewer-run-no-submit-retry-exhausted",
-                                f"reviewer exhausted no-submit attempts "
-                                f"(budget {no_submit_runs})",
-                                reviewer_terminal.run.id)
-                            continue
-                        retry_kind = "finished_without_submit"
-                    if retry_kind:
-                        dispatch_block = _guard_reviewer_dispatch_control(
-                            store, manifest, key, item.id)
-                        if dispatch_block is not None:
-                            failures[key] = dispatch_block
-                            continue
-                        retry_error = _retry_reviewer_attempt(
-                            store, runtime, node, item, baseline,
-                            manifest=manifest, key=key)
-                        if retry_error:
-                            if manifest.nodes[key].status == "blocked":
-                                failures[key] = ui(
-                                    "Reviewer dispatch is blocked by the existing decision or platform status.",
-                                    "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
-                                )
-                                continue
-                            failures[key] = _block_reviewer(
-                                store, manifest, manifest_path, key, item,
-                                "reviewer-run-dispatch-unresolved", retry_error)
-                            continue
-                        set_node(manifest, key, status="in_review")
-                        log.info(
-                            logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND,
-                            node=key, id=node.work_item_id,
-                            reviewer=node.reviewer, recovered=True,
-                            **{retry_kind: True})
-                        continue
-                if _reviewer_run_needs_resume(item):
-                    try:
-                        resumed = _resume_reviewer_run(
-                            store, runtime, node, manifest=manifest, key=key)
-                        if resumed:
-                            set_node(manifest, key, status="in_review")
-                            log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND,
-                                     node=key, id=node.work_item_id,
-                                     reviewer=node.reviewer, recovered=True)
-                            continue
-                        if manifest.nodes[key].status == "blocked":
-                            failures[key] = ui(
-                                "Reviewer dispatch is blocked by the existing decision or platform status.",
-                                "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
-                            )
-                            continue
-                    except PlatformError as exc:
-                        store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                        store.add_comment(node.work_item_id, ui(
-                            f"Failed to resume reviewer {node.reviewer}: {exc}",
-                            f"恢复 reviewer {node.reviewer} 失败: {exc}"))
-                        set_node(manifest, key, status="blocked")
-                        failures[key] = ui(
-                            f"Failed to resume reviewer {node.reviewer}: {exc}",
-                            f"恢复 reviewer {node.reviewer} 失败: {exc}")
-                        continue
-                # reviewer 已落终态但缺结构化 review_verdict → blocked(无证据不予通过)
-                if item.status in (WorkItemStatus.DONE, WorkItemStatus.FAILED, WorkItemStatus.BLOCKED):
-                    store.update_status(node.work_item_id, WorkItemStatus.BLOCKED)
-                    store.add_comment(
-                        node.work_item_id,
-                        ui(
-                            f"Reviewer platform status is {item.status.value}, but structured review_verdict evidence is missing.",
-                            f"reviewer 平台 {item.status.value} 但缺 review_verdict 结构化证据"),
-                    )
-                    set_node(manifest, key, status="blocked")
-                    failures[key] = ui(
-                        "Reviewer is missing review_verdict", "reviewer 缺 review_verdict")
-                    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id, reason=ui(
-                                 "Reviewer is missing review_verdict", "reviewer 缺 review_verdict"))
-                continue
-
-            if decision_class == "canonical-baseline-unavailable":
-                reviewer_id = store.resolve_agent_id(node.reviewer)
-                marker_error = _delayed_reviewer_recovery_marker_error(
-                    manifest, manifest_path, key, item,
-                    node.reviewer, reviewer_id,
-                    require_target=True,
-                )
-                if marker_error is not None:
-                    if item.status != WorkItemStatus.BLOCKED:
-                        store.update_status(item.id, WorkItemStatus.BLOCKED)
-                    set_node(manifest, key, status="blocked")
-                    failures[key] = ui(
-                        f"Reviewer recovery is unsafe: {marker_error}.",
-                        f"reviewer 恢复不安全：{marker_error}。",
-                    )
-                    continue
-                # The dedicated decision is the durable recovery marker. Only
-                # the Runner that is about to consume this exact verdict clears
-                # it. An unknown write result stops this tick; restart either
-                # retries the marker clear or observes it cleared and consumes
-                # the still-preserved verdict normally.
-                cleared = store.update_work_item_metadata(
-                    item.id, decision_required={})
-                _clear_recovery_pending(manifest, key, cleared)
-
-            log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key,
-                     id=node.work_item_id, verdict=verdict)
-            gate_errors = validate_review_evidence(node, item)
-            configured_review_limit = limits.get(
-                "review", DEFAULT_RETRY["review"])
-            rework_budget = review_rework_budget(
-                manifest, key, item, configured_review_limit)
-            if verdict == "reject" and not gate_errors:
-                boundary_conflicts = contract_boundary_conflicts(
-                    manifest, node, item)
-                if boundary_conflicts:
-                    decision = build_contract_boundary_decision(
-                        item, node, boundary_conflicts)
-                    _mark_recovery_pending(manifest, key)
-                    store.update_work_item_metadata(
-                        node.work_item_id,
-                        decision_required=decision,
-                        phase=TaskPhase.REVIEW,
-                    )
-                    store.update_status(
-                        node.work_item_id, WorkItemStatus.BLOCKED)
-                    set_node(manifest, key, status="blocked")
-                    failures[key] = ui(
-                        "Reviewer required inputs outside the typed node contract; "
-                        "operator decision is required before rework.",
-                        "Reviewer 要求了 typed node contract 边界之外的输入；"
-                        "继续返工前需要人工决策。",
-                    )
-                    log.info(
-                        logsetup.EVT_NEEDS_DECISION,
-                        kind=_DAG_KIND,
-                        node=key,
-                        id=node.work_item_id,
-                        gate="review-boundary",
-                    )
-                    continue
-                resolution = resolve_convergence(item, node_id=key)
-                resolution.raise_if_invalid(PlatformError, item.id)
-                if resolution.state is ResolutionState.NEEDS_DECISION:
-                    failures[key] = _block_review_non_convergence(
-                        store, manifest, key, item, resolution)
-                    continue
-            if verdict == "pass-with-nits" and not gate_errors:
-                if not _review_nits_acceptance_matches(manifest, key, item):
-                    failures[key] = _block_review_nits_acceptance(
-                        store, manifest, manifest_path, key, item)
-                    continue
-                log.info(
-                    logsetup.EVT_VERDICT,
-                    kind=_DAG_KIND,
-                    node=key,
-                    id=node.work_item_id,
-                    verdict=verdict,
-                    operator_acceptance=True,
-                )
-            if not gate_errors and verdict != "reject":
-                # reviewer pass → P4.2 自动 merge 门。命令与远端观察均由引擎适配器执行。
-                merge_action = _complete_merge_if_confirmed(
-                    store, runtime, code_host, manifest, key, limits, config or {}, manifest_path)
-                if merge_action == "blocked":
-                    failures[key] = ui(
-                        "Merge failed and retry.merge is exhausted.",
-                        "merge 失败,回退上界(retry.merge)已耗尽")
-                    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id, reason=ui(
-                                 "Merge retry limit exhausted", "merge 回退上界已耗尽"))
-                # else "bounce": 节点已转回 in_progress,本 tick 不再推进。
-            else:
-                # reviewer reject 或评审证据不合格:有界「回到 worker」回退,
-                # 受 retry_limits["review"] 约束。
-                reason = "; ".join(gate_errors) if gate_errors else "reviewer reject"
-                if not rework_budget.allows_rework:
-                    failures[key] = _block_review_rework_budget(
-                        store,
-                        manifest,
-                        key,
-                        item,
-                        rework_budget,
-                        gate=("review-evidence" if gate_errors else "review"),
-                        reason=reason,
-                    )
-                else:
-                    # 有界「回到 worker」由持久化 intent 串起各 checkpoint；
-                    # 任一步结果未知都保留 intent 与绝对 bounce，交给 restart 幂等续跑。
-                    handoff = _dispatch_worker_handoff(
-                        store, runtime, code_host, manifest, key,
-                        review_bounce=rework_budget.next_round,
-                        gate="review",
-                        projection=projection,
-                    )
-                    if handoff.state == "complete":
-                        _finalize_worker_handoff_or_defer(
-                            store, manifest, key, node, handoff)
-                    set_node(manifest, key, status="in_progress")
-                    log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
-                             id=node.work_item_id, gate="review",
-                             round=rework_budget.next_round,
-                             max=rework_budget.authorized_through_round)
-
-        elif node.status == "merging":
-            merge_action = _complete_merge_if_confirmed(
-                store, runtime, code_host, manifest, key, limits,
-                config or {}, manifest_path)
-            if merge_action == "blocked":
-                failures[key] = ui(
-                    "Merge outcome cannot be confirmed.",
-                    "无法确认 merge 结果。")
-                log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
-                         id=node.work_item_id, reason=ui(
-                             "Merge confirmation failed", "merge 确认失败"))
-
-    # ---- reviewer 阶段过渡(遍历后执行,避免改 manifest 影响遍历)----
-    for key, item_id, reviewer in pending_review:
-        try:
-            dispatched = _dispatch_reviewer_for_current_subject(
-                store, runtime, code_host, manifest, key)
-            if manifest.nodes[key].status == "blocked":
-                failures[key] = ui(
-                    "Reviewer dispatch is blocked by the existing decision.",
-                    "reviewer 派发被已有 decision 阻塞。",
-                )
-                continue
-            set_node(manifest, key, status="in_review")
-            if dispatched:
-                log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,
-                         id=item_id, reviewer=reviewer)
-        except _ReviewerDispatchUnresolved as exc:
-            failures[key] = _block_reviewer(
-                store, manifest, manifest_path, key,
-                store.get_work_item(item_id),
-                "reviewer-run-dispatch-unresolved", str(exc))
-        except PlatformError as exc:
-            failures[key] = _block_reviewer(
-                store, manifest, manifest_path, key,
-                store.get_work_item(item_id),
-                "reviewer-run-baseline-unavailable", str(exc))
-
-    if failures or pending_review:
+        projection = running[key]
+        _collect_node(c, _Node(key, node, projection, projection.work_item))
+    _dispatch_pending_reviews(c)
+    if c.failures or c.pending_review:
         save_manifest(manifest, manifest_path)
-
-    return failures
+    return c.failures
 
 
 # ==================== 失败隔离 + 就绪计算(DECIDE) ====================

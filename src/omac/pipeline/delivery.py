@@ -47,6 +47,11 @@ from ..core.workitem import (
     WorkItemStatus,
 )
 from ..engines.codehost import CodeHost
+from .decide_merge import (
+    MERGE_BOUNCE_PENDING_PREFIX, MergeAfterRequest, MergePrecheck, MergeStep,
+    decide_after_merge_request, decide_merge_observed, decide_merge_precheck,
+    merge_bounce_attempt,
+)
 from ..engines.runtime import AgentRuntime
 from ..core.manifest import Manifest, save_manifest
 from ..errors import AuthError, PlatformError
@@ -66,8 +71,6 @@ MANIFEST_TO_PLATFORM_STATUS: dict[str, WorkItemStatus] = {
 }
 
 VALID_MANIFEST_STATUSES = set(MANIFEST_TO_PLATFORM_STATUS)
-VALID_MERGE_REQUEST_STATES = {None, "intent", "requested"}
-MERGE_BOUNCE_PENDING_PREFIX = "bounce_pending:"
 
 
 def to_platform_status(manifest_status: str) -> WorkItemStatus:
@@ -119,22 +122,6 @@ def _ci_result(result: PullRequestCheckResult) -> CIResult:
         output=result.output,
         summary=_tail(result.output) or ui("(no output)", "(无输出)"),
     )
-
-
-def merge_request_state_is_valid(state: str | None) -> bool:
-    return state in VALID_MERGE_REQUEST_STATES or merge_bounce_attempt(state) is not None
-
-
-def merge_bounce_attempt(state: str | None) -> int | None:
-    """解析 durable merge bounce marker 中的绝对回退次数。"""
-    if not isinstance(state, str) or not state.startswith(MERGE_BOUNCE_PENDING_PREFIX):
-        return None
-    raw = state[len(MERGE_BOUNCE_PENDING_PREFIX):]
-    try:
-        attempt = int(raw)
-    except ValueError:
-        return None
-    return attempt if attempt > 0 else None
 
 
 def block_unproven_merge_request(
@@ -294,30 +281,19 @@ def run_merge_delivery(
     merge = get_merge_config(config)
 
     item = store.get_work_item(item_id)
-    pending_attempt = merge_bounce_attempt(node.merge_request_state)
-    if pending_attempt is not None:
-        return _resume_merge_bounce(
-            node, item, store, runtime, retry_limits,
-            manifest=manifest, manifest_path=manifest_path,
-            attempt=pending_attempt)
-
     pr_url = ""
     if isinstance(item.artifacts, dict):
         pr_url = item.artifacts.get("pr_url") or item.artifacts.get("pr") or ""
-
-    if not pr_url:
-        # merge 已配置但 reviewer pass 后无 pr_url —— 防御性阻断并教化。
-        node.status = "blocked"
-        save_manifest(manifest, manifest_path)
-        store.add_comment(item_id, ui(
-            "⚠️ Merge is configured, but the node has no pr_url, so automatic merge cannot run.\n"
-            "Confirm the worker submitted a PR URL with `omac work submit <id> --pr-url <url> ...`.",
-            "⚠️ merge 已配置(command)但节点无 pr_url,无法执行自动合并。\n"
-            "请确认 worker 已用 `omac work submit <id> --pr-url <url> ...` 提交 PR 地址。"))
-        store.update_status(item_id, WorkItemStatus.BLOCKED)
-        return "blocked"
-
-    if not merge_request_state_is_valid(node.merge_request_state):
+    precheck = decide_merge_precheck(
+        request_state=node.merge_request_state, has_pull_request=bool(pr_url))
+    if precheck is MergePrecheck.RESUME_BOUNCE:
+        return _resume_merge_bounce(
+            node, item, store, runtime, retry_limits,
+            manifest=manifest, manifest_path=manifest_path,
+            attempt=merge_bounce_attempt(node.merge_request_state))
+    if precheck is MergePrecheck.BLOCK_NO_PULL_REQUEST:
+        return _block_merge_without_pull_request(node, item, store, manifest, manifest_path)
+    if precheck is MergePrecheck.BLOCK_INVALID_MARKER:
         node.status = "blocked"
         save_manifest(manifest, manifest_path)
         return block_unproven_merge_request(
@@ -329,39 +305,35 @@ def run_merge_delivery(
     except AuthError:
         return block_merge_auth_error(
             node, item, store, manifest, manifest_path, node_key)
-    state = _observation_state(observation)
-    if state == PullRequestState.MERGED:
+    step = decide_merge_observed(
+        request_state=node.merge_request_state, pr_state=_observation_state(observation))
+    settle = dict(manifest=manifest, manifest_path=manifest_path)
+    if step is MergeStep.SETTLE:
         return _settle_merge_observation(
-            node, item, store, runtime, retry_limits, observation,
-            manifest=manifest, manifest_path=manifest_path)
-    if state == PullRequestState.PENDING:
+            node, item, store, runtime, retry_limits, observation, **settle)
+    if step is MergeStep.RECORD_PENDING:
         node.status = "merging"
         node.merge_request_state = "requested"
         save_manifest(manifest, manifest_path)
         store.update_status(item_id, to_platform_status("merging"))
         return "pending"
-    if state != PullRequestState.OPEN:
-        return _settle_merge_observation(
-            node, item, store, runtime, retry_limits, observation,
-            manifest=manifest, manifest_path=manifest_path)
-
-    if node.merge_request_state == "intent":
+    if step is MergeStep.BLOCK_PRIOR_INTENT:
         node.status = "blocked"
         save_manifest(manifest, manifest_path)
         return block_unproven_merge_request(
             node, item, store, manifest_path, node_key,
             "A prior merge request may have started before the process stopped.")
-    if node.merge_request_state == "requested":
+    if step is MergeStep.STAY_PENDING:
         node.status = "merging"
         save_manifest(manifest, manifest_path)
         store.update_status(item_id, to_platform_status("merging"))
         return "pending"
 
+    # MergeStep.REQUEST: persist the intent first, send exactly one request, then observe.
     node.status = "merging"
     node.merge_request_state = "intent"
     save_manifest(manifest, manifest_path)
     store.update_status(item_id, to_platform_status("merging"))
-
     result = code_host.request_pull_request_merge(
         pr_url, merge["command"], max(1, int(merge.get("timeout_minutes", 30))) * 60)
     if not getattr(result, "timed_out", False):
@@ -372,33 +344,43 @@ def run_merge_delivery(
     except AuthError:
         return block_merge_auth_error(
             node, item, store, manifest, manifest_path, node_key)
-    state = _observation_state(observation)
-    if state in {PullRequestState.MERGED, PullRequestState.PENDING}:
+    after = decide_after_merge_request(
+        timed_out=bool(getattr(result, "timed_out", False)),
+        succeeded=bool(result.succeeded), pr_state=_observation_state(observation))
+    if after is MergeAfterRequest.SETTLE:
         return _settle_merge_observation(
             node, item, store, runtime, retry_limits, observation,
-            manifest=manifest, manifest_path=manifest_path)
-    if state == PullRequestState.OPEN:
-        if getattr(result, "timed_out", False):
-            node.status = "blocked"
-            save_manifest(manifest, manifest_path)
-            return block_unproven_merge_request(
-                node, item, store, manifest_path, node_key,
-                "Merge request timed out while the PR remains OPEN; the external outcome is unknown.")
-        if result.succeeded:
-            return "pending"
-        label = ui(
-            "Merge command timed out" if result.timed_out else
-            f"Merge command failed (exit code {result.exit_code})",
-            "merge 命令超时" if result.timed_out else
-            f"merge 命令失败(退出码 {result.exit_code})")
-        return _bounce_or_block_merge(node, item, store, runtime, retry_limits,
-                                      manifest=manifest,
-                                      manifest_path=manifest_path,
-                                      label=label, output=result.output)
-    return _settle_merge_observation(
-        node, item, store, runtime, retry_limits, observation,
-        manifest=manifest, manifest_path=manifest_path,
-        command_output=result.output)
+            command_output=result.output if _observation_state(observation) not in {
+                PullRequestState.MERGED, PullRequestState.PENDING} else "", **settle)
+    if after is MergeAfterRequest.BLOCK_TIMED_OUT_OPEN:
+        node.status = "blocked"
+        save_manifest(manifest, manifest_path)
+        return block_unproven_merge_request(
+            node, item, store, manifest_path, node_key,
+            "Merge request timed out while the PR remains OPEN; the external outcome is unknown.")
+    if after is MergeAfterRequest.PENDING:
+        return "pending"
+    label = ui(
+        "Merge command timed out" if result.timed_out else
+        f"Merge command failed (exit code {result.exit_code})",
+        "merge 命令超时" if result.timed_out else
+        f"merge 命令失败(退出码 {result.exit_code})")
+    return _bounce_or_block_merge(
+        node, item, store, runtime, retry_limits,
+        label=label, output=result.output, **settle)
+
+
+def _block_merge_without_pull_request(node, item, store, manifest, manifest_path) -> str:
+    """merge 已配置但 reviewer pass 后无 pr_url —— 防御性阻断并教化。"""
+    node.status = "blocked"
+    save_manifest(manifest, manifest_path)
+    store.add_comment(item.id, ui(
+        "⚠️ Merge is configured, but the node has no pr_url, so automatic merge cannot run.\n"
+        "Confirm the worker submitted a PR URL with `omac work submit <id> --pr-url <url> ...`.",
+        "⚠️ merge 已配置(command)但节点无 pr_url,无法执行自动合并。\n"
+        "请确认 worker 已用 `omac work submit <id> --pr-url <url> ...` 提交 PR 地址。"))
+    store.update_status(item.id, WorkItemStatus.BLOCKED)
+    return "blocked"
 
 
 def _observation_state(observation) -> PullRequestState:

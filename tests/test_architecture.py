@@ -70,10 +70,12 @@ def test_source_has_no_forbidden_pattern(rule, violations):
 
 
 def test_decide_modules_stay_pure():
-    out = []
+    out, seen = [], 0
     for rel, path in _packaged_files():
         if path.suffix == ".py":
+            seen += rel.rsplit("/", 1)[-1].startswith("decide")
             out += rules.decide_imports(rel, _read(path))
+    assert seen, "expected at least one decide_* module"
     assert out == []
 
 
@@ -147,6 +149,7 @@ def test_platform_cli_allowed_only_in_engines():
 
 def test_decide_module_importing_engines_is_rejected():
     assert rules.decide_imports("src/omac/pipeline/decide_x.py", "from omac.engines.models import X\n")
+    assert rules.decide_imports("src/omac/pipeline/decide_x.py", "from ..engines.models import X\n")
     assert rules.decide_imports("src/omac/pipeline/loop.py", "from omac.engines.models import X\n") == []
 
 

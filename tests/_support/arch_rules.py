@@ -131,7 +131,8 @@ def decide_imports(path: str, source: str) -> list[str]:
     for node in ast.walk(_parse(source)):
         names = ([a.name for a in node.names] if isinstance(node, ast.Import)
                  else [node.module or ""] if isinstance(node, ast.ImportFrom) else [])
-        if any(n == "subprocess" or n.startswith("omac.engines") for n in names):
+        if any(n == "subprocess" or n.startswith("omac.engines") for n in names) or (
+                isinstance(node, ast.ImportFrom) and node.level and (node.module or "").startswith("engines")):
             out.append(f"{path}:{node.lineno}: decide module imports engines or subprocess")
     return out
 
