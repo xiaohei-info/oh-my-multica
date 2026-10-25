@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from conftest import seal_mock_delivery
+from _support.sealing import seal_mock_delivery
 
 from omac.cli import exit_codes
 from omac.cli.main import main

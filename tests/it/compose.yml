@@ -1,0 +1,31 @@
+# Self-contained Multica for integration tests. Project name, labels and ports are set by tests/it/stack.py;
+# nothing here is shared with a developer's own Multica, and `down -v` leaves nothing behind.
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    labels: {omac.it: "1"}
+    environment:
+      POSTGRES_USER: multica
+      POSTGRES_PASSWORD: multica
+      POSTGRES_DB: multica
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U multica -d multica"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  backend:
+    image: ghcr.io/multica-ai/multica-backend:v0.6.5
+    labels: {omac.it: "1"}
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      DATABASE_URL: postgres://multica:multica@postgres:5432/multica?sslmode=disable
+      PORT: "8080"
+      JWT_SECRET: ${OMAC_IT_SECRET}
+      MULTICA_DEV_VERIFICATION_CODE: ${OMAC_IT_CODE}
+      APP_ENV: development
+      ALLOW_SIGNUP: "true"
+      FRONTEND_ORIGIN: http://127.0.0.1
+      DO_NOT_TRACK: "1"
+    ports: ["127.0.0.1::8080"]

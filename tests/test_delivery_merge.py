@@ -27,7 +27,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import seal_mock_delivery
+from _support.sealing import seal_mock_delivery
 
 from omac.core.config import (
     DEFAULT_GITHUB_MERGE_COMMAND,

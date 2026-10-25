@@ -1,105 +1,32 @@
-"""P2.6 live Multica 联调验收 -- env-gated,真实数据面。
+"""Work-item store contract against a real Multica server (the private Docker instance).
 
-双重门控(满足"MULTICA_WORKSPACE_ID 未设即 skip,不进普通 CI"):
-  - 模块级 pytest.mark.live + pytest.mark.skipif(MULTICA_WORKSPACE_ID 未设 -> 整组 skip)
-  - 普通 CI 跑 pytest -m "not live",本文件零触碰;本地未 export 时即使误带 -m live 也全 skip
-
-活的 Multica 引擎(MulticaStore):
-  - 真实成员池可读
-  - Human-first issue body + 单一 Agent JSON 入口可生成
-  - 真实 issue 创建 -> 写后读一致性(metadata 全字段)
-  - contract 下发后 work item 可回读
-  - 状态推进 todo -> in_progress -> done
-  - 评论追加
-  - 幂等:同一 dag_key 重复创建不破坏状态
-
-红线(§12.4):测试代码只调 engines 的 WorkItemStore 接口,绝不直接 shell out 平台 CLI。
-只读/写 metadata,不 assign、不 wake agent(避免在联调期间惊扰线上 agent)。
+The tests call only the WorkItemStore / AgentRuntime ports, never a platform CLI, and do not assign or wake
+agents unless a test says so.
 """
 from __future__ import annotations
 
-import os
 import random
-import sys
-from pathlib import Path
+import time
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-
-from omac.core.manifest import Contract, Manifest, Node, load_manifest  # noqa: E402
-from omac.core.taskmeta import TaskKind, TaskPhase  # noqa: E402
-from omac.engines import create_engine  # noqa: E402
-from omac.engines.models import EngineConfig
+from omac.core.manifest import Contract
+from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.core.workitem import WorkItemStatus
-from omac.pipeline.dispatch import render_issue_body  # noqa: E402
+
+_RUN = f"run-{random.randrange(10**9)}"
 
 
-# ==================== env gate ====================
-
-def _live_ready() -> bool:
-    return bool(os.environ.get("MULTICA_WORKSPACE_ID"))
-
-
-pytestmark = [
-    pytest.mark.live,
-    pytest.mark.skipif(
-        not _live_ready(),
-        reason="MULTICA_WORKSPACE_ID 未设,live 测试 skip",
-    ),
-]
+@pytest.fixture(autouse=True)
+def _bind(stack):
+    _ws["id"] = stack.workspace_id
 
 
-# ==================== engine / fixtures ====================
+_ws: dict = {}
 
 
 def _workspace_id() -> str:
-    """惰性读取真实 workspace id;未设则 module-level skip,避免收集期 KeyError。"""
-    ws = os.environ.get("MULTICA_WORKSPACE_ID")
-    if not ws:
-        pytest.skip("MULTICA_WORKSPACE_ID 未设, live 测试 skip")
-    return ws
-
-
-# 每次运行的唯一后缀:避免前次 live 运行(若扫尾失败)的 issue 被 Multica 按 title
-# 去重拦截,保证可重复执行。注:store fixture 已在 teardown 自动 cancel 本次创建的
-# issue(见上),此后缀只是二次保险,不再依赖手动扫尾。
-_RUN = os.environ.get("OMAC_LIVE_RUN") or f"run-{random.randrange(10**9)}"
-
-
-def _config(extra: dict | None = None) -> EngineConfig:
-    return EngineConfig(engine_type="multica", workspace_id=_workspace_id(), extra=extra)
-
-
-def _engine(extra: dict | None = None):
-    return create_engine("multica", _config(extra))
-
-
-@pytest.fixture()
-def store():
-    """真实 Multica store,自带扫尾:记录本用例创建的每个 work item,
-    teardown 时全部 cancel,保证 live 套件跑完不留垃圾(幂等,§12.4 只调 Store 接口)。
-    """
-    real = _engine().store
-    created: list[str] = []
-    orig_create = real.create_work_item
-
-    def _tracking_create(*args, **kwargs):
-        item = orig_create(*args, **kwargs)
-        item_id = getattr(item, "id", None)
-        if item_id:
-            created.append(item_id)
-        return item
-
-    real.create_work_item = _tracking_create
-    try:
-        yield real
-    finally:
-        for item_id in created:
-            try:
-                real.cancel_work_item(item_id)
-            except Exception:
-                pass  # 扫尾尽力而为,不因清理失败让用例红
+    return _ws["id"]
 
 
 @pytest.fixture()
@@ -131,30 +58,6 @@ def test_member_pool_readable(store):
     members = store.list_members(_workspace_id())
     assert isinstance(members, list)
     assert len(members) > 0, "工作空间成员池为空 —— multica CLI 登录 / workspace 成员不足"
-
-
-# ==================== 2. Human-first issue body ====================
-
-class TestBootstrapBody:
-    def test_human_sections_and_single_agent_entry(self, sample_contract):
-        node = Node(id="live-proto", worker="alice", reviewer="bob",
-                    title="Proto node", contract=sample_contract)
-        body = render_issue_body(node, sample_contract, TaskKind.DEVELOP,
-                                 "ISSUE-REAL-1000")
-        assert "omac work show ISSUE-REAL-1000 --output json" in body
-        assert "omac work submit ISSUE-REAL-1000" not in body
-        assert "omac guide" not in body
-        assert "## 任务摘要" in body
-        assert "## 完成标准" in body
-        assert "## 非目标" in body
-        assert "## 硬约束" not in body
-
-    def test_pr_base_is_human_readable_without_reviewer_protocol(self, sample_contract):
-        node = Node(id="live-proto-2", worker="alice", reviewer="carol",
-                    title="Proto 2", contract=sample_contract)
-        body = render_issue_body(node, sample_contract, TaskKind.DEVELOP, "ID")
-        assert "PR 基线: `feature/live-smoke`" in body
-        assert "carol" not in body
 
 
 # ==================== 3. 真实 issue 创建 -> 写后读一致性 ====================
@@ -351,51 +254,23 @@ class TestLiveRecoveryContracts:
 # ==================== 3.6 真实 Run 归因契约(#4 回归契约) ====================
 
 
-def test_formal_run_attribution_kinds_on_real_server():
-    """真实服务器的 direct Run 归因标签必须在 OMAC 接受的 formal 集合内。
+def test_formal_run_attribution_kinds_on_real_server(engine, store, stack):
+    """A Run started by assigning an issue is stamped with an attribution OMAC accepts as formal.
 
-    恢复事故发现:真实服务器从不给 rerun 打 'rerun' 标签,一律盖
-    'issue_assignment';旧代码只认 'rerun',导致评审续跑永远 fail-closed。
-    本契约只读观察已有 Run(不新建、不 wake),把真实服务器的归因行为钉死:
-    未来服务器若改标签,这里先红,而不是在生产恢复里翻车。
-
-    需设 MULTICA_LIVE_OBSERVE_ITEM_ID 指向一个有 direct Run 的 work item
-    (如恢复金丝雀节点);未设则 skip(纯只读,无副作用)。
+    The real server never labels a rerun 'rerun'; it stamps 'issue_assignment'. If a future server changes
+    the label, this fails first instead of failing closed in review continuation on a production run.
     """
-    observe_id = os.environ.get("MULTICA_LIVE_OBSERVE_ITEM_ID")
-    if not observe_id:
-        pytest.skip("MULTICA_LIVE_OBSERVE_ITEM_ID 未设,归因契约观察 skip")
-
-    runs = _engine().runtime.list_runs(observe_id)
-    direct = [run for run in runs if run.kind == "direct"]
-    assert direct, f"观察目标 {observe_id} 没有 direct Run,无法验证归因契约"
-
-    unknown = [
-        run.id for run in direct
-        if run.trigger_kind not in {"issue_assignment", "rerun"}
-    ]
-    assert not unknown, (
-        f"真实服务器出现了 OMAC formal 集合之外的归因标签: {unknown} —— "
-        "评审续跑/交付身份判定会 fail-closed,需先更新 engines 层再恢复")
-    # 记录真实观测到的标签分布,供后续契约演进参考
-    observed = sorted({run.trigger_kind for run in direct})
-    assert observed, "direct Run 全部无归因 —— 交付因果链不可证明"
-
-
-# ==================== 4. smoke_live_manifest 加载 ====================
-
-FIXTURES = Path(__file__).resolve().parent / "fixtures"
-SMOKE_LIVE = FIXTURES / "smoke_live_manifest.yaml"
-
-
-def test_smoke_live_manifest_loads():
-    if not SMOKE_LIVE.exists():
-        pytest.skip(f"fixture 不存在: {SMOKE_LIVE}")
-    manifest = load_manifest(str(SMOKE_LIVE))
-    assert "live-smoke-A" in manifest.nodes
-    node = manifest.nodes["live-smoke-A"]
-    assert node.worker
-    assert node.contract is not None
-    assert node.contract.objective
-    assert node.contract.verification_commands
-    assert node.contract.pr_base == "feature/live-smoke"
+    stack.set_scenario("alice", [[]])
+    item = store.create_work_item(
+        workspace_id=_workspace_id(), title=f"attribution {_RUN}", description="run attribution",
+        dag_key="it-attribution", worker="alice")
+    store.assign_work_item(item.id, "alice", "worker")
+    deadline = time.time() + 25
+    while time.time() < deadline:
+        direct = [r for r in engine.runtime.list_runs(item.id) if r.kind == "direct"]
+        if direct and all(r.terminal for r in direct):
+            break
+        time.sleep(0.3)
+    assert direct, "assigning the issue to a scripted agent produced no direct Run"
+    assert {r.trigger_kind for r in direct} <= {"issue_assignment", "rerun"}
+    assert all(r.formal for r in direct)

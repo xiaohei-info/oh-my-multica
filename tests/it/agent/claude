@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Scripted stand-in for the `claude` CLI, launched by a real Multica daemon.
+
+The daemon detects it on PATH, runs it once per Run with stream-json framing, and reads stream-json
+events from stdout. What it *does* comes from the scenario file named by OMAC_SCENARIO (JSON):
+
+    {"attempts": [[step, ...], [step, ...]]}   # attempt N runs list N (the last list repeats)
+
+steps: {"run": [argv...]}            run a command with the Run's environment ({issue} = the assigned issue id from the prompt); a non-zero exit stops the Run
+       {"exit": 3}                   exit with that code now
+       {"hang": 60}                  sleep (a Run that never finishes)
+       {"write": {"path": p, "content": s}}
+Every invocation is appended to OMAC_FAKE_LOG as one JSON line (argv, cwd, MULTICA_* env without secrets).
+"""
+import json, os, re, subprocess, sys, time
+
+
+def emit(event):
+    sys.stdout.write(json.dumps(event) + "\n")
+    sys.stdout.flush()
+
+
+def main():
+    if "--version" in sys.argv[1:]:
+        print("2.1.0 (Claude Code)")
+        return 0
+    env = os.environ
+    prompt = "" if sys.stdin.isatty() else sys.stdin.readline()  # the daemon keeps stdin open after the first message
+    log = env.get("OMAC_FAKE_LOG")
+    if log:
+        with open(log, "a", encoding="utf-8") as out:
+            out.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "prompt": prompt[:4000],
+                                  "env": {k: v for k, v in env.items() if k.startswith("MULTICA_") and "TOKEN" not in k}}) + "\n")
+    issue = (re.findall(r"assigned issue ID is: ([0-9a-f-]{36})", prompt) or [""])[0]
+    steps = []
+    scenario_path = env.get("OMAC_SCENARIO")
+    if scenario_path and os.path.exists(scenario_path):
+        counter = scenario_path + ".count"
+        attempt = (int(open(counter).read()) if os.path.exists(counter) else 0) + 1
+        open(counter, "w").write(str(attempt))
+        attempts = json.load(open(scenario_path, encoding="utf-8")).get("attempts", [])
+        steps = attempts[min(attempt, len(attempts)) - 1] if attempts else []
+    emit({"type": "system", "subtype": "init", "session_id": "it", "model": "scripted"})
+    code = 0
+    for step in steps:
+        if "run" in step:
+            argv = [part.replace("{issue}", issue) for part in step["run"]]
+            done = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            emit({"type": "assistant", "session_id": "it", "message": {
+                "id": "m", "type": "message", "role": "assistant", "model": "scripted",
+                "content": [{"type": "text", "text": f"$ {' '.join(step['run'])} -> {done.returncode}\n{done.stdout[-500:]}{done.stderr[-500:]}"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1}}})
+            if done.returncode != 0:
+                code = done.returncode
+                break
+        elif "exit" in step:
+            code = int(step["exit"])
+            break
+        elif "hang" in step:
+            time.sleep(float(step["hang"]))
+        elif "write" in step:
+            with open(step["write"]["path"], "w", encoding="utf-8") as fh:
+                fh.write(step["write"]["content"])
+    emit({"type": "result", "subtype": "success" if code == 0 else "error_during_execution",
+          "is_error": code != 0, "result": "done", "session_id": "it", "duration_ms": 1, "num_turns": 1,
+          "total_cost_usd": 0})
+    return code
+
+
+sys.exit(main())

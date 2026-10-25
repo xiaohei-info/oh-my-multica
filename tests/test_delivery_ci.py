@@ -18,7 +18,7 @@ import os
 import stat
 import pytest
 
-from conftest import seal_mock_delivery
+from _support.sealing import seal_mock_delivery
 
 from omac.core.manifest import Manifest, Node
 from omac.core.config import DEFAULT_RETRY
