@@ -1,0 +1,48 @@
+name: Smoke
+
+# A real Coding Agent runs two minimal DAGs on a private Docker Multica. It costs money, so it runs only on a
+# schedule (weekly) or by hand, on a dedicated self-hosted runner, and never for pull requests. Do not add
+# pull_request or pull_request_target triggers: tests/test_architecture.py rejects them, because a self-hosted
+# runner on a public repository can be used by fork pull requests.
+on:
+  schedule:
+    - cron: "17 3 * * 1"   # Mondays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Smoke (real agent)
+    runs-on: [self-hosted, macOS, omac-smoke]
+    environment: smoke          # holds the metered API key; limited to the main branch
+    timeout-minutes: 90
+    env:
+      OMAC_SMOKE_AGENT: real
+      OMAC_SMOKE_MONTHLY_CAP_USD: "20"
+      ANTHROPIC_API_KEY: ${{ secrets.OMAC_SMOKE_ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Spend guard (monthly cap)
+        run: python3 tests/smoke/ledger.py check --expected-usd 4
+
+      - name: Install
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -e ".[test]"
+
+      - name: Run the smoke DAGs
+        run: >
+          "$RUNNER_TEMP/venv/bin/python" -m pytest tests/smoke -m live -o addopts="" -q
+
+      - name: Clean up
+        if: always()
+        run: |
+          python3 tests/it/cleanup.py   # safety net: stacks older than 2 h
+          rm -rf "$RUNNER_TEMP/venv"

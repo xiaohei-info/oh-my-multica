@@ -32,8 +32,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test]" import-linter
 
+      - name: Install the Multica CLI that matches the test server (tests/it/compose.yml)
+        run: |
+          version=0.6.5
+          base="https://github.com/multica-ai/multica/releases/download/v${version}"
+          archive="multica-cli-${version}-linux-amd64.tar.gz"
+          curl -fsSLO "${base}/${archive}"
+          curl -fsSLO "${base}/checksums.txt"
+          grep " ${archive}\$" checksums.txt | sha256sum -c -
+          tar -xzf "${archive}" multica
+          sudo install multica /usr/local/bin/multica
+          multica version
+
+      - name: Pull the test server images
+        run: OMAC_IT_SECRET=pull OMAC_IT_CODE=000000 docker compose -p omac-it-pull -f tests/it/compose.yml pull
+
       - name: Check import layering
         run: lint-imports
 
-      - name: Run tests (live tests skipped by default)
-        run: pytest tests/ -m "not live" -n 4
+      - name: Run all tests (unit, integration, Docker; live tests need a real platform and are skipped)
+        run: pytest tests/ -m "not live" -n 4 --dist loadfile

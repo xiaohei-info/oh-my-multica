@@ -40,7 +40,10 @@ def require_docker() -> None:
 
 
 class Stack:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, real_agent: bool = False):
+        """``real_agent``: the daemon launches the Coding Agent CLI found on PATH instead of the scripted one
+        (weekly smoke run only; needs that CLI signed in or an API key in the environment)."""
+        self.real_agent = real_agent
         self.root = Path(root)
         self.run_id = secrets.token_hex(3)
         self.project = f"omac-it-{os.getpid()}-{self.run_id}"
@@ -136,7 +139,7 @@ class Stack:
         self.bin_dir.mkdir()
         self.gh_state.mkdir()
         self.dump_dir.mkdir()
-        for shim in ("claude", "gh"):
+        for shim in (("gh",) if self.real_agent else ("claude", "gh")):
             target = self.bin_dir / shim
             target.write_text((IT_DIR / "agent" / shim).read_text().replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1))
             target.chmod(0o755)
@@ -158,10 +161,17 @@ class Stack:
 
     def agent(self, name: str, scenario: list[list[dict]] | None = None) -> str:
         """Create (or return) an agent whose Runs execute ``scenario`` (a list of attempts, each a list of steps)."""
+        if self.real_agent:
+            if name not in self.agents:
+                model = os.environ.get("OMAC_SMOKE_MODEL")
+                created = json.loads(self.multica(
+                    "agent", "create", "--name", name, "--runtime-id", self.runtime_id,
+                    *(["--model", model] if model else []), "--output", "json"))
+                self.agents[name] = created["id"]
+            return self.agents[name]
         path = self.root / f"scenario-{name}.json"
         path.write_text(json.dumps({"attempts": scenario or []}))
-        for counter in (Path(str(path) + ".count"),):
-            counter.unlink(missing_ok=True)
+        Path(str(path) + ".count").unlink(missing_ok=True)
         self.scenarios[name] = path
         if name not in self.agents:
             created = json.loads(self.multica(
@@ -171,6 +181,8 @@ class Stack:
         return self.agents[name]
 
     def set_scenario(self, name: str, attempts: list[list[dict]]) -> None:
+        if self.real_agent:
+            return  # a real agent decides for itself
         self.scenarios[name].write_text(json.dumps({"attempts": attempts}))
         Path(str(self.scenarios[name]) + ".count").unlink(missing_ok=True)
 
