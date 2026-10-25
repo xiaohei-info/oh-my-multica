@@ -51,6 +51,7 @@ from ..core.workitem import (
     PullRequestReadiness,
     PullRequestReadinessFailure,
     PullRequestState,
+    WorkItem,
     WorkItemControlProjection,
     WorkItemHydrationPlan,
     WorkItemPayload,
@@ -2075,6 +2076,380 @@ def _dispatch_worker_handoff(store, runtime, code_host: CodeHost, manifest, key,
         return _dispatch_worker_handoff_locked(store, runtime, code_host, manifest, key, **kwargs)
 
 
+@dataclass
+class _HandoffRun:
+    """Mutable state of one review→worker handoff dispatch; steps update it and may end the run early."""
+    store: WorkItemStore
+    runtime: AgentRuntime
+    code_host: CodeHost
+    manifest: Manifest
+    key: str
+    node: Any
+    item_id: str
+    projection: WorkItemControlProjection
+    intent: WorkerHandoffIntent | None
+
+    @property
+    def current(self) -> WorkItem:
+        return self.projection.work_item
+
+    def prepare(self, write, check, item_id: str | None = None) -> _WorkerHandoffResult | None:
+        """Apply one observed preparation write; a still-pending write ends the run."""
+        preparation = _apply_observed_handoff_preparation_write(
+            self.store, item_id or self.item_id, write, check)
+        if preparation.state == "pending":
+            return _WorkerHandoffResult("pending-preparation", self.intent)
+        self.projection = preparation.projection
+        return None
+
+    def observe_bounded(self) -> _WorkerHandoffResult | None:
+        result = _observe_worker_handoff_bounded(
+            self.store, self.runtime, self.code_host, self.manifest, self.key, self.intent)
+        self.intent = result.intent
+        return _resolved_worker_handoff_dispatch(result)
+
+    def needs_decision_if_any(self) -> _WorkerHandoffResult | None:
+        fresh = self.store.observe_work_item_control(self.item_id)
+        if fresh.work_item.decision_required:
+            return _WorkerHandoffResult("needs-decision", self.intent, fresh,
+                                        decision=fresh.work_item.decision_required)
+        if fresh.work_item.worker_handoff != self.intent:
+            raise PlatformError(f"Worker handoff changed before dispatch for {self.item_id}")
+        return None
+
+
+_HANDOFF_REVIEW_GATES = {"review", "review-nits"}
+
+
+def _handoff_entry(run: _HandoffRun) -> _WorkerHandoffResult | None:
+    """Reject incomplete authoring recovery, surface decisions, rehydrate review payloads."""
+    key, current, intent = run.key, run.current, run.intent
+    if intent is not None and intent.authoring_recovery is not None:
+        raise PlatformError(f"Authoring recovery is incomplete; finish `omac node retry <manifest> {key} --stage authoring` before dispatch")
+    if current.phase == TaskPhase.AUTHORING and current.decision_required:
+        return _WorkerHandoffResult(
+            "needs-decision", intent, run.projection, decision=current.decision_required)
+    if intent is None:
+        return None
+    _mark_recovery_pending(run.manifest, key)
+    if (
+        current.delivery_identity is not None
+        and current.delivery_identity.handoff_generation != intent.generation
+    ):
+        run.projection = _hydrate_work_item_payloads(
+            run.store, run.projection, _REVIEW_CONFIRMATION_PAYLOADS)
+    if intent.gate in _HANDOFF_REVIEW_GATES:
+        resolution = _resolve_handoff_review_convergence(
+            run.current, intent, key, store=run.store)
+        if resolution.state is ResolutionState.NEEDS_DECISION:
+            return _WorkerHandoffResult(
+                "needs-decision", intent, run.projection, decision=resolution.decision)
+    return None
+
+
+def _handoff_hydrate_contract(run: _HandoffRun, gate: str | None) -> None:
+    # Every new handoff binds the materialized Store contract. A deferred
+    # control projection's None is not an authoritative null contract.
+    required_payloads = {WorkItemPayload.CONTRACT}
+    if gate in _HANDOFF_REVIEW_GATES:
+        # The locked fresh projection defers the exact review subject's
+        # delivery and feedback bodies, even if collect already read them.
+        required_payloads.update(_REVIEW_CONFIRMATION_PAYLOADS)
+    contract_deferred = WorkItemPayload.CONTRACT in run.projection.deferred_payloads
+    run.projection = _hydrate_work_item_payloads(
+        run.store, run.projection or WorkItemControlProjection(run.current),
+        frozenset(required_payloads))
+    from .dispatch import _submit_payload_is_materialized
+    if contract_deferred and not _submit_payload_is_materialized(
+        WorkItemPayload.CONTRACT, run.current.contract
+    ):
+        raise PlatformError(
+            f"Could not hydrate contract for Worker handoff {run.item_id}; "
+            f"restore its contract attachment and run `omac work show {run.item_id} --output json`")
+
+
+def _handoff_source(run: _HandoffRun, gate: str) -> tuple[int, str]:
+    """Which review round and subject the new handoff reacts to."""
+    current = run.current
+    if gate == "explicit-dispatch":
+        return max(1, current.bounces.review), stage_recovery_subject(run.node, current)
+    source_round = max(1, current.bounces.review + 1)
+    source_subject = current.review_subject_digest
+    if (
+        not source_subject
+        or source_subject != _review_subject_for_round(
+            run.manifest, run.key, current, source_round)
+    ):
+        raise PlatformError(f"Worker handoff source is stale for work item {run.item_id}")
+    return source_round, source_subject
+
+
+def _handoff_baseline_head(current: WorkItem, source_verdict: str | None) -> str | None:
+    if source_verdict not in {"reject", "pass-with-nits"}:
+        return None
+    identity = _delivery_identity(current)
+    return (
+        getattr(identity, "pr_head_sha", None)
+        if identity is not None else
+        str(
+            (current.artifacts.get("head_sha") or "")
+            if isinstance(current.artifacts, dict) else ""
+        )
+    ) or None
+
+
+def _handoff_source_feedback(run: _HandoffRun, gate: str, source_verdict: str | None):
+    current = run.current
+    if gate == "review":
+        feedback = build_worker_rework_feedback(current)
+        return feedback if worker_rework_feedback_is_valid(feedback) else None
+    if gate != "review-nits":
+        return None
+    source_feedback = {"verdict": source_verdict}
+    if not exact_review_report_ref(current.review_report_ref):
+        raise PlatformError(
+            f"Worker handoff review report ref is invalid for work item {run.item_id}")
+    source_feedback["report_ref"] = dict(current.review_report_ref)
+    report = current.review_report
+    if isinstance(report, dict) and isinstance(report.get("nits"), list):
+        source_feedback["nits"] = list(report["nits"])
+    if not review_nits_feedback_is_complete(source_feedback):
+        raise PlatformError(
+            f"Worker handoff requires actionable pass-with-nits feedback "
+            f"for work item {run.item_id}")
+    return source_feedback
+
+
+def _new_handoff_intent(run: _HandoffRun, review_bounce: int | None, gate: str | None
+                        ) -> _WorkerHandoffResult | None:
+    """Create and durably persist the causal handoff intent (the first write of a handoff)."""
+    _handoff_hydrate_contract(run, gate)
+    current, item_id, node = run.current, run.item_id, run.node
+    if review_bounce is None or gate is None:
+        raise PlatformError(f"Worker handoff intent is missing for work item {item_id}")
+    source_round, source_subject = _handoff_source(run, gate)
+    source_verdict = current.review_verdict if gate in _HANDOFF_REVIEW_GATES else None
+    baseline_pr_head_sha = _handoff_baseline_head(current, source_verdict)
+    source_feedback = _handoff_source_feedback(run, gate, source_verdict)
+    if not run.runtime.capabilities.stable_direct_run_identity:
+        raise PlatformError("Worker handoff requires stable direct Run identity support")
+    try:
+        target_agent_id = run.store.resolve_agent_id(node.worker)
+        baseline_run_ids, baseline_cutoff = _bounded_direct_run_baseline(
+            run.runtime.list_runs(item_id))
+    except PlatformError as exc:
+        if run.store.is_transient_transport_error(exc):
+            return _WorkerHandoffResult("pending-initialization", None)
+        raise
+    intent = WorkerHandoffIntent(
+        schema=WORKER_HANDOFF_SCHEMA,
+        state="pending",
+        target_worker=node.worker,
+        gate=gate,
+        source_review_subject_digest=source_subject,
+        source_review_round=source_round,
+        source_review_verdict=source_verdict,
+        source_review_feedback=source_feedback,
+        review_context_binding=review_context_binding(current),
+        target_review_bounce=review_bounce,
+        generation=f"handoff-{secrets.token_hex(8)}",
+        target_agent_id=target_agent_id,
+        baseline_direct_run_ids=baseline_run_ids,
+        baseline_cutoff_created_at=baseline_cutoff,
+        baseline_verification_attachment_id=(
+            str((current.verification_ref or {}).get("attachment_id") or "") or None),
+        baseline_pr_head_sha=baseline_pr_head_sha,
+        target_worker_bounce=current.bounces.worker,
+    )
+    run.intent = intent
+    _mark_recovery_pending(run.manifest, run.key)
+    preparation = _apply_observed_handoff_preparation_write(
+        run.store,
+        item_id,
+        lambda: run.store.update_work_item_metadata(item_id, worker_handoff=intent),
+        lambda item: (
+            item.worker_handoff is not None
+            and item.worker_handoff.generation == intent.generation
+        ),
+    )
+    if preparation.state == "pending":
+        observed_intent = (
+            preparation.projection.work_item.worker_handoff
+            if preparation.projection is not None else None
+        )
+        if observed_intent is not None and observed_intent.generation != intent.generation:
+            raise PlatformError(f"Worker handoff intent conflicts for work item {item_id}")
+        return _WorkerHandoffResult("pending-initialization", None)
+    run.projection = preparation.projection
+    return None
+
+
+def _retire_source_identity(run: _HandoffRun) -> _WorkerHandoffResult | None:
+    """The complete causal intent must be durably observable before retiring the source identity.
+
+    Restart can then verify the same source exactly."""
+    current, intent, key, item_id = run.current, run.intent, run.key, run.item_id
+    if not (
+        current.delivery_identity is not None
+        and current.delivery_identity.handoff_generation != intent.generation
+        and not _worker_handoff_has_new_delivery(current, intent)
+    ):
+        return None
+    run.projection = _hydrate_work_item_payloads(
+        run.store, run.projection, _REVIEW_CONFIRMATION_PAYLOADS)
+    current = run.current
+    source_subject = (
+        stage_recovery_subject(run.node, current)
+        if intent.gate == "explicit-dispatch"
+        else _review_subject_for_round(run.manifest, key, current, intent.source_review_round)
+    )
+    if (
+        source_subject != intent.source_review_subject_digest
+        or review_context_binding(current) != intent.review_context_binding
+    ):
+        raise PlatformError(f"Worker handoff source changed before retirement for {item_id}")
+    return run.prepare(
+        lambda: run.store.update_work_item_metadata(item_id, delivery_identity={}),
+        lambda item: item.delivery_identity is None,
+    )
+
+
+def _prepare_bounce(run: _HandoffRun, attr: str, target: int, mismatch: str
+                    ) -> _WorkerHandoffResult | None:
+    """Raise one bounce counter (`worker` or `review`) to the handoff target."""
+    store, item_id = run.store, run.item_id
+    if getattr(run.current.bounces, attr) < target:
+        pending = run.prepare(
+            lambda: store.update_work_item_metadata(item_id, **{f"{attr}_bounce": target}),
+            lambda item: getattr(item.bounces, attr) == target,
+        )
+        if pending is not None:
+            return pending
+    if getattr(run.current.bounces, attr) != target:
+        raise PlatformError(mismatch.format(item_id=item_id))
+    return None
+
+
+def _worker_bounce_step(run: _HandoffRun) -> _WorkerHandoffResult | None:
+    target = run.intent.target_worker_bounce
+    if target is None:
+        return None
+    return _prepare_bounce(
+        run, "worker", target,
+        "Worker handoff bounce does not match retry attempt for work item {item_id}")
+
+
+def _review_bounce_step(run: _HandoffRun) -> _WorkerHandoffResult | None:
+    target = run.intent.target_review_bounce
+    if target is None:
+        raise PlatformError(
+            f"Worker handoff target bounce is missing for work item {run.item_id}")
+    return _prepare_bounce(
+        run, "review", target, "Worker handoff bounce does not match for work item {item_id}")
+
+
+def _observe_after_intent(run: _HandoffRun) -> _WorkerHandoffResult | None:
+    try:
+        result = _observe_worker_handoff(
+            run.store, run.runtime, run.code_host, run.manifest, run.key, run.intent,
+            projection=run.projection)
+    except PlatformError as exc:
+        if run.store.is_transient_transport_error(exc):
+            return _WorkerHandoffResult("pending-preparation", run.intent)
+        raise
+    if result.state == "pending-submit":
+        result = _observe_worker_handoff_bounded(
+            run.store, run.runtime, run.code_host, run.manifest, run.key, result.intent)
+    run.intent = result.intent
+    return _resolved_worker_handoff_dispatch(result)
+
+
+def _observe_before_dispatch(run: _HandoffRun) -> _WorkerHandoffResult | None:
+    try:
+        result = _observe_worker_handoff(
+            run.store, run.runtime, run.code_host, run.manifest, run.key, run.intent)
+    except PlatformError as exc:
+        if run.store.is_transient_transport_error(exc):
+            return _WorkerHandoffResult("pending-preparation", run.intent)
+        raise
+    run.intent = result.intent
+    return _resolved_worker_handoff_dispatch(result)
+
+
+def _reset_to_authoring(run: _HandoffRun) -> _WorkerHandoffResult | None:
+    store, item_id = run.store, run.item_id
+    # reset_review 的接口契约负责一次性清除当前 review projection 并回 AUTHORING。
+    # handoff 不制造瞬时 review cycle，避免新增可崩溃的持久化中间态。
+    if not _worker_handoff_review_is_reset(run.current):
+        pending = run.prepare(lambda: store.reset_review(item_id), _worker_handoff_review_is_reset)
+        if pending is not None:
+            return pending
+    if run.current.status != WorkItemStatus.IN_PROGRESS:
+        pending = run.prepare(
+            lambda: store.update_status(item_id, WorkItemStatus.IN_PROGRESS),
+            lambda item: item.status == WorkItemStatus.IN_PROGRESS,
+        )
+        if pending is not None:
+            return pending
+    if (
+        run.current.status != WorkItemStatus.IN_PROGRESS
+        or not _worker_handoff_review_is_reset(run.current)
+    ):
+        raise PlatformError(
+            f"Worker handoff preparation did not persist for work item {item_id}")
+    return None
+
+
+def _write_authoring_body(run: _HandoffRun) -> _WorkerHandoffResult | None:
+    store = run.store
+    body_item_id, body_metadata = _develop_issue_body_metadata(
+        store, run.manifest, run.key, phase=TaskPhase.AUTHORING, item=run.current)
+    pending = run.prepare(
+        lambda: store.update_work_item_metadata(body_item_id, **body_metadata),
+        lambda item: _develop_issue_body_matches(item, body_metadata),
+        item_id=body_item_id,
+    )
+    if pending is not None:
+        return pending
+    preparation = _observe_handoff_preparation_bounded(
+        store,
+        run.item_id,
+        lambda item: (
+            item.status == WorkItemStatus.IN_PROGRESS
+            and _worker_handoff_review_is_reset(item)
+            and _develop_issue_body_matches(item, body_metadata)
+        ),
+    )
+    if preparation.state == "pending":
+        return _WorkerHandoffResult("pending-preparation", run.intent)
+    return None
+
+
+def _assign_and_wake(run: _HandoffRun) -> _WorkerHandoffResult:
+    """assign_work_item 自身负责观察当前 assignee并幂等修复。目标 Run 的
+    身份由后续只读观察绑定到持久 handoff，而不是由 assignment 成功猜测。"""
+    store, runtime, item_id, intent = run.store, run.runtime, run.item_id, run.intent
+    for action, kind_label in (
+        (lambda: store.assign_work_item(item_id, intent.target_worker, "worker"), "assign"),
+        (lambda: runtime.wake(item_id, intent.target_worker, "worker"), "wake"),
+    ):
+        decided = run.needs_decision_if_any()
+        if decided is not None:
+            return decided
+        try:
+            action()
+        except PlatformError as dispatch_error:
+            resolved = run.observe_bounded()
+            if resolved is not None:
+                return resolved
+            raise dispatch_error
+        resolved = run.observe_bounded()
+        if resolved is not None:
+            return resolved
+    raise PlatformError(
+        f"Worker handoff dispatch outcome is unknown for work item {item_id}")
+
+
 def _dispatch_worker_handoff_locked(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -2089,376 +2464,30 @@ def _dispatch_worker_handoff_locked(
     node = manifest.nodes[key]
     item_id = node.work_item_id
     projection = projection or store.observe_work_item_control(item_id)
-    current = projection.work_item
-    intent = current.worker_handoff
-    if intent is not None and intent.authoring_recovery is not None:
-        raise PlatformError(f"Authoring recovery is incomplete; finish `omac node retry <manifest> {key} --stage authoring` before dispatch")
-    if current.phase == TaskPhase.AUTHORING and current.decision_required:
-        return _WorkerHandoffResult(
-            "needs-decision", intent, projection, decision=current.decision_required)
-    if intent is not None:
-        _mark_recovery_pending(manifest, key)
-    if (
-        intent is not None and current.delivery_identity is not None
-        and current.delivery_identity.handoff_generation != intent.generation
-    ):
-        projection = _hydrate_work_item_payloads(
-            store, projection, _REVIEW_CONFIRMATION_PAYLOADS)
-        current = projection.work_item
-    if intent is not None and intent.gate in {"review", "review-nits"}:
-        resolution = _resolve_handoff_review_convergence(current, intent, key, store=store)
-        if resolution.state is ResolutionState.NEEDS_DECISION:
-            return _WorkerHandoffResult(
-                "needs-decision",
-                intent,
-                projection,
-                decision=resolution.decision,
-            )
-    if intent is None:
-        # Every new handoff binds the materialized Store contract. A deferred
-        # control projection's None is not an authoritative null contract.
-        required_payloads = {WorkItemPayload.CONTRACT}
-        if gate in {"review", "review-nits"}:
-            # The locked fresh projection defers the exact review subject's
-            # delivery and feedback bodies, even if collect already read them.
-            required_payloads.update(_REVIEW_CONFIRMATION_PAYLOADS)
-        contract_deferred = WorkItemPayload.CONTRACT in projection.deferred_payloads
-        projection = _hydrate_work_item_payloads(
-            store, projection or WorkItemControlProjection(current),
-            frozenset(required_payloads))
-        current = projection.work_item
-        from .dispatch import _submit_payload_is_materialized
-        if contract_deferred and not _submit_payload_is_materialized(
-            WorkItemPayload.CONTRACT, current.contract
-        ):
-            raise PlatformError(
-                f"Could not hydrate contract for Worker handoff {item_id}; "
-                f"restore its contract attachment and run `omac work show {item_id} --output json`")
-        if review_bounce is None or gate is None:
-            raise PlatformError(
-                f"Worker handoff intent is missing for work item {item_id}")
-        if gate == "explicit-dispatch":
-            source_round = max(1, current.bounces.review)
-            source_subject = stage_recovery_subject(node, current)
-        else:
-            source_round = max(1, current.bounces.review + 1)
-            source_subject = current.review_subject_digest
-            if (
-                not source_subject
-                or source_subject != _review_subject_for_round(
-                    manifest, key, current, source_round)
-            ):
-                raise PlatformError(
-                    f"Worker handoff source is stale for work item {item_id}")
-        source_verdict = (
-            current.review_verdict
-            if gate in {"review", "review-nits"} else None
-        )
-        baseline_pr_head_sha = None
-        if source_verdict in {"reject", "pass-with-nits"}:
-            identity = _delivery_identity(current)
-            baseline_pr_head_sha = (
-                getattr(identity, "pr_head_sha", None)
-                if identity is not None else
-                str(
-                    (current.artifacts.get("head_sha") or "")
-                    if isinstance(current.artifacts, dict) else ""
-                )
-            ) or None
-        source_feedback = None
-        if gate == "review":
-            feedback = build_worker_rework_feedback(current)
-            if worker_rework_feedback_is_valid(feedback):
-                source_feedback = feedback
-        if gate == "review-nits":
-            source_feedback = {"verdict": source_verdict}
-            if not exact_review_report_ref(current.review_report_ref):
-                raise PlatformError(
-                    f"Worker handoff review report ref is invalid for "
-                    f"work item {item_id}")
-            source_feedback["report_ref"] = dict(current.review_report_ref)
-            report = current.review_report
-            if isinstance(report, dict):
-                nits = report.get("nits")
-                if isinstance(nits, list):
-                    source_feedback["nits"] = list(nits)
-            if not review_nits_feedback_is_complete(source_feedback):
-                raise PlatformError(
-                    f"Worker handoff requires actionable pass-with-nits feedback "
-                    f"for work item {item_id}")
-        if not runtime.capabilities.stable_direct_run_identity:
-            raise PlatformError(
-                "Worker handoff requires stable direct Run identity support")
-        try:
-            target_agent_id = store.resolve_agent_id(node.worker)
-            baseline_run_ids, baseline_cutoff = _bounded_direct_run_baseline(
-                runtime.list_runs(item_id))
-        except PlatformError as exc:
-            if store.is_transient_transport_error(exc):
-                return _WorkerHandoffResult("pending-initialization", None)
-            raise
-        intent = WorkerHandoffIntent(
-            schema=WORKER_HANDOFF_SCHEMA,
-            state="pending",
-            target_worker=node.worker,
-            gate=gate,
-            source_review_subject_digest=source_subject,
-            source_review_round=source_round,
-            source_review_verdict=source_verdict,
-            source_review_feedback=source_feedback,
-            review_context_binding=review_context_binding(current),
-            target_review_bounce=review_bounce,
-            generation=f"handoff-{secrets.token_hex(8)}",
-            target_agent_id=target_agent_id,
-            baseline_direct_run_ids=baseline_run_ids,
-            baseline_cutoff_created_at=baseline_cutoff,
-            baseline_verification_attachment_id=(
-                str((current.verification_ref or {}).get("attachment_id") or "")
-                or None
-            ),
-            baseline_pr_head_sha=baseline_pr_head_sha,
-            target_worker_bounce=current.bounces.worker,
-        )
-        _mark_recovery_pending(manifest, key)
-        preparation = _apply_observed_handoff_preparation_write(
-            store,
-            item_id,
-            lambda: store.update_work_item_metadata(
-                item_id, worker_handoff=intent),
-            lambda item: (
-                item.worker_handoff is not None
-                and item.worker_handoff.generation == intent.generation
-            ),
-        )
-        if preparation.state == "pending":
-            observed_intent = (
-                preparation.projection.work_item.worker_handoff
-                if preparation.projection is not None else None
-            )
-            if (
-                observed_intent is not None
-                and observed_intent.generation != intent.generation
-            ):
-                raise PlatformError(
-                    f"Worker handoff intent conflicts for work item {item_id}")
-            return _WorkerHandoffResult("pending-initialization", None)
-        projection = preparation.projection
-        current = projection.work_item
+    run = _HandoffRun(store, runtime, code_host, manifest, key, node, item_id, projection,
+                      projection.work_item.worker_handoff)
+    early = _handoff_entry(run)
+    if early is None and run.intent is None:
+        early = _new_handoff_intent(run, review_bounce, gate)
+    if early is not None:
+        return early
+    if not run.intent.is_causally_bound():
+        raise PlatformError(f"Worker handoff lacks causal identity for work item {item_id}")
 
-    if not intent.is_causally_bound():
-        raise PlatformError(
-            f"Worker handoff lacks causal identity for work item {item_id}")
-
-    # The complete causal intent must be durably observable before retiring
-    # the source identity. Restart can then verify the same source exactly.
-    if (
-        current.delivery_identity is not None
-        and current.delivery_identity.handoff_generation != intent.generation
-        and not _worker_handoff_has_new_delivery(current, intent)
-    ):
-        projection = _hydrate_work_item_payloads(
-            store, projection, _REVIEW_CONFIRMATION_PAYLOADS)
-        current = projection.work_item
-        source_subject = (
-            stage_recovery_subject(node, current)
-            if intent.gate == "explicit-dispatch"
-            else _review_subject_for_round(
-                manifest, key, current, intent.source_review_round)
-        )
-        if (
-            source_subject != intent.source_review_subject_digest
-            or review_context_binding(current) != intent.review_context_binding
-        ):
-            raise PlatformError(f"Worker handoff source changed before retirement for {item_id}")
-        preparation = _apply_observed_handoff_preparation_write(
-            store, item_id,
-            lambda: store.update_work_item_metadata(item_id, delivery_identity={}),
-            lambda item: item.delivery_identity is None,
-        )
-        if preparation.state == "pending":
-            return _WorkerHandoffResult("pending-preparation", intent)
-        projection = preparation.projection
-        current = projection.work_item
-
-    target_worker_bounce = intent.target_worker_bounce
-    if target_worker_bounce is not None:
-        if current.bounces.worker < target_worker_bounce:
-            preparation = _apply_observed_handoff_preparation_write(
-                store,
-                item_id,
-                lambda: store.update_work_item_metadata(
-                    item_id, worker_bounce=target_worker_bounce),
-                lambda item: item.bounces.worker == target_worker_bounce,
-            )
-            if preparation.state == "pending":
-                return _WorkerHandoffResult(
-                    "pending-preparation", intent)
-            projection = preparation.projection
-            current = projection.work_item
-        if current.bounces.worker != target_worker_bounce:
-            raise PlatformError(
-                f"Worker handoff bounce does not match retry attempt for "
-                f"work item {item_id}")
-
-    if intent.is_causally_bound():
-        try:
-            result = _observe_worker_handoff(
-                store, runtime, code_host, manifest, key, intent, projection=projection)
-        except PlatformError as exc:
-            if store.is_transient_transport_error(exc):
-                return _WorkerHandoffResult("pending-preparation", intent)
-            raise
-        if result.state == "pending-submit":
-            result = _observe_worker_handoff_bounded(
-                store, runtime, code_host, manifest, key, result.intent)
-        intent = result.intent
-        resolved = _resolved_worker_handoff_dispatch(result)
-        if resolved is not None:
-            return resolved
-
-    target_bounce = intent.target_review_bounce
-    if target_bounce is None:
-        raise PlatformError(
-            f"Worker handoff target bounce is missing for work item {item_id}")
-    if current.bounces.review < target_bounce:
-        preparation = _apply_observed_handoff_preparation_write(
-            store,
-            item_id,
-            lambda: store.update_work_item_metadata(
-                item_id, review_bounce=target_bounce),
-            lambda item: item.bounces.review == target_bounce,
-        )
-        if preparation.state == "pending":
-            return _WorkerHandoffResult("pending-preparation", intent)
-        projection = preparation.projection
-        current = projection.work_item
-    if current.bounces.review != target_bounce:
-        raise PlatformError(
-            f"Worker handoff bounce does not match for work item {item_id}")
-
-    # reset_review 的接口契约负责一次性清除当前 review projection 并回 AUTHORING。
-    # handoff 不制造瞬时 review cycle，避免新增可崩溃的持久化中间态。
-    if not _worker_handoff_review_is_reset(current):
-        preparation = _apply_observed_handoff_preparation_write(
-            store,
-            item_id,
-            lambda: store.reset_review(item_id),
-            _worker_handoff_review_is_reset,
-        )
-        if preparation.state == "pending":
-            return _WorkerHandoffResult("pending-preparation", intent)
-        projection = preparation.projection
-        current = projection.work_item
-
-    if current.status != WorkItemStatus.IN_PROGRESS:
-        preparation = _apply_observed_handoff_preparation_write(
-            store,
-            item_id,
-            lambda: store.update_status(item_id, WorkItemStatus.IN_PROGRESS),
-            lambda item: item.status == WorkItemStatus.IN_PROGRESS,
-        )
-        if preparation.state == "pending":
-            return _WorkerHandoffResult("pending-preparation", intent)
-        projection = preparation.projection
-        current = projection.work_item
-    if (
-        current.status != WorkItemStatus.IN_PROGRESS
-        or not _worker_handoff_review_is_reset(current)
-    ):
-        raise PlatformError(
-            f"Worker handoff preparation did not persist for work item {item_id}")
-
-    try:
-        result = _observe_worker_handoff(
-            store, runtime, code_host, manifest, key, intent)
-    except PlatformError as exc:
-        if store.is_transient_transport_error(exc):
-            return _WorkerHandoffResult("pending-preparation", intent)
-        raise
-    intent = result.intent
-    resolved = _resolved_worker_handoff_dispatch(result)
-    if resolved is not None:
-        return resolved
-
-    body_item_id, body_metadata = _develop_issue_body_metadata(
-        store,
-        manifest,
-        key,
-        phase=TaskPhase.AUTHORING,
-        item=current,
+    steps = (
+        _retire_source_identity,
+        _worker_bounce_step,
+        _observe_after_intent,
+        _review_bounce_step,
+        _reset_to_authoring,
+        _observe_before_dispatch,
+        _write_authoring_body,
     )
-    preparation = _apply_observed_handoff_preparation_write(
-        store,
-        body_item_id,
-        lambda: store.update_work_item_metadata(
-            body_item_id, **body_metadata),
-        lambda item: _develop_issue_body_matches(item, body_metadata),
-    )
-    if preparation.state == "pending":
-        return _WorkerHandoffResult("pending-preparation", intent)
-
-    preparation = _observe_handoff_preparation_bounded(
-        store,
-        item_id,
-        lambda item: (
-            item.status == WorkItemStatus.IN_PROGRESS
-            and _worker_handoff_review_is_reset(item)
-            and _develop_issue_body_matches(item, body_metadata)
-        ),
-    )
-    if preparation.state == "pending":
-        return _WorkerHandoffResult("pending-preparation", intent)
-
-    # assign_work_item 自身负责观察当前 assignee并幂等修复。目标 Run 的
-    # 身份由后续只读观察绑定到持久 handoff，而不是由 assignment 成功猜测。
-    fresh = store.observe_work_item_control(item_id)
-    if fresh.work_item.decision_required:
-        return _WorkerHandoffResult("needs-decision", intent, fresh,
-                                    decision=fresh.work_item.decision_required)
-    if fresh.work_item.worker_handoff != intent:
-        raise PlatformError(f"Worker handoff changed before dispatch for {item_id}")
-    try:
-        store.assign_work_item(item_id, intent.target_worker, "worker")
-    except PlatformError as assign_error:
-        result = _observe_worker_handoff_bounded(
-            store, runtime, code_host, manifest, key, intent)
-        intent = result.intent
-        resolved = _resolved_worker_handoff_dispatch(result)
-        if resolved is not None:
-            return resolved
-        raise assign_error
-
-    result = _observe_worker_handoff_bounded(
-        store, runtime, code_host, manifest, key, intent)
-    intent = result.intent
-    resolved = _resolved_worker_handoff_dispatch(result)
-    if resolved is not None:
-        return resolved
-
-    fresh = store.observe_work_item_control(item_id)
-    if fresh.work_item.decision_required:
-        return _WorkerHandoffResult("needs-decision", intent, fresh,
-                                    decision=fresh.work_item.decision_required)
-    if fresh.work_item.worker_handoff != intent:
-        raise PlatformError(f"Worker handoff changed before dispatch for {item_id}")
-    try:
-        runtime.wake(item_id, intent.target_worker, "worker")
-    except PlatformError as wake_error:
-        result = _observe_worker_handoff_bounded(
-            store, runtime, code_host, manifest, key, intent)
-        intent = result.intent
-        resolved = _resolved_worker_handoff_dispatch(result)
-        if resolved is not None:
-            return resolved
-        raise wake_error
-
-    result = _observe_worker_handoff_bounded(
-        store, runtime, code_host, manifest, key, intent)
-    resolved = _resolved_worker_handoff_dispatch(result)
-    if resolved is not None:
-        return resolved
-    raise PlatformError(
-        f"Worker handoff dispatch outcome is unknown for work item {item_id}")
+    for step in steps:
+        early = step(run)
+        if early is not None:
+            return early
+    return _assign_and_wake(run)
 
 
 def _review_projection_is_clear(item) -> bool:
