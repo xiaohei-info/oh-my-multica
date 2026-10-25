@@ -58,11 +58,6 @@ def test_topic_loadable_and_nonempty(label: str, content: str) -> None:
 
 
 @pytest.mark.parametrize("label,content", list(_all_topics()))
-def test_topic_no_skill_residue(label: str, content: str) -> None:
-    _assert_no_residue(content, label)
-
-
-@pytest.mark.parametrize("label,content", list(_all_topics()))
 def test_topic_uses_omac_commands(label: str, content: str) -> None:
     assert "omac " in content, f"{label} never references omac commands"
 

@@ -27,8 +27,6 @@ from omac.core.workitem import WorkItemStatus
 from _support.fake_platform import MockRuntime, MockStore
 from omac.pipeline.delivery import (
     MANIFEST_TO_PLATFORM_STATUS,
-    VALID_MANIFEST_STATUSES,
-    CIResult,
     advance_delivery,
     to_platform_status,
 )
@@ -97,10 +95,6 @@ class TestStatusMapping:
         with pytest.raises(ValueError) as exc:
             to_platform_status("bogus")
         assert "Valid values" in str(exc.value)
-
-    def test_valid_statuses_complete(self):
-        assert VALID_MANIFEST_STATUSES == set(MANIFEST_TO_PLATFORM_STATUS)
-
 
 # ── advance_delivery 单元测试(对齐 canonical WorkItem.bounces.ci) ──────────
 

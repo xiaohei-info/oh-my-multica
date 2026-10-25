@@ -79,6 +79,17 @@ def test_decide_modules_stay_pure():
     assert out == []
 
 
+def test_tests_do_not_assert_on_source_text():
+    """Tests protect behavior, not wording (AGENTS.md, Tests rule 3)."""
+    import ast
+    offenders = []
+    for path in sorted(Path(__file__).parent.rglob("test_*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Attribute) and node.attr == "getsource":
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert offenders == []
+
+
 def test_smoke_workflow_is_schedule_or_manual_only():
     smoke = ROOT / ".github" / "workflows" / "smoke.yml"
     if smoke.exists():

@@ -715,25 +715,6 @@ def test_dag_projection_fails_closed_for_unknown_dependencies_and_cycles():
     assert ".dag-error" in css
 
 
-def test_spa_resets_dag_view_state_when_switching_manifests():
-    """切换 manifest 不得继承上一个图的展开、聚焦、选中或详情状态。"""
-    js = _read_asset("app.js")
-
-    assert "function resetDagView()" in js
-    assert "state.expanded = [];" in js
-    assert 'state.focus = "default";' in js
-    assert "state.selected = null;" in js
-    assert "clearNodeDetail();" in js
-    assert re.search(
-        r"async function selectManifest\(path\)\{.*?"
-        r"const isNewManifest = state\.current !== path;.*?"
-        r"if\(isNewManifest\)\{.*?resetDagView\(\);.*?\}.*?"
-        r"state\.current = path;",
-        js,
-        re.DOTALL,
-    )
-
-
 def test_spa_closes_selection_and_detail_after_every_dag_redraw():
     """redraw 后仅保留仍可见的选择；异步旧详情也不得回写。"""
     js = _read_asset("app.js")
@@ -1091,14 +1072,6 @@ async ({app, elements, setFetchHandler, jsonResponse, flush}) => {
     assert result == {
         "role": "button", "tabIndex": "0", "pressed": "true", "selected": "task",
     }
-
-
-def test_spacer_layout_is_shared_by_header_toolbar_and_footer():
-    """三处布局均使用 .spacer，样式不能只限定在 header。"""
-    css = _read_asset("app.css")
-
-    assert re.search(r"\.spacer\s*\{[^}]*flex\s*:\s*1", css)
-    assert "header .spacer" not in css
 
 
 def test_dag_projection_manual_expansion_keeps_multi_parent_ancestor_closure():
