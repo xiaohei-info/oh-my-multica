@@ -87,7 +87,10 @@ def test_tests_do_not_assert_on_source_text():
     import ast
     offenders = []
     for path in sorted(Path(__file__).parent.rglob("test_*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        text = path.read_text(encoding="utf-8")
+        if "getsource" not in text:  # parsing 60k lines of tests per run is what made this slow
+            continue
+        for node in ast.walk(ast.parse(text)):
             if isinstance(node, ast.Attribute) and node.attr == "getsource":
                 offenders.append(f"{path.name}:{node.lineno}")
     assert offenders == []

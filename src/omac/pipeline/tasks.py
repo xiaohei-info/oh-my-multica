@@ -23,7 +23,7 @@ from ..core.machine_feedback import (
     build_machine_feedback, machine_feedback_summary,
 )
 from ..core.review_convergence import (
-    build_review_obligations,
+    bounded_decision_required, build_review_obligations,
 )
 from ..core.review_continuation import authorized_review_limit
 from ..core.review_preflight import run_review_preflight
@@ -34,11 +34,14 @@ from ..core.taskmeta import (
 from ..core.workitem import WorkItem, WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import current_language, ui
-from .convergence import ResolutionState, persist_decision, resolve_convergence
+from .convergence import ResolutionState, resolve_convergence
 from .dispatch import (
     normalize_source_refs, render_issue_body, reviewer_dispatch_stopped,
 )
 from .apply import Ports, apply, apply_one
+from .decide_task import (
+    Fact, Stage, TERMINAL, TaskObs, decide_task_step, plan_machine_feedback,
+)
 from .decide_effects import (
     Assign,
     ClearAssignment,
@@ -280,15 +283,11 @@ def _restart_invalid_review(
     errors: List[str],
 ) -> WorkItem:
     """清除无效 verdict/report，并在同一评审对象上重新派审。"""
-    apply([
-        ResetReview(item_id),
-    ], Ports(store=store))
-    apply_one(PrepareReviewCycle(item_id, subject_digest), Ports(store=store))
     feedback = build_machine_feedback("review-evidence", errors)
-    return apply_one(UpdateMetadata(item_id, {
-        'machine_feedback': feedback,
-        'review_comment': machine_feedback_summary(item_id, feedback),
-    }), Ports(store=store))
+    return apply(
+        [ResetReview(item_id), PrepareReviewCycle(item_id, subject_digest),
+         *plan_machine_feedback(item_id, feedback, machine_feedback_summary(item_id, feedback))],
+        Ports(store=store))[-1]
 
 
 def _review_opinion(item: WorkItem) -> Optional[str]:
@@ -1018,6 +1017,18 @@ def _guard_resume_authoring_terminal_run(
     )
 
 
+@dataclass
+class _Stop:
+    """Why the run stops with NeedsDecision; the exception is built after the table has blocked the issue."""
+
+    kind: str                  # "guard" | "review" | "convergence"
+    gate: str
+    rounds: int
+    opinion: Optional[str]
+    logged: bool = False       # the needs-decision event was already logged before the first effect
+    decision: Optional[Dict[str, Any]] = None
+
+
 class _TaskRun:
     """One synchronous authoring task: create or resume, produce, machine gate, bounded review loop.
 
@@ -1069,6 +1080,21 @@ class _TaskRun:
         self.resumed_confirmation: WorkItem | None = None
         self.delivered: WorkItem | None = None
         self.delivery: Dict[str, Any] = {}
+        self.ports = Ports(store=self.store, runtime=self.runtime)
+        self.reviewed: WorkItem | None = None
+        self.reviewer = ""
+        self.subject_digest = ""
+        self.round_index = 0
+        self.next_round = 1
+        self.review_limit = 0
+        self.gate_round = 0
+        self.gate_errors: List[str] = []
+        self.last_opinion: Optional[str] = None
+        self.stop: Optional[_Stop] = None
+        self.finish_args: tuple[str, int, bool] = ("pass", 0, True)
+        self.refresh_after_effects = False
+        self.result: Dict[str, Any] = {}
+        self.on_done: Optional[Callable[[], None]] = None
 
     def _open_item(self) -> WorkItem:
         if self.resume_item_id is not None:
@@ -1493,22 +1519,8 @@ class _TaskRun:
 
     def _persist_machine_feedback(self, errors: List[str]) -> None:
         feedback = build_machine_feedback("machine-gate", errors)
-        apply([
-            UpdateMetadata(self.item_id, {
-                'machine_feedback': feedback,
-                'review_comment': machine_feedback_summary(self.item_id, feedback),
-            }),
-        ], Ports(store=self.store))
-
-    def _block_for_budget_decision(self, gate: str, rounds: int) -> WorkItem:
-        current = self.store.get_work_item(self.item_id)
-        decision = _budget_exhausted_decision(
-            self.kind, current, gate=gate, rounds=rounds)
-        apply([
-            UpdateMetadata(self.item_id, {'decision_required': decision, 'phase': TaskPhase.REVIEW}),
-            UpdateStatus(self.item_id, WorkItemStatus.BLOCKED),
-        ], Ports(store=self.store))
-        return self.store.get_work_item(self.item_id)
+        apply(plan_machine_feedback(
+            self.item_id, feedback, machine_feedback_summary(self.item_id, feedback)), self.ports)
 
     def _amendment_review_evidence(self, candidate: WorkItem) -> dict[str, str]:
         if self.kind != TaskKind.AMENDMENT or self.review_amendment_manifest is None:
@@ -1532,313 +1544,320 @@ class _TaskRun:
                 self.store.get_work_item(node.work_item_id))
         return evidence
 
-    def _resolve_initial_delivery(self) -> Optional[Dict[str, Any]]:
+    # ── stage handlers: observe, then name what was seen. The table (decide_task) decides what follows. ──────
+
+    def run(self) -> Dict[str, Any]:
+        handlers = {
+            Stage.OPEN: self._at_open, Stage.CHECK_RESUME: self._at_check_resume,
+            Stage.PRODUCE: self._at_produce, Stage.RESOLVE_INITIAL: self._at_resolve_initial,
+            Stage.PRODUCE_REWORK: self._at_produce, Stage.MACHINE_GATE: self._at_machine_gate,
+            Stage.PRODUCE_HINTED: self._at_produce_hinted, Stage.RESUME_REVIEW: self._at_resume_review,
+            Stage.REVIEWER_CHECK: self._at_reviewer_check, Stage.REVIEW_ENTER: self._at_review_enter,
+            Stage.REVIEW_ROUND: self._at_review_round, Stage.REVIEW_CHECK: self._at_review_check,
+            Stage.REVIEW_DISPATCH: self._at_review_dispatch, Stage.REVIEW_VERDICT: self._at_review_verdict,
+            Stage.PRODUCE_NITS: self._at_produce_nits, Stage.PRODUCE_REJECT: self._at_produce_reject,
+            Stage.BLOCK_BUDGET: self._at_block_budget, Stage.FINISH: self._at_finish,
+            Stage.FINISH_WAIT: self._at_finish_wait,
+        }
+        stage = Stage.OPEN
+        while stage not in TERMINAL:
+            fact, obs = handlers[stage]()
+            transition = decide_task_step(stage, fact, obs)
+            results = apply(transition.effects, self.ports)
+            if stage is Stage.REVIEW_ROUND or fact is Fact.EVIDENCE_INVALID:
+                self.reviewed = results[-1]  # PrepareReviewCycle / the metadata write return the current item
+            stage = transition.next
+        if stage is Stage.STOPPED:
+            raise self._stop_error()
+        if self.on_done is not None:
+            self.on_done()
+        return self.result
+
+    def _obs(self, **fields) -> TaskObs:
+        return TaskObs(item_id=self.item_id, round_index=self.round_index, **fields)
+
+    def _at_open(self):
+        self._item = self._open_item()
+        return Fact.OPENED, self._obs()
+
+    def _at_check_resume(self):
+        self._check_resume(self._item)
+        if self.resumed_confirmation is None:
+            return Fact.FRESH, self._obs()
+        self.delivered = self.resumed_confirmation
+        self.delivery = _delivery_of(self.kind, self.delivered)
+        return Fact.CONFIRMATION_RESUMED, self._obs()
+
+    def _at_produce(self):
+        self.delivered = self._produce()
+        self.delivery = _delivery_of(self.kind, self.delivered)
+        return Fact.PRODUCED, self._obs()
+
+    def _at_resolve_initial(self):
         if (
             self.delivered.status == WorkItemStatus.DONE
             and self.delivered.review_verdict in {"pass", "pass-with-nits"}
             and not (self.confirm and self.delivered.phase == TaskPhase.REVIEW)
         ):
             log.info(logsetup.EVT_NODE_DONE, kind=self.kind.value, id=self.item_id)
-            return {"item_id": self.item_id, "delivery": self.delivery,
-                    "rounds": 0, "verdict": self.delivered.review_verdict,
-                    "kind": self.kind.value}
-
+            self.result = {"item_id": self.item_id, "delivery": self.delivery,
+                           "rounds": 0, "verdict": self.delivered.review_verdict,
+                           "kind": self.kind.value}
+            return Fact.ALREADY_PASSED, self._obs()
         initial_review_limit = authorized_review_limit(self.delivered, self.max_revisions)
         if (
             self.reviewers
             and _rejected_verdict_was_counted(self.kind, self.delivered)
             and self.delivered.bounces.review < initial_review_limit
         ):
-            apply([
-                ResetReview(self.item_id),
-                UpdateStatus(self.item_id, WorkItemStatus.TODO),
-            ], Ports(store=self.store))
-            self.delivered = self._produce()
-            self.delivery = _delivery_of(self.kind, self.delivered)
-        return None
+            return Fact.COUNTED_REJECT_RETRY, self._obs()
+        return Fact.PROCEED, self._obs()
 
-    def _machine_gate(self) -> None:
-        if self.resumed_confirmation is None and (self.guard is not None or self.reviewers):
-            for guard_round in range(1, self.max_revisions + 1):
-                guard_errors: List[str] = self.guard(self.delivered) if self.guard is not None else []
-                if self.reviewers:
-                    guard_errors.extend(run_review_preflight(self.delivered))
-                guard_errors = list(dict.fromkeys(guard_errors))
-                if not guard_errors:
-                    break
-                log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
-                         gate="guard", round=guard_round, max=self.max_revisions)
-                apply([
-                    ResetReview(self.item_id),
-                ], Ports(store=self.store))
-                self.delivered = self._produce(hint=guard_errors)
-                self.delivery = _delivery_of(self.kind, self.delivered)
-            else:
-                log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id,
-                         gate="guard", rounds=self.max_revisions)
-                # Producer submit 会按真实协议清除已消费的 feedback。预算耗尽
-                # 后必须把 exit 20 的完整问题重新持久化，供 operator/Author 读取。
-                self._persist_machine_feedback(guard_errors)
-                self._block_for_budget_decision("guard", self.max_revisions)
-                raise NeedsDecision(
-                    ui(
-                        f"{self.kind.value} did not pass the machine gate after {self.max_revisions} revisions",
-                        f"{self.kind.value} 任务经 {self.max_revisions} 轮 machine-gate 仍未通过"),
-                    report={"item_id": self.item_id, "kind": self.kind.value,
-                            "rounds": self.max_revisions, "phase": "guard",
-                            "last_opinion": "\n".join(guard_errors)})
+    def _at_machine_gate(self):
+        if self.resumed_confirmation is not None or not (self.guard is not None or self.reviewers):
+            return Fact.GATE_CLEAR, self._obs()
+        if self.gate_round < self.max_revisions:
+            errors: List[str] = self.guard(self.delivered) if self.guard is not None else []
+            if self.reviewers:
+                errors.extend(run_review_preflight(self.delivered))
+            errors = list(dict.fromkeys(errors))
+            if not errors:
+                return Fact.GATE_CLEAR, self._obs()
+            self.gate_round += 1
+            self.gate_errors = errors
+            log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
+                     gate="guard", round=self.gate_round, max=self.max_revisions)
+            return Fact.GATE_RETRY, self._obs()
+        log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id,
+                 gate="guard", rounds=self.max_revisions)
+        self.stop = _Stop("guard", "guard", self.max_revisions, "\n".join(self.gate_errors), logged=True)
+        # The producer's submit clears consumed feedback; once the budget is spent the full problem list is
+        # persisted again so the operator and the Author can read it.
+        feedback = build_machine_feedback("machine-gate", self.gate_errors)
+        return Fact.GATE_EXHAUSTED, self._obs(
+            feedback=feedback, feedback_summary=machine_feedback_summary(self.item_id, feedback))
 
-    def _finish_after_review(self, verdict: str,
-        rounds: int,
-        current_delivery: Dict[str, Any],
-        *,
-        prepare_confirmation: bool = True,
-    ) -> Dict[str, Any]:
+    def _at_produce_hinted(self):
+        self.delivered = self._produce(hint=self.gate_errors)
+        self.delivery = _delivery_of(self.kind, self.delivered)
+        return Fact.PRODUCED, self._obs()
+
+    def _at_resume_review(self):
+        delivered = self.delivered
+        if (
+            delivered.phase == TaskPhase.REVIEW
+            and delivered.review_verdict == "pass"
+            and delivered.status in {WorkItemStatus.IN_REVIEW, WorkItemStatus.DONE}
+            and not _review_evidence_errors(self.contract, delivered)
+        ):
+            self.finish_args = ("pass", max(1, delivered.bounces.review + 1), True)
+            return Fact.FINISH_PASS, self._obs()
+        if delivered.phase != TaskPhase.CONFIRMATION:
+            return Fact.CONTINUE, self._obs()
+        confirmation_round = max(1, delivered.bounces.review + 1)
+        if self.resumed_confirmation is not None:
+            self.finish_args = (delivered.review_verdict or "pass", confirmation_round, False)
+            return Fact.FINISH_CONFIRMED, self._obs()
+        current_subject = _review_subject_digest(self.kind, delivered, confirmation_round)
+        if not (_has_review_verdict(delivered) and delivered.review_subject_digest == current_subject):
+            # confirmation only consumes a verdict still bound to the current delivery; a new delivery after
+            # pass-with-nits cannot be vouched for by the old verdict.
+            self.refresh_after_effects = True
+            return Fact.STALE_CONFIRMATION, self._obs()
+        evidence_errors = _review_evidence_errors(self.contract, delivered)
+        if not evidence_errors:
+            self.finish_args = (delivered.review_verdict or "pass", confirmation_round, False)
+            return Fact.FINISH_CONFIRMED, self._obs()
+        log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
+                 gate="review-evidence", round=confirmation_round,
+                 max=authorized_review_limit(delivered, self.max_revisions))
+        self.delivered = _restart_invalid_review(
+            self.store, self.item_id, current_subject, evidence_errors)
+        return Fact.CONTINUE, self._obs()
+
+    def _at_reviewer_check(self):
+        if self.refresh_after_effects:
+            self.refresh_after_effects = False
+            self.delivered = self.store.get_work_item(self.item_id)
+        if self.reviewers:
+            return Fact.HAS_REVIEWERS, self._obs()
+        self.finish_args = ("pass", 0, True)
+        return Fact.NO_REVIEWERS, self._obs()
+
+    def _at_review_enter(self):
+        review_bounce = max(0, self.delivered.bounces.review)
+        self.review_limit = authorized_review_limit(self.delivered, self.max_revisions)
+        self.next_round = review_bounce + 1
+        if review_bounce < self.review_limit:
+            return Fact.ROUNDS_REMAIN, self._obs()
+        self.stop = _Stop("review", "review", review_bounce, _review_opinion(self.delivered))
+        return Fact.BUDGET_EXHAUSTED, self._obs()
+
+    def _at_review_round(self):
+        if self.next_round > self.review_limit:
+            raise AssertionError("review loop exhausted without a terminal verdict")
+        self.round_index = self.next_round
+        self.reviewer = _pick_reviewer(self.reviewers, self.assignee, self.round_index - 1)
+        self.subject_digest = _review_subject_digest(self.kind, self.delivered, self.round_index)
         current = self.store.get_work_item(self.item_id)
-        if current.review_comment or current.machine_feedback_ref:
-            apply([
-                UpdateMetadata(self.item_id, {'review_comment': "", 'machine_feedback': {}}),
-            ], Ports(store=self.store))
-        if not self.confirm:
-            apply([
-                UpdateStatus(self.item_id, WorkItemStatus.DONE),
-            ], Ports(store=self.store))
-            log.info(logsetup.EVT_NODE_DONE, kind=self.kind.value, id=self.item_id)
-            return {"item_id": self.item_id, "delivery": current_delivery,
-                    "rounds": rounds, "verdict": verdict, "kind": self.kind.value}
+        if current.review_subject_digest == self.subject_digest:
+            return Fact.PREPARE, self._obs(subject_digest=self.subject_digest)
+        obligations = build_review_obligations(
+            current,
+            acceptance_doc=self.review_acceptance_doc,
+            amendment_manifest=self.review_amendment_manifest,
+            amendment_evidence=self._amendment_review_evidence(current))
+        return Fact.PREPARE_FRESH_OBLIGATIONS, self._obs(
+            subject_digest=self.subject_digest, obligations=obligations)
 
-        if prepare_confirmation:
-            apply([
-                ClearAssignment(self.item_id),
-                UpdateMetadata(self.item_id, {'phase': TaskPhase.CONFIRMATION}),
-            ], Ports(store=self.store))
-        log.info(logsetup.EVT_HUMAN_GATE_WAIT, kind=self.kind.value, id=self.item_id)
-        if self.pause_at_confirmation:
-            return {
-                "item_id": self.item_id,
-                "delivery": current_delivery,
-                "rounds": rounds,
-                "verdict": verdict,
-                "kind": self.kind.value,
-                "pending_confirmation": True,
+    def _at_review_check(self):
+        if not _has_review_verdict(self.reviewed):
+            return Fact.NEEDS_DISPATCH, self._obs()
+        evidence_errors = _review_evidence_errors(self.contract, self.reviewed)
+        if not evidence_errors:
+            return Fact.VERDICT_READY, self._obs()
+        log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
+                 gate="review-evidence", round=self.round_index, max=self.review_limit)
+        feedback = build_machine_feedback("review-evidence", evidence_errors)
+        return Fact.EVIDENCE_INVALID, self._obs(
+            subject_digest=self.subject_digest, feedback=feedback,
+            feedback_summary=machine_feedback_summary(self.item_id, feedback))
+
+    def _at_review_dispatch(self):
+        _raise_if_reviewer_dispatch_stopped(self.store, self.item_id, self.kind)
+        reviewer_baseline = None
+        if self.runtime.capabilities.stable_direct_run_identity:
+            reviewer_baseline = {
+                run.id for run in self.runtime.list_runs(self.item_id) if run.kind == "direct"
             }
+        _raise_if_reviewer_dispatch_stopped(self.store, self.item_id, self.kind)
+        dispatched = apply_one(DispatchReviewer(self.item_id, self.reviewer), self.ports)
+        if not dispatched:
+            _raise_if_reviewer_dispatch_stopped(self.store, self.item_id, self.kind)
+        log.info(logsetup.EVT_REVIEW_DISPATCH, kind=self.kind.value, id=self.item_id,
+                 reviewer=self.reviewer)
+        if reviewer_baseline is not None:
+            self.reviewed, _run_id = self._wait_for_dispatched_run(
+                baseline_ids=reviewer_baseline, predicate=_has_review_verdict, role="reviewer")
+        else:
+            self.reviewed = _poll_until(self.store, self.item_id, _has_review_verdict, self.poll)
+        return Fact.REVIEWED, self._obs()
+
+    def _at_review_verdict(self):
+        reviewed, round_index = self.reviewed, self.round_index
+        verdict = reviewed.review_verdict
+        log.info(logsetup.EVT_VERDICT, kind=self.kind.value, id=self.item_id,
+                 verdict=verdict, round=round_index)
+        if verdict == "pass":
+            self.finish_args = ("pass", round_index, True)
+            return Fact.PASS, self._obs()
+        if verdict == "reject":
+            resolution = resolve_convergence(
+                reviewed, kind=self.kind.value, recommended_action="reconsider-task-boundary")
+            resolution.raise_if_invalid(PlatformError, self.item_id)
+            if resolution.state is ResolutionState.NEEDS_DECISION:
+                return self._convergence_stop(reviewed, resolution)
+        if verdict == "pass-with-nits":
+            if self.kind == TaskKind.AMENDMENT:
+                # A running-DAG amendment is already a reviewed control-plane change: the operator must
+                # explicitly accept the nits, then run `dag amend accept`.
+                self.finish_args = ("pass-with-nits", round_index, True)
+                return Fact.AMENDMENT_NITS, self._obs()
+            log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
+                     gate="review-nits", round=round_index, max=self.review_limit)
+            return Fact.NITS_RETRY, self._obs()
+        # reject: the report is already in metadata; reset_review clears only the current verdict and returns the
+        # item to the producer. Rework context comes from `work show`, never from a comment (it would trigger a Run).
+        self.last_opinion = _review_opinion(reviewed)
+        log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
+                 gate="review", round=round_index, max=self.review_limit)
+        if round_index >= self.review_limit:
+            self.stop = _Stop("review", "review", round_index, self.last_opinion)
+            return Fact.REJECT_EXHAUSTED, self._obs()
+        return Fact.REJECT_RETRY, self._obs()
+
+    def _convergence_stop(self, reviewed, resolution):
+        decision = bounded_decision_required(resolution.decision)
+        log.info(
+            logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id, gate="review-convergence",
+            rounds=resolution.convergence["cycle_count"], mode=resolution.convergence["mode"])
+        self.stop = _Stop("convergence", "review-convergence", 0, None, decision=decision)
+        return Fact.CONVERGENCE_STOP, self._obs(
+            decision=decision,
+            decision_current=reviewed.decision_required == decision and reviewed.phase == TaskPhase.REVIEW,
+            already_blocked=reviewed.status == WorkItemStatus.BLOCKED)
+
+    def _at_produce_nits(self):
+        self.delivered = self._produce()
+        self.delivery = _delivery_of(self.kind, self.delivered)
+        if self.round_index >= self.review_limit:
+            self.stop = _Stop("review", "review-nits", self.round_index, _review_opinion(self.reviewed))
+            return Fact.PRODUCED_AT_LIMIT, self._obs()
+        # Whatever the size of the change, the final delivery is reviewed again: the next round's
+        # prepare_review_cycle clears the old verdict with the new subject digest.
+        self.next_round = self.round_index + 1
+        return Fact.PRODUCED, self._obs()
+
+    def _at_produce_reject(self):
+        self.delivered = self._produce()
+        self.delivery = _delivery_of(self.kind, self.delivered)
+        self.next_round = self.round_index + 1
+        return Fact.PRODUCED, self._obs()
+
+    def _at_block_budget(self):
+        stop = self.stop
+        if not stop.logged:
+            log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id,
+                     gate=stop.gate, rounds=stop.rounds)
+        current = self.store.get_work_item(self.item_id)
+        decision = _budget_exhausted_decision(self.kind, current, gate=stop.gate, rounds=stop.rounds)
+        return Fact.OBSERVED, self._obs(decision=decision)
+
+    def _stop_error(self) -> NeedsDecision:
+        stop = self.stop
+        if stop.kind == "convergence":
+            return NeedsDecision(
+                ui(f"{self.kind.value} review is not converging within the current task boundary.",
+                   f"{self.kind.value} 评审无法在当前任务边界内收敛。"),
+                report=stop.decision)
+        if stop.kind == "guard":
+            return NeedsDecision(
+                ui(f"{self.kind.value} did not pass the machine gate after {self.max_revisions} revisions",
+                   f"{self.kind.value} 任务经 {self.max_revisions} 轮 machine-gate 仍未通过"),
+                report={"item_id": self.item_id, "kind": self.kind.value,
+                        "rounds": self.max_revisions, "phase": "guard", "last_opinion": stop.opinion})
+        blocked = self.store.get_work_item(self.item_id)
+        extra = {} if stop.gate == "review" else {"gate": stop.gate}
+        return _review_exhausted_error(self.kind, blocked, stop.rounds, stop.opinion, **extra)
+
+    def _at_finish(self):
+        verdict, rounds, prepare = self.finish_args
+        current = self.store.get_work_item(self.item_id)
+        obs = self._obs(
+            stale_feedback=bool(current.review_comment or current.machine_feedback_ref),
+            prepare_confirmation=prepare)
+        if not self.confirm:
+            self.result = {"item_id": self.item_id, "delivery": self.delivery,
+                           "rounds": rounds, "verdict": verdict, "kind": self.kind.value}
+            self.on_done = lambda: log.info(logsetup.EVT_NODE_DONE, kind=self.kind.value, id=self.item_id)
+            return Fact.UNCONFIRMED, obs
+        if self.pause_at_confirmation:
+            self.result = {"item_id": self.item_id, "delivery": self.delivery, "rounds": rounds,
+                           "verdict": verdict, "kind": self.kind.value, "pending_confirmation": True}
+            self.on_done = lambda: log.info(
+                logsetup.EVT_HUMAN_GATE_WAIT, kind=self.kind.value, id=self.item_id)
+            return Fact.CONFIRM_PAUSE, obs
+        return Fact.CONFIRM_WAIT, obs
+
+    def _at_finish_wait(self):
+        verdict, rounds, _prepare = self.finish_args
+        log.info(logsetup.EVT_HUMAN_GATE_WAIT, kind=self.kind.value, id=self.item_id)
         confirmed = _poll_until(
             self.store, self.item_id, lambda i: i.status == WorkItemStatus.DONE, self.poll)
-        confirmed_delivery = _delivery_of(self.kind, confirmed)
         log.info(logsetup.EVT_NODE_DONE, kind=self.kind.value, id=self.item_id)
-        return {"item_id": self.item_id, "delivery": confirmed_delivery,
-                "rounds": rounds, "verdict": verdict, "kind": self.kind.value}
-
-    def _resume_review_state(self) -> Optional[Dict[str, Any]]:
-        if (
-            self.delivered.phase == TaskPhase.REVIEW
-            and self.delivered.review_verdict == "pass"
-            and self.delivered.status in {WorkItemStatus.IN_REVIEW, WorkItemStatus.DONE}
-        ):
-            evidence_errors = _review_evidence_errors(self.contract, self.delivered)
-            if not evidence_errors:
-                return self._finish_after_review(
-                    "pass",
-                    max(1, self.delivered.bounces.review + 1),
-                    self.delivery,
-                )
-
-        if self.delivered.phase == TaskPhase.CONFIRMATION:
-            confirmation_round = max(1, self.delivered.bounces.review + 1)
-            if self.resumed_confirmation is not None:
-                return self._finish_after_review(
-                    self.delivered.review_verdict or "pass",
-                    confirmation_round,
-                    self.delivery,
-                    prepare_confirmation=False,
-                )
-            current_subject = _review_subject_digest(
-                self.kind, self.delivered, confirmation_round)
-            if (
-                _has_review_verdict(self.delivered)
-                and self.delivered.review_subject_digest == current_subject
-            ):
-                evidence_errors = _review_evidence_errors(self.contract, self.delivered)
-                if not evidence_errors:
-                    return self._finish_after_review(
-                        self.delivered.review_verdict or "pass", confirmation_round,
-                        self.delivery, prepare_confirmation=False)
-                log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
-                         gate="review-evidence", round=confirmation_round,
-                         max=authorized_review_limit(self.delivered, self.max_revisions))
-                self.delivered = _restart_invalid_review(
-                    self.store, self.item_id, current_subject, evidence_errors)
-            else:
-                # confirmation 只能消费仍绑定当前交付的评审结论。若产出者在
-                # pass-with-nits 后提交了新交付，旧 verdict 不能替新交付背书。
-                apply([
-                    UpdateMetadata(self.item_id, {'phase': TaskPhase.REVIEW}),
-                ], Ports(store=self.store))
-                self.delivered = self.store.get_work_item(self.item_id)
-
-        if not self.reviewers:
-            return self._finish_after_review("pass", 0, self.delivery)
-        return None
-
-    def _review_loop(self) -> Dict[str, Any]:
-        review_bounce = max(0, self.delivered.bounces.review)
-        review_limit = authorized_review_limit(self.delivered, self.max_revisions)
-        last_opinion = _review_opinion(self.delivered)
-        if review_bounce >= review_limit:
-            log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id,
-                     gate="review", rounds=review_bounce)
-            self.delivered = self._block_for_budget_decision("review", review_bounce)
-            raise _review_exhausted_error(
-                self.kind, self.delivered, review_bounce, last_opinion)
-
-        for round_index in range(review_bounce + 1, review_limit + 1):
-            reviewer = _pick_reviewer(self.reviewers, self.assignee, round_index - 1)
-            subject_digest = _review_subject_digest(self.kind, self.delivered, round_index)
-            current = self.store.get_work_item(self.item_id)
-            if current.review_subject_digest != subject_digest:
-                apply([
-                    UpdateMetadata(self.item_id, {'review_obligations': build_review_obligations(
-                        current,
-                        acceptance_doc=self.review_acceptance_doc,
-                        amendment_manifest=self.review_amendment_manifest,
-                        amendment_evidence=self._amendment_review_evidence(current))}),
-                ], Ports(store=self.store))
-            reviewed = apply_one(PrepareReviewCycle(self.item_id, subject_digest), Ports(store=self.store))
-            while True:
-                if _has_review_verdict(reviewed):
-                    evidence_errors = _review_evidence_errors(self.contract, reviewed)
-                    if not evidence_errors:
-                        break
-                    log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
-                             gate="review-evidence", round=round_index,
-                             max=review_limit)
-                    reviewed = _restart_invalid_review(
-                        self.store, self.item_id, subject_digest, evidence_errors)
-
-                apply([
-                    UpdateStatus(self.item_id, WorkItemStatus.IN_REVIEW),
-                ], Ports(store=self.store))
-                _raise_if_reviewer_dispatch_stopped(self.store, self.item_id, self.kind)
-                reviewer_baseline = None
-                if self.runtime.capabilities.stable_direct_run_identity:
-                    reviewer_baseline = {
-                        run.id for run in self.runtime.list_runs(self.item_id)
-                        if run.kind == "direct"
-                    }
-                _raise_if_reviewer_dispatch_stopped(self.store, self.item_id, self.kind)
-                dispatched = apply_one(DispatchReviewer(self.item_id, reviewer), Ports(store=self.store, runtime=self.runtime))
-                if not dispatched:
-                    _raise_if_reviewer_dispatch_stopped(self.store, self.item_id, self.kind)
-                log.info(logsetup.EVT_REVIEW_DISPATCH, kind=self.kind.value, id=self.item_id,
-                         reviewer=reviewer)
-                if reviewer_baseline is not None:
-                    reviewed, _reviewer_run_id = self._wait_for_dispatched_run(
-                        baseline_ids=reviewer_baseline,
-                        predicate=_has_review_verdict,
-                        role="reviewer",
-                    )
-                else:
-                    reviewed = _poll_until(
-                        self.store, self.item_id, _has_review_verdict, self.poll)
-
-            verdict = reviewed.review_verdict
-            log.info(logsetup.EVT_VERDICT, kind=self.kind.value, id=self.item_id,
-                     verdict=verdict, round=round_index)
-            if verdict == "pass":
-                return self._finish_after_review("pass", round_index, self.delivery)
-
-            if verdict == "reject":
-                resolution = resolve_convergence(
-                    reviewed, kind=self.kind.value,
-                    recommended_action="reconsider-task-boundary")
-                resolution.raise_if_invalid(PlatformError, self.item_id)
-                if resolution.state is ResolutionState.NEEDS_DECISION:
-                    decision = persist_decision(self.store, reviewed, resolution)
-                    log.info(
-                        logsetup.EVT_NEEDS_DECISION,
-                        kind=self.kind.value,
-                        id=self.item_id,
-                        gate="review-convergence",
-                        rounds=resolution.convergence["cycle_count"],
-                        mode=resolution.convergence["mode"],
-                    )
-                    raise NeedsDecision(
-                        ui(
-                            f"{self.kind.value} review is not converging within the "
-                            "current task boundary.",
-                            f"{self.kind.value} 评审无法在当前任务边界内收敛。",
-                        ),
-                        report=decision,
-                    )
-
-            if verdict == "pass-with-nits":
-                if self.kind == TaskKind.AMENDMENT:
-                    # A running-DAG amendment is already a reviewed control-plane
-                    # change.  Do not silently send its Orchestrator back to
-                    # authoring: the operator must explicitly accept the nits,
-                    # then invoke `dag amend accept` to apply it.
-                    return self._finish_after_review(
-                        "pass-with-nits", round_index, self.delivery)
-                log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
-                         gate="review-nits", round=round_index, max=review_limit)
-                apply([
-                    UpdateMetadata(self.item_id, {
-                        'phase': TaskPhase.AUTHORING,
-                        'review_comment': "",
-                        'machine_feedback': {},
-                        'review_bounce': round_index,
-                    }),
-                    UpdateStatus(self.item_id, WorkItemStatus.TODO),
-                ], Ports(store=self.store))
-                self.delivered = self._produce()
-                self.delivery = _delivery_of(self.kind, self.delivered)
-                if round_index >= review_limit:
-                    log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value,
-                             id=self.item_id, gate="review-nits",
-                             rounds=round_index)
-                    self.delivered = self._block_for_budget_decision(
-                        "review-nits", round_index)
-                    raise _review_exhausted_error(
-                        self.kind, self.delivered, round_index, _review_opinion(reviewed),
-                        gate="review-nits")
-
-                # 产出者重新提交后，无论改动大小，最终交付都必须重新评审。
-                # 下一轮 prepare_review_cycle 会用新交付 digest 清除旧 verdict。
-                continue
-
-            # reject:评审 report 已在 metadata,reset_review 只清当前判定并转回产出者。
-            # 返工上下文由下一轮 agent 通过 work show 读取,不写评论以免触发额外 run。
-            last_opinion = _review_opinion(reviewed)
-            log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
-                     gate="review", round=round_index, max=review_limit)
-            apply([
-                UpdateMetadata(self.item_id, {'review_bounce': round_index}),
-            ], Ports(store=self.store))
-            if round_index >= review_limit:
-                log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id,
-                         gate="review", rounds=round_index)
-                reviewed = self._block_for_budget_decision("review", round_index)
-                raise _review_exhausted_error(
-                    self.kind, reviewed, round_index, last_opinion)
-            apply([
-                ResetReview(self.item_id),
-                UpdateStatus(self.item_id, WorkItemStatus.TODO),
-            ], Ports(store=self.store))
-            self.delivered = self._produce()
-            self.delivery = _delivery_of(self.kind, self.delivered)
-
-        raise AssertionError("review loop exhausted without a terminal verdict")
-
-    def run(self) -> Dict[str, Any]:
-        item = self._open_item()
-        self._check_resume(item)
-        self.delivered = self.resumed_confirmation or self._produce()
-        self.delivery = _delivery_of(self.kind, self.delivered)
-        for step in (self._resolve_initial_delivery, self._machine_gate, self._resume_review_state):
-            result = step()
-            if result is not None:
-                return result
-        return self._review_loop()
+        self.result = {"item_id": self.item_id, "delivery": _delivery_of(self.kind, confirmed),
+                       "rounds": rounds, "verdict": verdict, "kind": self.kind.value}
+        return Fact.CONFIRMED, self._obs()
 
 
 def run_task(
