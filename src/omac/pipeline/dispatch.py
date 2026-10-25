@@ -1588,15 +1588,7 @@ def render_source_refs_section(
     return "\n".join(lines)
 
 
-def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_env=None,
-                      issue_key=None, language: str = CN,
-                      phase: TaskPhase = TaskPhase.AUTHORING):
-    """渲染 Human-first issue body,顶部仅保留一个 Agent JSON 入口。"""
-    role = "reviewer" if phase == TaskPhase.REVIEW else KIND_ROLE.get(kind, "worker")
-    label = KIND_LABEL.get(kind, kind.value)
-    title = getattr(node, "title", None) or getattr(node, "id", issue_id)
-    env_prefix = _command_env_prefix(engine_env)
-
+def _issue_bootstrap(kind: TaskKind, issue_id: str, env_prefix: str, language: str) -> str:
     if kind == TaskKind.DEVELOP:
         bootstrap = ui(
             "> **OMAC-controlled run. Your first action must be exactly:**\n\n",
@@ -1615,7 +1607,23 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
             "> **Agent 入口:** 先读取当前任务的权威 JSON 上下文。\n\n",
             language=language,
         ) + f"```bash\n{env_prefix}omac work show {issue_id} --output json\n```"
+    return bootstrap
 
+
+def _as_list(value: Any) -> list:
+    return value if isinstance(value, list) else [value]
+
+
+def _bullet_section(heading: str, values: Any, fmt: str = "- {}") -> str:
+    """`## heading` plus one bullet per value; empty string when the contract has no values."""
+    if not values:
+        return ""
+    return f"## {heading}\n" + "\n".join(fmt.format(v) for v in _as_list(values))
+
+
+def _task_summary(node, contract, kind: TaskKind, role: str, title: str, issue_id: str,
+                  language: str) -> str:
+    label = KIND_LABEL.get(kind, kind.value)
     kind_names = KIND_HUMAN_LABEL_EN if language == EN else KIND_HUMAN_LABEL
     role_names = ROLE_HUMAN_LABEL_EN if language == EN else ROLE_HUMAN_LABEL
     summary_lines = [
@@ -1636,83 +1644,66 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
             f"- Objective: {objective}", f"- 目标: {objective}", language=language))
     source_of_truth = _contract_summary(contract, "source_of_truth", None)
     if source_of_truth:
-        values = source_of_truth if isinstance(source_of_truth, list) else [source_of_truth]
         summary_lines.extend(ui(
             f"- Source of truth: `{value}`", f"- 依据: `{value}`", language=language)
-            for value in values)
-    summary = f"# {title}\n\n## {ui('Task summary', '任务摘要', language=language)}\n" + "\n".join(summary_lines)
+            for value in _as_list(source_of_truth))
+    return f"# {title}\n\n## {ui('Task summary', '任务摘要', language=language)}\n" + "\n".join(summary_lines)
 
-    acceptance = _contract_summary(contract, "acceptance", None)
-    completion = ""
-    if acceptance:
-        values = acceptance if isinstance(acceptance, list) else [acceptance]
-        completion = f"## {ui('Completion criteria', '完成标准', language=language)}\n" + "\n".join(f"- {value}" for value in values)
 
-    description = (getattr(node, "description", "") or "").strip()
-    detail = f"## {ui('Task details', '任务详情', language=language)}\n{description}" if description else ""
+_BOUNDARY_ZH = {
+    "transitional-upstream": (
+        "consumes 处于过渡期未声明状态：只允许传递上游输入；非上游和下游"
+        "产物仍不属于当前 contract。"),
+    "none": "不允许任何外部输入。",
+    "allowlist": (
+        "只允许 consumes 明确声明的外部输入；非上游或下游节点产物不属于"
+        "当前 contract。"),
+    "invalid": "consumes 已声明但不是列表；该 contract 必须先修复。",
+}
 
-    non_goals = _contract_summary(contract, "non_goals", None)
-    exclusions = ""
-    if non_goals:
-        values = non_goals if isinstance(non_goals, list) else [non_goals]
-        exclusions = f"## {ui('Non-goals', '非目标', language=language)}\n" + "\n".join(f"- {value}" for value in values)
 
-    scope_paths = _contract_summary(contract, "scope_paths", None)
-    scope = ""
-    if scope_paths:
-        values = scope_paths if isinstance(scope_paths, list) else [scope_paths]
-        scope = f"## {ui('Primary code ownership', '主要代码归属范围', language=language)}\n" + "\n".join(
-            f"- `{value}`" for value in values)
-
+def _responsibility_boundary_section(contract, language: str) -> str:
     responsibility = responsibility_summary(contract)
-    boundary = ""
-    if responsibility is not None:
-        boundary_lines = [ui(
-            f"- Evidence mode: `{responsibility['evidence_mode']}`",
-            f"- 证据模式: `{responsibility['evidence_mode']}`",
-            language=language,
-        )]
-        input_policy = responsibility["input_policy"]
+    if responsibility is None:
+        return ""
+    boundary_lines = [ui(
+        f"- Evidence mode: `{responsibility['evidence_mode']}`",
+        f"- 证据模式: `{responsibility['evidence_mode']}`",
+        language=language,
+    )]
+    input_policy = responsibility["input_policy"]
+    boundary_lines.append(ui(
+        f"- Input policy: `{input_policy}`",
+        f"- 输入策略: `{input_policy}`",
+        language=language,
+    ))
+    for value in responsibility["allowed_inputs"] or []:
         boundary_lines.append(ui(
-            f"- Input policy: `{input_policy}`",
-            f"- 输入策略: `{input_policy}`",
+            f"- Allowed input: `{value['artifact_id']}` from "
+            f"`{value['producer']}` (`{value['evidence_mode']}`)",
+            f"- 允许输入: `{value['artifact_id']}`，来自 "
+            f"`{value['producer']}`（`{value['evidence_mode']}`）",
             language=language,
         ))
-        for value in responsibility["allowed_inputs"] or []:
-            boundary_lines.append(ui(
-                f"- Allowed input: `{value['artifact_id']}` from "
-                f"`{value['producer']}` (`{value['evidence_mode']}`)",
-                f"- 允许输入: `{value['artifact_id']}`，来自 "
-                f"`{value['producer']}`（`{value['evidence_mode']}`）",
-                language=language,
-            ))
-        if responsibility["produces"]:
-            outputs = ", ".join(
-                f"`{artifact_id}`" for artifact_id in responsibility["produces"])
-            boundary_lines.append(ui(
-                f"- Produces: {outputs}", f"- 产物: {outputs}",
-                language=language,
-            ))
-        boundary_zh = {
-            "transitional-upstream": (
-                "consumes 处于过渡期未声明状态：只允许传递上游输入；非上游和下游"
-                "产物仍不属于当前 contract。"),
-            "none": "不允许任何外部输入。",
-            "allowlist": (
-                "只允许 consumes 明确声明的外部输入；非上游或下游节点产物不属于"
-                "当前 contract。"),
-            "invalid": "consumes 已声明但不是列表；该 contract 必须先修复。",
-        }[input_policy]
+    if responsibility["produces"]:
+        outputs = ", ".join(
+            f"`{artifact_id}`" for artifact_id in responsibility["produces"])
         boundary_lines.append(ui(
-            f"- Boundary: {responsibility['boundary_rule']}",
-            f"- 边界: {boundary_zh}",
+            f"- Produces: {outputs}", f"- 产物: {outputs}",
             language=language,
         ))
-        boundary = (
-            f"## {ui('Responsibility boundary', '责任边界', language=language)}\n"
-            + "\n".join(boundary_lines)
-        )
+    boundary_lines.append(ui(
+        f"- Boundary: {responsibility['boundary_rule']}",
+        f"- 边界: {_BOUNDARY_ZH[input_policy]}",
+        language=language,
+    ))
+    return (
+        f"## {ui('Responsibility boundary', '责任边界', language=language)}\n"
+        + "\n".join(boundary_lines)
+    )
 
+
+def _delivery_constraints_section(contract, kind: TaskKind, issue_key, language: str) -> str:
     constraints = []
     pr_base = _contract_summary(contract, "pr_base", None)
     if pr_base:
@@ -1729,31 +1720,38 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
         constraints.append(ui(
             f"- PR link key: `{issue_key}`", f"- PR 关联标识: `{issue_key}`",
             language=language))
-    delivery_constraints = ""
-    if constraints:
-        delivery_constraints = f"## {ui('Delivery constraints', '交付约束', language=language)}\n" + "\n".join(constraints)
+    if not constraints:
+        return ""
+    return f"## {ui('Delivery constraints', '交付约束', language=language)}\n" + "\n".join(constraints)
 
-    repo_urls = _contract_summary(contract, "repo_urls", None)
-    repositories = ""
-    if repo_urls:
-        repositories = f"## {ui('Target repositories', '目标仓库', language=language)}\n" + "\n".join(
-            f"- `{url}`" for url in repo_urls)
 
+def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_env=None,
+                      issue_key=None, language: str = CN,
+                      phase: TaskPhase = TaskPhase.AUTHORING):
+    """渲染 Human-first issue body,顶部仅保留一个 Agent JSON 入口。"""
+    role = "reviewer" if phase == TaskPhase.REVIEW else KIND_ROLE.get(kind, "worker")
+    title = getattr(node, "title", None) or getattr(node, "id", issue_id)
+    summary = lambda key: _contract_summary(contract, key, None)  # noqa: E731
+
+    description = (getattr(node, "description", "") or "").strip()
+    detail = f"## {ui('Task details', '任务详情', language=language)}\n{description}" if description else ""
     origin = render_source_refs_section(
         source_refs, engine_env=engine_env, include_commands=False,
         language=language)
 
     return "\n\n".join(
         p for p in [
-            bootstrap,
-            summary,
-            completion,
+            _issue_bootstrap(kind, issue_id, _command_env_prefix(engine_env), language),
+            _task_summary(node, contract, kind, role, title, issue_id, language),
+            _bullet_section(ui('Completion criteria', '完成标准', language=language), summary("acceptance")),
             detail,
-            exclusions,
-            scope,
-            boundary,
-            delivery_constraints,
-            repositories,
+            _bullet_section(ui('Non-goals', '非目标', language=language), summary("non_goals")),
+            _bullet_section(ui('Primary code ownership', '主要代码归属范围', language=language),
+                            summary("scope_paths"), "- `{}`"),
+            _responsibility_boundary_section(contract, language),
+            _delivery_constraints_section(contract, kind, issue_key, language),
+            _bullet_section(ui('Target repositories', '目标仓库', language=language),
+                            summary("repo_urls"), "- `{}`"),
             origin,
         ] if p)
 
