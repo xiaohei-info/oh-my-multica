@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import secrets
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from .. import exit_codes
@@ -338,6 +338,181 @@ def _recover_delayed_reviewer_submission(
 
 
 
+@dataclass(frozen=True)
+class _RetryFacts:
+    """Facts of the current WorkItem that decide how a retry may resume authoring."""
+    resuming_authoring: bool
+    handoff: Any
+    prior_handoff: Any
+    has_delivery: bool
+    prior_rework: bool
+    review_current: bool
+    has_retry_history: bool
+    prior_feedback: Any
+
+
+def _retry_facts(node, current, stage: str) -> _RetryFacts:
+    resuming_authoring = bool(
+        stage == "authoring" and current.worker_handoff is not None
+        and (current.worker_handoff.authoring_recovery is not None
+             or (current.phase == TaskPhase.AUTHORING
+                 and current.status == WorkItemStatus.TODO
+                 and current.worker_handoff.gate == "operator-retry"
+                 and current.worker_handoff.target_worker == node.worker
+                 and current.worker_handoff.target_run_id is None
+                 and review_feedback_is_current(current, current.worker_handoff))))
+    prior_handoff = current.worker_handoff
+    if prior_handoff is not None and not review_feedback_is_current(current, prior_handoff):
+        prior_handoff = None
+    contract_matches = (
+        review_context_binding(current)["contract_sha256"]
+        == review_context_binding(replace(current, contract=node.contract))["contract_sha256"]
+    )
+    if not contract_matches:
+        prior_handoff = None
+    prior_rework = bool(
+        prior_handoff is not None
+        and (prior_handoff.source_review_verdict in {"reject", "pass-with-nits"}
+             or prior_handoff.baseline_pr_head_sha))
+    prior_feedback = (
+        prior_handoff.source_review_feedback
+        if prior_handoff is not None and isinstance(prior_handoff.source_review_feedback, dict)
+        else None)
+    return _RetryFacts(
+        resuming_authoring=resuming_authoring,
+        handoff=current.worker_handoff if resuming_authoring else None,
+        prior_handoff=prior_handoff,
+        has_delivery=bool(current.artifacts or current.verification),
+        prior_rework=prior_rework,
+        # An explicit authoring handoff proves this execution's identity,
+        # not that a retired review ledger is current again.
+        review_current=contract_matches and (review_feedback_is_current(current) or prior_rework),
+        has_retry_history=bool(
+            current.bounces.review > 0 or current.review_verdict == "reject" or prior_rework),
+        prior_feedback=prior_feedback,
+    )
+
+
+def _retry_recovered_context(node, engine, current, stage: str, facts: _RetryFacts) -> dict:
+    needs_context = (
+        stage == "authoring" and node.reviewer and facts.has_delivery
+        and facts.has_retry_history and facts.review_current
+        and not current.review_report and not current.review_report_ref
+        and not facts.prior_feedback)
+    if not needs_context:
+        return {}
+    return engine.store.recover_review_rework_context(node.work_item_id) or {}
+
+
+def _retry_rework_unavailable(args, node) -> NeedsDecision:
+    return NeedsDecision(
+        ui(
+            "The prior review rework context is unavailable; restore the latest "
+            "review report/ledger attachment before retrying this node.",
+            "无法获得之前的 review 返工上下文；请先恢复最新 review report/ledger "
+            "附件后再重试该节点。",
+        ),
+        report={
+            "item_id": node.work_item_id,
+            "node_id": args.node_key,
+            "reason_code": "review-rework-context-unavailable",
+            "next_action": f"omac work show {node.work_item_id} --output json",
+            "recovery": (
+                "Restore the authoritative reject report/ledger context; "
+                "do not submit the unchanged PR head or run Reviewer."
+            ),
+        },
+    )
+
+
+def _retry_baseline_head(current, prior_handoff):
+    identity_head = getattr(current.delivery_identity, "pr_head_sha", None)
+    artifact_head = (
+        str(current.artifacts.get("head_sha") or "")
+        if isinstance(current.artifacts, dict) else "")
+    return (
+        identity_head or artifact_head
+        or (prior_handoff.baseline_pr_head_sha if prior_handoff is not None else None)
+        or None)
+
+
+def _retry_rework_handoff(args, node, engine, current, facts: _RetryFacts, recovered_context: dict):
+    """Build the operator-retry handoff that carries the prior review feedback into authoring."""
+    from ...pipeline.loop import _bounded_direct_run_baseline
+
+    prior_handoff = facts.prior_handoff
+    source_review_feedback = _operator_retry_feedback(current, prior_handoff, recovered_context)
+    try:
+        retained_subject = retained_review_subject(
+            current, prior_handoff, source_review_feedback, store=engine.store)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    source_subject = (
+        retained_subject or current.review_subject_digest
+        or recovered_context.get("subject_digest")
+        or stage_recovery_subject(node, current))
+    baseline_direct_run_ids, baseline_cutoff_created_at = _bounded_direct_run_baseline(
+        engine.runtime.list_runs(current.id))
+    source_review_verdict = (
+        current.review_verdict if current.review_verdict in {"reject", "pass-with-nits"}
+        else (prior_handoff.source_review_verdict if facts.prior_rework else None))
+    if source_review_verdict is None and source_review_feedback:
+        source_review_verdict = source_review_feedback.get("verdict")
+    feedback_fields = ("report_ref", "ledger_ref", "blockers", "comment")
+    if facts.has_retry_history and (
+            source_review_feedback is None
+            or not any(source_review_feedback.get(f) for f in feedback_fields)):
+        raise _retry_rework_unavailable(args, node)
+    return WorkerHandoffIntent(
+        schema=WORKER_HANDOFF_SCHEMA,
+        state="pending",
+        target_worker=node.worker,
+        gate="operator-retry",
+        source_review_feedback=source_review_feedback,
+        source_review_subject_digest=source_subject,
+        source_review_round=max(1, current.bounces.review),
+        source_review_verdict=source_review_verdict,
+        target_review_bounce=max(1, current.bounces.review),
+        generation=f"handoff-{secrets.token_hex(8)}",
+        target_agent_id=engine.store.resolve_agent_id(node.worker),
+        baseline_direct_run_ids=baseline_direct_run_ids,
+        baseline_cutoff_created_at=baseline_cutoff_created_at,
+        baseline_verification_attachment_id=str(
+            (current.verification_ref or {}).get("attachment_id") or "") or None,
+        baseline_pr_head_sha=_retry_baseline_head(current, prior_handoff),
+        target_worker_bounce=current.bounces.worker,
+        review_context_binding=review_context_binding(current),
+    )
+
+
+def _retry_on_platform(args, manifest, node, engine, stage: str) -> None:
+    """Write the retry intent to the platform (platform first, local second)."""
+    current = engine.store.get_work_item(node.work_item_id)
+    try:
+        validate_stage_recovery(current, stage)
+    except ValueError as exc:
+        raise ValidationError(
+            f"{exc}; run omac node retry {args.manifest} {args.node_key} --stage authoring"
+        ) from exc
+    delayed_review_recovered = (
+        stage == "review"
+        and _recover_delayed_reviewer_submission(
+            manifest, args.node_key, node, engine, current, args.manifest))
+    facts = _retry_facts(node, current, stage)
+    recovered_context = _retry_recovered_context(node, engine, current, stage, facts)
+    handoff = facts.handoff
+    if (stage == "authoring" and not facts.resuming_authoring and node.reviewer
+            and facts.has_retry_history and facts.has_delivery and facts.review_current):
+        handoff = _retry_rework_handoff(args, node, engine, current, facts, recovered_context)
+    if not delayed_review_recovered:
+        # 复用 DAG stage recovery 原语；清除旧 reviewer 判定并恢复
+        # 指定阶段，同时保留 PR、verification 与历史附件。
+        prepare_stage_recovery(node, engine.store, stage, worker_handoff=handoff)
+    refreshed = engine.store.get_work_item(node.work_item_id)
+    node.recovery_marker = bool(
+        refreshed.worker_handoff or refreshed.reviewer_run_baseline or refreshed.decision_required)
+
+
 def _cmd_retry(args) -> int:
     manifest = _load_or_raise(args.manifest)
     node = _require_node(manifest, args.node_key)
@@ -375,198 +550,7 @@ def _cmd_retry(args) -> int:
     # 平台先写、本地后写：平台失败时不留下两边分叉的半完成 retry。
     if node.work_item_id and engine is not None:
         try:
-            current = engine.store.get_work_item(node.work_item_id)
-            try:
-                validate_stage_recovery(current, stage)
-            except ValueError as exc:
-                raise ValidationError(
-                    f"{exc}; run omac node retry {args.manifest} {args.node_key} --stage authoring"
-                ) from exc
-            delayed_review_recovered = (
-                stage == "review"
-                and _recover_delayed_reviewer_submission(
-                    manifest, args.node_key, node, engine, current,
-                    args.manifest)
-            )
-            resuming_authoring = bool(
-                stage == "authoring" and current.worker_handoff is not None
-                and (current.worker_handoff.authoring_recovery is not None
-                     or (current.phase == TaskPhase.AUTHORING
-                         and current.status == WorkItemStatus.TODO
-                         and current.worker_handoff.gate == "operator-retry"
-                         and current.worker_handoff.target_worker == node.worker
-                         and current.worker_handoff.target_run_id is None
-                         and review_feedback_is_current(current, current.worker_handoff))))
-            handoff = current.worker_handoff if resuming_authoring else None
-            prior_handoff = current.worker_handoff
-            if prior_handoff is not None and not review_feedback_is_current(current, prior_handoff):
-                prior_handoff = None
-            contract_matches = (
-                review_context_binding(current)["contract_sha256"]
-                == review_context_binding(replace(current, contract=node.contract))["contract_sha256"]
-            )
-            if not contract_matches:
-                prior_handoff = None
-            has_delivery = bool(current.artifacts or current.verification)
-            prior_rework = bool(
-                prior_handoff is not None
-                and (
-                    prior_handoff.source_review_verdict in {
-                        "reject", "pass-with-nits",
-                    }
-                    or prior_handoff.baseline_pr_head_sha
-                )
-            )
-            # An explicit authoring handoff proves this execution's identity,
-            # not that a retired review ledger is current again.
-            review_current = contract_matches and (
-                review_feedback_is_current(current) or prior_rework)
-            recovered_context = {}
-            has_retry_history = bool(
-                current.bounces.review > 0
-                or current.review_verdict == "reject"
-                or prior_rework
-            )
-            prior_feedback = (
-                prior_handoff.source_review_feedback
-                if prior_handoff is not None
-                and isinstance(prior_handoff.source_review_feedback, dict)
-                else None
-            )
-            if (
-                stage == "authoring"
-                and node.reviewer
-                and has_delivery
-                and has_retry_history
-                and review_current
-                and not current.review_report
-                and not current.review_report_ref
-                and not prior_feedback
-            ):
-                recovered_context = (
-                    engine.store.recover_review_rework_context(
-                        node.work_item_id)
-                    or {}
-                )
-            if (
-                stage == "authoring"
-                and not resuming_authoring
-                and node.reviewer
-                and (
-                    current.bounces.review > 0
-                    or current.review_verdict == "reject"
-                    or prior_rework
-                )
-                and has_delivery
-                and review_current
-            ):
-                from ...pipeline.loop import _bounded_direct_run_baseline
-
-                source_review_feedback = _operator_retry_feedback(
-                    current, prior_handoff, recovered_context)
-                try:
-                    retained_subject = retained_review_subject(
-                        current, prior_handoff, source_review_feedback, store=engine.store)
-                except ValueError as exc:
-                    raise ValidationError(str(exc)) from exc
-                source_subject = (
-                    retained_subject or current.review_subject_digest
-                    or recovered_context.get("subject_digest")
-                    or stage_recovery_subject(node, current)
-                )
-                baseline_direct_run_ids, baseline_cutoff_created_at = (
-                    _bounded_direct_run_baseline(
-                        engine.runtime.list_runs(current.id))
-                )
-                source_review_verdict = (
-                    current.review_verdict
-                    if current.review_verdict in {"reject", "pass-with-nits"}
-                    else (
-                        prior_handoff.source_review_verdict
-                        if prior_rework else None
-                    )
-                )
-                identity_head = getattr(
-                    current.delivery_identity, "pr_head_sha", None)
-                artifact_head = (
-                    str(current.artifacts.get("head_sha") or "")
-                    if isinstance(current.artifacts, dict) else ""
-                )
-                baseline_pr_head_sha = (
-                    identity_head
-                    or artifact_head
-                    or (
-                        prior_handoff.baseline_pr_head_sha
-                        if prior_handoff is not None else None
-                    )
-                    or None
-                )
-                source_review_feedback = _operator_retry_feedback(
-                    current, prior_handoff, recovered_context)
-                if source_review_verdict is None and source_review_feedback:
-                    source_review_verdict = source_review_feedback.get("verdict")
-                if (
-                    has_retry_history
-                    and (
-                        source_review_feedback is None
-                        or not any(
-                            source_review_feedback.get(field)
-                            for field in (
-                                "report_ref", "ledger_ref", "blockers", "comment",
-                            )
-                        )
-                    )
-                ):
-                    raise NeedsDecision(
-                        ui(
-                            "The prior review rework context is unavailable; restore the latest "
-                            "review report/ledger attachment before retrying this node.",
-                            "无法获得之前的 review 返工上下文；请先恢复最新 review report/ledger "
-                            "附件后再重试该节点。",
-                        ),
-                        report={
-                            "item_id": node.work_item_id,
-                            "node_id": args.node_key,
-                            "reason_code": "review-rework-context-unavailable",
-                            "next_action": f"omac work show {node.work_item_id} --output json",
-                            "recovery": (
-                                "Restore the authoritative reject report/ledger context; "
-                                "do not submit the unchanged PR head or run Reviewer."
-                            ),
-                        },
-                    )
-                handoff = WorkerHandoffIntent(
-                    schema=WORKER_HANDOFF_SCHEMA,
-                    state="pending",
-                    target_worker=node.worker,
-                    gate="operator-retry",
-                    source_review_feedback=source_review_feedback,
-                    source_review_subject_digest=source_subject,
-                    source_review_round=max(1, current.bounces.review),
-                    source_review_verdict=source_review_verdict,
-                    target_review_bounce=max(1, current.bounces.review),
-                    generation=f"handoff-{secrets.token_hex(8)}",
-                    target_agent_id=engine.store.resolve_agent_id(node.worker),
-                    baseline_direct_run_ids=baseline_direct_run_ids,
-                    baseline_cutoff_created_at=baseline_cutoff_created_at,
-                    baseline_verification_attachment_id=str(
-                        (current.verification_ref or {}).get("attachment_id") or ""
-                    ) or None,
-                    baseline_pr_head_sha=baseline_pr_head_sha,
-                    target_worker_bounce=current.bounces.worker,
-                    review_context_binding=review_context_binding(current),
-                )
-            if not delayed_review_recovered:
-                # 复用 DAG stage recovery 原语；清除旧 reviewer 判定并恢复
-                # 指定阶段，同时保留 PR、verification 与历史附件。
-                prepare_stage_recovery(
-                    node, engine.store, stage, worker_handoff=handoff)
-            refreshed = engine.store.get_work_item(node.work_item_id)
-            node.recovery_marker = bool(
-                refreshed.worker_handoff
-                or refreshed.reviewer_run_baseline
-                or refreshed.decision_required
-            )
+            _retry_on_platform(args, manifest, node, engine, stage)
         except WorkItemNotFoundError:
             # 平台工单已不存在(例如被删除):与 reconcile 的“平台工单不存在”语义相同。
             # retry 仍保留 ID 以兼容输出契约,下一次 dag run 再由 reconcile 清空并重新建单。
@@ -612,14 +596,12 @@ def _accept_nits_decision_matches(decision, item, node_key: str) -> bool:
     )
 
 
-def _cmd_accept_nits(args) -> int:
-    manifest = _load_or_raise(args.manifest)
-    node = _require_node(manifest, args.node_key)
+def _accept_nits_item(manifest, args, node):
+    """Resolve the engine and the WorkItem that must currently hold a pass-with-nits review."""
     if not node.work_item_id:
         raise ValidationError(ui(
             "A node without a work item cannot accept review nits. Run `omac dag run` first.",
             "没有 work item 的节点不能接受 review nits；请先运行 `omac dag run`。"))
-
     engine = _build_engine(load_config())
     if engine is None:
         raise ValidationError(ui(
@@ -627,8 +609,10 @@ def _cmd_accept_nits(args) -> int:
             "Set OMAC_ENGINE and OMAC_WORKSPACE_ID or configure .omac/config.yaml first.",
             "节点有 work_item_id,但无法解析引擎配置；请先配置 OMAC_ENGINE/OMAC_WORKSPACE_ID "
             "或 .omac/config.yaml。"))
+    return engine, engine.store.get_work_item(node.work_item_id)
 
-    item = engine.store.get_work_item(node.work_item_id)
+
+def _accept_nits_check_item(item) -> None:
     if item.kind != TaskKind.DEVELOP or item.phase != TaskPhase.REVIEW:
         raise ValidationError(ui(
             "accept-nits is only valid for a develop WorkItem in review phase.",
@@ -653,6 +637,8 @@ def _cmd_accept_nits(args) -> int:
             "The sealed review report reference is missing or invalid; refusing acceptance.",
             "sealed review report ref 缺失或无效；拒绝接受。"))
 
+
+def _accept_nits_check_delivery(manifest, node_key: str, item) -> None:
     # Reuse the pipeline's authoritative delivery/subject checks. The CLI only
     # adapts arguments; all platform facts still come from Store/Runtime.
     from ...pipeline.loop import (
@@ -660,9 +646,7 @@ def _cmd_accept_nits(args) -> int:
         _review_subject_for_current_delivery,
     )
 
-    expected_subject = _review_subject_for_current_delivery(
-        manifest, args.node_key, item)
-    if item.review_subject_digest != expected_subject:
+    if item.review_subject_digest != _review_subject_for_current_delivery(manifest, node_key, item):
         raise ValidationError(ui(
             "The pass-with-nits verdict is bound to a stale review subject; "
             "run `omac node retry` to start a fresh delivery.",
@@ -675,6 +659,8 @@ def _cmd_accept_nits(args) -> int:
             "当前交付没有通过 Controller sealed 校验；拒绝接受。请检查交付事实后运行 "
             "`omac node retry`。"))
 
+
+def _accept_nits_marker(item, node_key: str) -> dict:
     marker = {
         "schema": REVIEW_NITS_ACCEPTANCE_SCHEMA,
         "review_subject_digest": item.review_subject_digest,
@@ -691,15 +677,17 @@ def _cmd_accept_nits(args) -> int:
             "refusing to overwrite it. Run `omac node retry` for a fresh decision.",
             "已有 review-nits acceptance marker 与当前 sealed review 不匹配；拒绝覆盖。请运行 "
             "`omac node retry` 重新决策。"))
-
     decision = item.decision_required
-    if decision not in (None, {}):
-        if not _accept_nits_decision_matches(decision, item, args.node_key):
-            raise ValidationError(ui(
-                "The existing decision_required does not identify this exact pass-with-nits review; "
-                "no state was changed.",
-                "现有 decision_required 没有绑定当前 pass-with-nits review；未修改状态。"))
+    if decision not in (None, {}) and not _accept_nits_decision_matches(decision, item, node_key):
+        raise ValidationError(ui(
+            "The existing decision_required does not identify this exact pass-with-nits review; "
+            "no state was changed.",
+            "现有 decision_required 没有绑定当前 pass-with-nits review；未修改状态。"))
+    return marker
 
+
+def _accept_nits_apply(args, engine, item, marker: dict) -> None:
+    """Persist the marker, clear decision_required, return to in_review; every write is read back."""
     def ensure_no_active_direct_run() -> None:
         active = [
             run.id for run in engine.runtime.list_runs(item.id)
@@ -716,7 +704,7 @@ def _cmd_accept_nits(args) -> int:
 
     # Write the marker before clearing decision_required. Each write is
     # read-after-write verified, so a restart can safely resume this sequence.
-    if existing_marker in (None, {}):
+    if item.review_nits_acceptance in (None, {}):
         ensure_no_active_direct_run()
         updated = engine.store.update_work_item_metadata(
             item.id, review_nits_acceptance=marker)
@@ -751,6 +739,16 @@ def _cmd_accept_nits(args) -> int:
             "The WorkItem did not converge to review/in_review with its acceptance marker; "
             "no merge or Reviewer fact was assumed.",
             "WorkItem 未收敛到带 acceptance marker 的 review/in_review；未假设 merge 成功，Reviewer 事实未修改。"))
+
+
+def _cmd_accept_nits(args) -> int:
+    manifest = _load_or_raise(args.manifest)
+    node = _require_node(manifest, args.node_key)
+    engine, item = _accept_nits_item(manifest, args, node)
+    _accept_nits_check_item(item)
+    _accept_nits_check_delivery(manifest, args.node_key, item)
+    marker = _accept_nits_marker(item, args.node_key)
+    _accept_nits_apply(args, engine, item, marker)
 
     node.status = "in_review"
     node.recovery_marker = False
