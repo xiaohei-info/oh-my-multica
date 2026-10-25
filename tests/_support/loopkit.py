@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 import yaml
@@ -24,6 +25,11 @@ from _support.it_project import Project
 AGENTS = ("alice", "bob", "carol")
 HANG = [[{"hang": 600}]]          # the Run stays active until the test cancels it
 IDLE = [[]]                       # the Run completes at once without submitting anything
+
+
+def fails(message: str) -> list:
+    """A Run that ends failed with ``message`` (what a provider outage or a policy refusal looks like)."""
+    return [{"fail": message}]
 
 
 def contract(**overrides) -> Contract:
@@ -201,3 +207,50 @@ class Kit:
 
     def wait_runs_ended(self, item_id: str, **kw) -> None:
         self.wait_for(lambda: self.run_ended(item_id), what=f"the Runs of {item_id} to end", **kw)
+
+    # ---- scenarios reached through the real Loop
+    def collect(self, manifest, path, **kw):
+        return loop.collect_results(self.store, self.runtime, self.code_host, manifest, path, **kw)
+
+    def run_ids(self, item_id: str) -> list[str]:
+        """Run ids, newest first (the platform lists the latest Run first)."""
+        return [r.id for r in self.runtime.list_runs(item_id)]
+
+    def reviewer_runs(self, item_id: str) -> list:
+        bob = self.store.resolve_agent_id("bob")
+        return [r for r in self.runtime.list_runs(item_id) if r.agent_id == bob]
+
+    def dispatched(self, *errors, reviewer="bob", delivery=None):
+        """Dispatch node `a`; the Worker's Runs fail with ``errors`` in order, then hang.
+        ``delivery``: verification metadata the issue already carries before the handoff starts."""
+        self.agents([*[fails(e) for e in errors], *HANG], names=("alice",))
+        node = self.node("a", reviewer=reviewer, contract=contract())
+        if delivery:
+            item = self.item("a", reviewer=reviewer, contract=node.contract, verification=delivery,
+                             verification_source=yaml.safe_dump(delivery))
+            node.work_item_id = item.id
+        manifest = self.manifest([node])
+        path = self.save(manifest)
+        self.tick(manifest, path, max_parallel=1)
+        item = self.store.get_work_item(manifest.nodes["a"].work_item_id)
+        self.wait_runs_ended(item.id)
+        return manifest, path, item
+
+    def in_review(self, *reviewer_runs):
+        """Run the Loop until node `a` is in review and the Reviewer's first Run exists.
+        ``reviewer_runs``: one scenario attempt per Reviewer Run; Runs after the last repeat the last attempt."""
+        self.stack.set_scenario("alice", [[self.stack.tool("worker-submit")]])
+        self.agents(list(reviewer_runs) or HANG, names=("bob",))
+        node = self.node("a", reviewer="bob", contract=contract())
+        manifest = self.manifest([node])
+        path = self.save(manifest)
+        bob = self.store.resolve_agent_id("bob")
+
+        def ready():
+            self.tick(manifest, path, max_parallel=1)
+            item = self.store.get_work_item(node.work_item_id) if node.work_item_id else None
+            return item if item and manifest.nodes["a"].status == "in_review" and any(
+                r.agent_id == bob for r in self.runtime.list_runs(item.id)) else None
+
+        item = self.wait_for(ready, timeout=90, what="the node to reach review")
+        return manifest, path, item

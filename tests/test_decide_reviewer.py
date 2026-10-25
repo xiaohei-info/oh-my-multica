@@ -241,3 +241,12 @@ def test_every_existing_direct_run_is_history_for_a_new_dispatch():
         direct_runs=runs), generation="g")
     assert decided.action is B.CREATE and set(decided.baseline.baseline_direct_run_ids) == {"a", "b"}
     assert decided.baseline.attempt == 1 and decided.baseline.target_run_id is None
+
+
+def test_comment_runs_and_other_agents_failures_never_count_for_the_reviewer():
+    history = run("run-history", "failed", created="2026-07-31T10:00:00Z", error="Our servers are currently overloaded")
+    other_agent = replace(run("run-other", "failed", created="2026-07-31T10:01:00Z",
+                              error="Our servers are currently overloaded"), agent_id="agent-other")
+    comment_run = replace(run("run-comment", "failed", created="2026-08-01T01:02:00Z",
+                              error="Our servers are currently overloaded"), kind="comment")
+    assert decide([history, other_agent, comment_run], baseline_ids=("run-history",)).action is A.WAIT

@@ -17,82 +17,59 @@ HTTP_503 = "hermes provider error: ⚠️  API call failed (attempt 3/8): Intern
 IDLE = []   # a Run that ends without submitting a verdict
 
 
-def in_review(kit, *reviewer_runs, stop_at="review"):
-    """Run the Loop until the node is in review and the Reviewer's first Run exists.
-    ``reviewer_runs``: one scenario attempt per Reviewer Run; Runs after the last repeat the last attempt."""
-    kit.stack.set_scenario("alice", [[kit.stack.tool("worker-submit")]])
-    kit.agents(list(reviewer_runs) or HANG, names=("bob",))
-    node = kit.node("a", reviewer="bob", contract=contract())
-    manifest = kit.manifest([node])
-    path = kit.save(manifest)
-    bob = kit.store.resolve_agent_id("bob")
-
-    def ready():
-        kit.tick(manifest, path, max_parallel=1)
-        item = kit.store.get_work_item(node.work_item_id) if node.work_item_id else None
-        return item if item and manifest.nodes["a"].status == "in_review" and any(
-            r.agent_id == bob for r in kit.runtime.list_runs(item.id)) else None
-
-    item = kit.wait_for(ready, timeout=90, what="the node to reach review")
-    return manifest, path, item
 
 
-def collect(kit, manifest, path, **kw):
-    return loop.collect_results(kit.store, kit.runtime, kit.code_host, manifest, path, **kw)
 
 
-def reviewer_runs(kit, item_id):
-    bob = kit.store.resolve_agent_id("bob")
-    return [r for r in kit.runtime.list_runs(item_id) if r.agent_id == bob]
 
 
 def test_provider_failure_of_the_reviewer_reruns_without_a_review_bounce(kit):
-    manifest, path, item = in_review(kit, [{"fail": HTTP_503}], *HANG)
+    manifest, path, item = kit.in_review([{"fail": HTTP_503}], *HANG)
     kit.wait_runs_ended(item.id)
     before = kit.store.get_work_item(item.id)
     wakes = kit.record(kit.runtime, "wake")
 
-    assert collect(kit, manifest, path) == {}
-    assert collect(kit, manifest, path) == {}
+    assert kit.collect(manifest, path) == {}
+    assert kit.collect(manifest, path) == {}
 
     retried = kit.store.get_work_item(item.id)
     assert [w[1][2] for w in wakes] == ["reviewer"]
     assert retried.phase is TaskPhase.REVIEW and retried.bounces.review == before.bounces.review == 0
     assert retried.verification == before.verification and manifest.nodes["a"].status == "in_review"
-    assert len(reviewer_runs(kit, item.id)) == 2
+    assert len(kit.reviewer_runs(item.id)) == 2
 
 
 def test_a_run_that_ended_without_a_verdict_is_restarted_once_from_runtime_facts(kit):
-    manifest, path, item = in_review(kit, IDLE, *HANG)
+    manifest, path, item = kit.in_review(IDLE, *HANG)
     kit.wait_runs_ended(item.id)
     wakes = kit.record(kit.runtime, "wake")
 
-    assert collect(kit, manifest, path) == {}
+    assert kit.collect(manifest, path) == {}
     persisted = load_manifest(path)
-    assert collect(kit, persisted, path) == {}
+    assert kit.collect(persisted, path) == {}
 
     recovered = kit.store.get_work_item(item.id)
-    assert len(wakes) == 1 and len(reviewer_runs(kit, item.id)) == 2
+    assert len(wakes) == 1 and len(kit.reviewer_runs(item.id)) == 2
     assert recovered.phase is TaskPhase.REVIEW and recovered.status is WorkItemStatus.IN_REVIEW
     assert recovered.review_verdict is None and recovered.bounces.review == 0
     assert recovered.reviewer_run_baseline.attempt == 2 and persisted.nodes["a"].status == "in_review"
 
 
 def test_a_late_verdict_within_the_grace_window_is_awaited(kit):
-    manifest, path, item = in_review(kit, IDLE)
+    manifest, path, item = kit.in_review(IDLE)
     kit.wait_runs_ended(item.id)
     kit.monkeypatch.setattr(loop, "_HANDOFF_TERMINAL_GRACE_SECONDS", 300)
     kit.forbid(kit.runtime, "wake")
 
-    assert collect(kit, manifest, path) == {}
+    assert kit.collect(manifest, path) == {}
 
     current = kit.store.get_work_item(item.id)
     assert current.bounces.review == 0 and current.decision_required is None
-    assert manifest.nodes["a"].status == "in_review" and len(reviewer_runs(kit, item.id)) == 1
+    assert manifest.nodes["a"].status == "in_review" and len(kit.reviewer_runs(item.id)) == 1
 
 
 def test_a_retry_whose_run_stays_invisible_fails_closed(kit):
-    manifest, path, item = in_review(kit, IDLE, *HANG)
+    manifest, path, item = kit.in_review(IDLE, *HANG)
     kit.wait_runs_ended(item.id)
     seen = {r.id for r in kit.runtime.list_runs(item.id)}
     real_list = kit.runtime.list_runs
@@ -100,9 +77,9 @@ def test_a_retry_whose_run_stays_invisible_fails_closed(kit):
     wakes = kit.record(kit.runtime, "wake")
     kit.monkeypatch.setattr(loop, "_HANDOFF_OBSERVATION_INTERVAL", 0.0)
 
-    failures = collect(kit, manifest, path)
+    failures = kit.collect(manifest, path)
     restarted = load_manifest(path)
-    collect(kit, restarted, path)
+    kit.collect(restarted, path)
 
     recovered = kit.store.get_work_item(item.id)
     assert "a" in failures and len(wakes) == 1
@@ -113,21 +90,21 @@ def test_a_retry_whose_run_stays_invisible_fails_closed(kit):
 
 
 def test_a_crash_after_the_retry_intent_fails_closed_on_restart_without_waking(kit):
-    manifest, path, item = in_review(kit, IDLE, *HANG)
+    manifest, path, item = kit.in_review(IDLE, *HANG)
     kit.wait_runs_ended(item.id)
     kit.forbid(kit.runtime, "wake")
     crash = kit.fault(kit.store, "update_work_item_metadata", when="after", error=RuntimeError("crash after intent"),
                       only=lambda _id, **kw: getattr(kw.get("reviewer_run_baseline"), "attempt", 0) == 2)
 
     with pytest.raises(RuntimeError, match="crash after intent"):
-        collect(kit, manifest, path)
+        kit.collect(manifest, path)
 
     interrupted = kit.store.get_work_item(item.id)
     assert interrupted.reviewer_run_baseline.attempt == 2 and interrupted.reviewer_run_baseline.target_run_id is None
 
     crash["armed"] = False
     wakes = kit.record(kit.runtime, "wake")
-    failures = collect(kit, load_manifest(path), path)
+    failures = kit.collect(load_manifest(path), path)
 
     recovered = kit.store.get_work_item(item.id)
     assert "a" in failures and wakes == []
@@ -163,10 +140,10 @@ def dispatch(kit, manifest):
 
 def test_the_initial_reviewer_assignment_does_not_start_a_run(kit):
     assigns = kit.record(kit.store, "assign_work_item")
-    manifest, path, item = in_review(kit)
+    manifest, path, item = kit.in_review()
     reviewer_calls = [kw for _, args, kw in assigns if args[2] == "reviewer"]
     assert reviewer_calls == [{"start_run": False}]
-    assert len(reviewer_runs(kit, item.id)) == 1, "the wake after the silent assignment starts the one Run"
+    assert len(kit.reviewer_runs(item.id)) == 1, "the wake after the silent assignment starts the one Run"
 
 
 def test_a_silent_assignment_defers_the_run_until_wake_and_a_second_wake_adds_none(kit):
@@ -180,22 +157,22 @@ def test_a_silent_assignment_defers_the_run_until_wake_and_a_second_wake_adds_no
     assert {r.id for r in kit.runtime.list_runs(item.id)} == before
 
     kit.runtime.wake(item.id, "bob", "reviewer")
-    woken = kit.wait_for(lambda: reviewer_runs(kit, item.id), what="the woken Reviewer Run")
+    woken = kit.wait_for(lambda: kit.reviewer_runs(item.id), what="the woken Reviewer Run")
     assert len(woken) == 1 and woken[0].active
 
     kit.runtime.wake(item.id, "bob", "reviewer")
-    assert [r.id for r in reviewer_runs(kit, item.id)] == [woken[0].id]
+    assert [r.id for r in kit.reviewer_runs(item.id)] == [woken[0].id]
 
 
 def test_resuming_a_reviewer_assigns_without_resuming_the_old_session(kit):
-    manifest, path, item = in_review(kit)
+    manifest, path, item = kit.in_review()
     assigns = kit.record(kit.store, "assign_work_item")
     assert loop._resume_reviewer_run(kit.store, kit.runtime, manifest.nodes["a"])
     assert [kw for _, args, kw in assigns if args[2] == "reviewer"] == [{"start_run": False}]
 
 
 def test_a_reused_issue_is_refreshed_with_the_control_protocol_before_the_reviewer_is_dispatched(kit):
-    manifest, path, item = in_review(kit)
+    manifest, path, item = kit.in_review()
     prepared(kit, manifest, path, item, description="stale issue body", reviewer_run_baseline={})
     hide_reviewer_runs(kit)
     kit.monkeypatch.setattr(loop, "_HANDOFF_OBSERVATION_INTERVAL", 0.0)
@@ -219,13 +196,13 @@ def decision_for(item, **extra):
 
 
 def test_a_pending_review_with_an_existing_decision_fails_closed(kit):
-    manifest, path, item = in_review(kit)
+    manifest, path, item = kit.in_review()
     decision = decision_for(item, reason_code="review-convergence-stalled", rounds=3)
     prepared(kit, manifest, path, item, decision_required=decision)
     kit.forbid(kit.store, "assign_work_item")
     kit.forbid(kit.runtime, "wake")
 
-    failures = collect(kit, manifest, path)
+    failures = kit.collect(manifest, path)
 
     blocked = kit.store.get_work_item(item.id)
     assert "a" in failures and manifest.nodes["a"].status == "blocked"
@@ -233,7 +210,7 @@ def test_a_pending_review_with_an_existing_decision_fails_closed(kit):
 
 
 def test_direct_dispatch_cannot_bypass_a_persisted_decision(kit):
-    manifest, path, item = in_review(kit)
+    manifest, path, item = kit.in_review()
     decision = decision_for(item, reason_code="review-convergence-stalled", rounds=3)
     prepared(kit, manifest, path, item, decision_required=decision)
     assigns = kit.record(kit.store, "assign_work_item")
@@ -248,7 +225,7 @@ def test_direct_dispatch_cannot_bypass_a_persisted_decision(kit):
 
 @pytest.mark.parametrize("entry", ["direct", "collect"])
 def test_a_decision_that_appears_during_the_handoff_blocks_before_assignment(kit, entry):
-    manifest, path, item = in_review(kit)
+    manifest, path, item = kit.in_review()
     prepared(kit, manifest, path, item)
     decision = decision_for(item)
     refresh = loop._refresh_develop_issue_body
@@ -264,7 +241,7 @@ def test_a_decision_that_appears_during_the_handoff_blocks_before_assignment(kit
     if entry == "direct":
         assert dispatch(kit, manifest) is False
     else:
-        assert "a" in collect(kit, manifest, path)
+        assert "a" in kit.collect(manifest, path)
 
     blocked = kit.store.get_work_item(item.id)
     assert manifest.nodes["a"].status == "blocked" and blocked.status is WorkItemStatus.BLOCKED
@@ -272,7 +249,7 @@ def test_a_decision_that_appears_during_the_handoff_blocks_before_assignment(kit
 
 
 def test_a_decision_seen_after_the_terminal_run_stops_the_no_submit_retry(kit):
-    manifest, path, item = in_review(kit, IDLE, *HANG)
+    manifest, path, item = kit.in_review(IDLE, *HANG)
     kit.wait_runs_ended(item.id)
     attempt = kit.store.get_work_item(item.id).reviewer_run_baseline.attempt
     decision = decision_for(item)
@@ -288,7 +265,7 @@ def test_a_decision_seen_after_the_terminal_run_stops_the_no_submit_retry(kit):
     assigns = kit.record(kit.store, "assign_work_item")
     kit.forbid(kit.runtime, "wake")
 
-    failures = collect(kit, manifest, path)
+    failures = kit.collect(manifest, path)
 
     blocked = kit.store.get_work_item(item.id)
     assert "a" in failures and manifest.nodes["a"].status == "blocked"
@@ -299,7 +276,7 @@ def test_a_decision_seen_after_the_terminal_run_stops_the_no_submit_retry(kit):
 # ---- initial dispatch: a crash between assignment and wake never reruns --------------------------------------------
 
 def test_a_new_baseline_is_dispatched_once_then_an_existing_one_is_only_observed(kit):
-    manifest, path, item = in_review(kit)
+    manifest, path, item = kit.in_review()
     prepared(kit, manifest, path, item, reviewer="bob", reviewer_run_baseline={})
     hide_reviewer_runs(kit)
     kit.monkeypatch.setattr(loop, "_HANDOFF_OBSERVATION_INTERVAL", 0.0)
@@ -318,7 +295,7 @@ def test_a_new_baseline_is_dispatched_once_then_an_existing_one_is_only_observed
 
 
 def crash_before_wake(kit):
-    manifest, path, item = in_review(kit)
+    manifest, path, item = kit.in_review()
     prepared(kit, manifest, path, item, reviewer_run_baseline={})
     kit.monkeypatch.setattr(loop, "_HANDOFF_OBSERVATION_INTERVAL", 0.0)
     crash = kit.fault(kit.runtime, "wake", when="before", error=RuntimeError("crash after suppressed assignment"))
@@ -344,7 +321,7 @@ def test_a_crash_after_the_silent_assignment_fails_closed_and_never_reruns(kit):
 def test_a_formal_run_that_appears_after_the_crash_is_bound_not_rerun(kit):
     manifest, path, item = crash_before_wake(kit)
     kit.runtime.wake(item.id, "bob", "reviewer")   # what the platform did late: a formal dispatch Run
-    run = kit.wait_for(lambda: reviewer_runs(kit, item.id), what="the late Run")[0]
+    run = kit.wait_for(lambda: kit.reviewer_runs(item.id), what="the late Run")[0]
     kit.forbid(kit.runtime, "wake")
 
     assert dispatch(kit, manifest) is False
@@ -355,9 +332,9 @@ def test_a_formal_run_that_appears_after_the_crash_is_bound_not_rerun(kit):
 # ---- budgets ---------------------------------------------------------------------------------------------------------
 
 def test_reviewer_runs_without_a_verdict_are_bounded_and_cost_no_business_bounce(kit):
-    manifest, path, item = in_review(kit, IDLE, IDLE)
+    manifest, path, item = kit.in_review(IDLE, IDLE)
     kit.wait_runs_ended(item.id)
-    kit.tick_until(manifest, path, lambda: len(reviewer_runs(kit, item.id)) == 2, max_parallel=1,
+    kit.tick_until(manifest, path, lambda: len(kit.reviewer_runs(item.id)) == 2, max_parallel=1,
                    what="the second Reviewer Run")   # the first no-submit costs one more Run
     kit.wait_runs_ended(item.id)
     kit.forbid(kit.runtime, "wake")
@@ -372,17 +349,17 @@ def test_reviewer_runs_without_a_verdict_are_bounded_and_cost_no_business_bounce
 
 
 def test_a_larger_no_submit_budget_keeps_dispatching(kit):
-    manifest, path, item = in_review(kit, IDLE, IDLE, *HANG)
+    manifest, path, item = kit.in_review(IDLE, IDLE, *HANG)
     config = {"retry": {"no_submit_runs": 3}}
     for expected_runs in (2, 3):
         kit.wait_runs_ended(item.id)
-        kit.tick_until(manifest, path, lambda: len(reviewer_runs(kit, item.id)) == expected_runs, max_parallel=1,
+        kit.tick_until(manifest, path, lambda: len(kit.reviewer_runs(item.id)) == expected_runs, max_parallel=1,
                        config=config, what=f"Reviewer Run {expected_runs}")
 
     recovered = kit.store.get_work_item(item.id)
     assert manifest.nodes["a"].status == "in_review" and recovered.status is WorkItemStatus.IN_REVIEW
     assert not recovered.decision_required and recovered.reviewer_run_baseline.attempt == 3
-    assert len(reviewer_runs(kit, item.id)) == 3
+    assert len(kit.reviewer_runs(item.id)) == 3
 
 
 @pytest.mark.parametrize("bad", [0, -1, "6", 2.5])
@@ -402,11 +379,11 @@ def canonical_decision(item, path):
 
 def delayed_verdict(kit, verdict):
     """The Reviewer really submitted ``verdict``, but the node is still held by the baseline-unavailable decision."""
-    manifest, path, item = in_review(kit, [kit.stack.review(verdict)])
+    manifest, path, item = kit.in_review([kit.stack.review(verdict)])
     kit.wait_for(lambda: kit.store.get_work_item(item.id).review_verdict == verdict, what="the submitted verdict")
     kit.wait_runs_ended(item.id)
     current = kit.store.get_work_item(item.id)
-    run = reviewer_runs(kit, item.id)[0]
+    run = kit.reviewer_runs(item.id)[0]
     kit.store.update_work_item_metadata(
         item.id, reviewer_run_baseline=replace(current.reviewer_run_baseline, target_run_id=run.id),
         decision_required=canonical_decision(item, path))
@@ -439,7 +416,7 @@ def test_an_unknown_decision_clear_resumes_the_same_verdict_after_restart(kit, v
     no_assign, no_wake = guard(kit)
 
     with pytest.raises(PlatformError, match="decision clear response unknown"):
-        collect(kit, manifest, path)
+        kit.collect(manifest, path)
 
     interrupted = kit.store.get_work_item(item.id)
     assert not interrupted.decision_required and interrupted.review_verdict == verdict
@@ -448,7 +425,7 @@ def test_an_unknown_decision_clear_resumes_the_same_verdict_after_restart(kit, v
 
     clear["armed"] = no_assign["armed"] = no_wake["armed"] = False
     assigns = kit.record(kit.store, "assign_work_item")
-    assert collect(kit, manifest, path) == {}
+    assert kit.collect(manifest, path) == {}
 
     recovered = kit.store.get_work_item(item.id)
     assert not recovered.decision_required
@@ -472,7 +449,7 @@ def preserved_cases(kit, verdict, cases):
         manifest = load_manifest(path)
         metadata.clear()
 
-        failures = collect(kit, manifest, path)
+        failures = kit.collect(manifest, path)
 
         blocked = kit.store.get_work_item(item.id)
         assert "a" in failures and manifest.nodes["a"].status == "blocked", case_id
@@ -520,7 +497,7 @@ def test_only_the_exact_canonical_reviewer_recovery_decision_is_consumed(kit):
 
 
 def test_an_existing_unknown_decision_wins_over_no_submit_recovery(kit):
-    manifest, path, item = in_review(kit, IDLE, *HANG)
+    manifest, path, item = kit.in_review(IDLE, *HANG)
     kit.wait_runs_ended(item.id)
     baseline = kit.store.get_work_item(item.id).reviewer_run_baseline
     decision = {"schema": "omac.decision-required/v1", "reason_code": "guard-budget-exhausted"}
@@ -529,7 +506,7 @@ def test_an_existing_unknown_decision_wins_over_no_submit_recovery(kit):
     assigns = kit.record(kit.store, "assign_work_item")
     kit.forbid(kit.runtime, "wake")
 
-    failures = collect(kit, manifest, path)
+    failures = kit.collect(manifest, path)
 
     blocked = kit.store.get_work_item(item.id)
     assert "a" in failures and manifest.nodes["a"].status == "blocked" and blocked.status is WorkItemStatus.BLOCKED
@@ -539,14 +516,14 @@ def test_an_existing_unknown_decision_wins_over_no_submit_recovery(kit):
 # ---- an unusable cutoff blocks and stays blocked ------------------------------------------------------------------
 
 def test_an_unusable_persisted_cutoff_stays_blocked_across_collects(kit):
-    manifest, path, item = in_review(kit)
+    manifest, path, item = kit.in_review()
     baseline = kit.store.get_work_item(item.id).reviewer_run_baseline
     kit.store.update_work_item_metadata(
         item.id, reviewer_run_baseline=replace(baseline, cutoff_created_at="2026-08-01T01:00:01Z"))  # not the delivery's
     kit.forbid(kit.runtime, "wake")
 
     for attempt in range(3):
-        failures = collect(kit, manifest, path)
+        failures = kit.collect(manifest, path)
         blocked = kit.store.get_work_item(item.id)
         if attempt == 0:
             assert "a" in failures
