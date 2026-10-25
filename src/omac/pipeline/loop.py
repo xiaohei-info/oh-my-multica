@@ -61,6 +61,8 @@ from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import AuthError, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
+from .decide_review import VerdictPath, decide_verdict_path
+from .decide_worker import AfterCi, NoSubmit, decide_after_ci, decide_worker_no_submit
 from .decide_merge import merge_bounce_attempt, merge_request_state_is_valid
 from .convergence import (
     ConvergenceResolution, ResolutionState, persist_decision,
@@ -3834,7 +3836,11 @@ def _collect_review_phase(c: _Collect, n: _Node) -> bool:
 def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
     """The Worker Run ended without delivering: retry, recover a late delivery, or block."""
     key, node = n.key, n.node
-    if n.item.worker_handoff is None:
+    worker_limit = c.limits.get("worker", DEFAULT_RETRY["worker"])
+    consumed = consumed_bounces(c.manifest, key, n.item, "worker")
+    outcome = decide_worker_no_submit(
+        has_handoff=n.item.worker_handoff is not None, limit=worker_limit, consumed=consumed)
+    if outcome is NoSubmit.REQUIRE_RETRY_INTENT:
         retry = f"omac node retry {c.manifest_path} {key}"
         reason = ui(
             "Worker run ended without a causal handoff delivery. "
@@ -3861,14 +3867,11 @@ def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
         set_node(c.manifest, key, status="blocked")
         c.failures[key] = reason
         return True
-    worker_limit = c.limits.get("worker", DEFAULT_RETRY["worker"])
     cur_bounce = n.item.bounces.worker
-    consumed = consumed_bounces(
-        c.manifest, key, n.item, "worker")
     reason = ui(
         "Worker run ended without delivery through `omac work submit`.",
         "worker run 已结束但未通过 omac work submit 交付")
-    limit_exhausted = worker_limit == 0 or consumed >= worker_limit
+    limit_exhausted = outcome is NoSubmit.BUDGET_EXHAUSTED
     late_delivery = (
         _recover_late_worker_delivery(
             c.store, c.runtime, c.code_host, c.manifest, key, node, n.handoff)
@@ -3987,23 +3990,24 @@ def _collect_in_progress(c: _Collect, n: _Node) -> None:
         ci_action = advance_delivery(
             c.config or {}, c.manifest, key, c.store, c.runtime, c.code_host, c.limits,
             project_root=_project_root_from_manifest_path(c.manifest_path))
-        if ci_action == "bounce":
+        after = decide_after_ci(
+            ci_action=ci_action, review_passed=_current_delivery_passed_review(n.item),
+            has_reviewer=bool(node.reviewer))
+        if after is AfterCi.BOUNCE:
             c.failures[key] = ui(
                 "CI failed; returned to the worker for resubmission.",
                 "CI 未通过,已转回 worker(上界未耗尽,待重交)")
             log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, gate="ci")
-            return None
-        if ci_action == "blocked":
+        elif after is AfterCi.BLOCK:
             c.failures[key] = ui(
                 "CI failed and retry.ci is exhausted.",
                 "CI 检查未通过,回退上界(retry.ci)已耗尽")
             log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, reason=ui(
                          "CI retry limit exhausted", "CI 回退上界已耗尽"))
-            return None
-        # 只有绑定当前 worker delivery subject 的通过结论才能进入 merge。
-        if _current_delivery_passed_review(n.item):
+        elif after is AfterCi.MERGE_PASSED_REVIEW:
+            # 只有绑定当前 worker delivery subject 的通过结论才能进入 merge。
             merge_action = _complete_merge_if_confirmed(
                 c.store, c.runtime, c.code_host, c.manifest, key, c.limits, c.config or {}, c.manifest_path)
             if merge_action == "pass":
@@ -4015,7 +4019,7 @@ def _collect_in_progress(c: _Collect, n: _Node) -> None:
                 log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
                          id=node.work_item_id, reason=ui(
                              "Merge retry limit exhausted", "merge 回退上界已耗尽"))
-        elif node.reviewer:
+        elif after is AfterCi.QUEUE_REVIEW:
             c.pending_review.append((key, node.work_item_id, node.reviewer))
         else:
             merge_action = _complete_merge_if_confirmed(
@@ -4302,7 +4306,8 @@ def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
         "review", DEFAULT_RETRY["review"])
     rework_budget = review_rework_budget(
         c.manifest, key, n.item, configured_review_limit)
-    if verdict == "reject" and not gate_errors:
+    path = decide_verdict_path(verdict=verdict, has_evidence_errors=bool(gate_errors))
+    if path is VerdictPath.REJECT_CHECKS:
         boundary_conflicts = contract_boundary_conflicts(
             c.manifest, node, n.item)
         if boundary_conflicts:
@@ -4337,7 +4342,7 @@ def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
             c.failures[key] = _block_review_non_convergence(
                 c.store, c.manifest, key, n.item, resolution)
             return None
-    if verdict == "pass-with-nits" and not gate_errors:
+    if path is VerdictPath.NITS_CHECK:
         if not _review_nits_acceptance_matches(c.manifest, key, n.item):
             c.failures[key] = _block_review_nits_acceptance(
                 c.store, c.manifest, c.manifest_path, key, n.item)
@@ -4350,7 +4355,7 @@ def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
             verdict=verdict,
             operator_acceptance=True,
         )
-    if not gate_errors and verdict != "reject":
+    if path in (VerdictPath.MERGE, VerdictPath.NITS_CHECK):
         # reviewer pass → P4.2 自动 merge 门。命令与远端观察均由引擎适配器执行。
         merge_action = _complete_merge_if_confirmed(
             c.store, c.runtime, c.code_host, c.manifest, key, c.limits, c.config or {}, c.manifest_path)
