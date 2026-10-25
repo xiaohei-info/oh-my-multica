@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+from omac.engines.mock import MockCodeHost
 import pytest
 
 from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
@@ -193,7 +194,7 @@ class TestReconcileObservationScope:
             return original(item_id)
 
         store.observe_work_item_control = record
-        observations, _ = loop._observe_reconcile_inputs(store, manifest)
+        observations, _ = loop._observe_reconcile_inputs(store, MockCodeHost(), manifest)
 
         assert set(observed) == {active.id, marked.id}
         assert set(observations) == {"active", "marked"}
@@ -213,7 +214,7 @@ class TestReconcileObservationScope:
             observed.append(item_id) or original(item_id))
 
         observations, _ = loop._observe_reconcile_inputs(
-            store, manifest, full_scan=True)
+            store, MockCodeHost(), manifest, full_scan=True)
 
         assert observed == [item.id]
         assert observations["static"].work_item.id == item.id
@@ -228,7 +229,7 @@ class TestReconcileObservationScope:
         store.observe_work_item_controls = lambda _item_ids: pytest.fail(
             "interval reconcile must use per-item observations")
 
-        observations, _ = loop._observe_reconcile_inputs(store, manifest)
+        observations, _ = loop._observe_reconcile_inputs(store, MockCodeHost(), manifest)
 
         assert observations["active"].work_item.id == item.id
 
@@ -254,7 +255,7 @@ class TestReconcileObservationScope:
         store.observe_work_item_control = lambda item_id: (
             observed.append(item_id) or original(item_id))
 
-        assert loop.reconcile(store, manifest, path) is False
+        assert loop.reconcile(store, MockCodeHost(), manifest, path) is False
         assert observed == []
         assert manifest.nodes["blocked"].status == "blocked"
         assert manifest.nodes["failed"].status == "failed"
@@ -272,7 +273,7 @@ class TestReconcileObservationScope:
         path = str(tmp_path / "manifest.yaml")
         save_manifest(manifest, path)
 
-        assert loop.reconcile(store, manifest, path) is True
+        assert loop.reconcile(store, MockCodeHost(), manifest, path) is True
         assert manifest.nodes["marked"].status == "blocked"
         assert manifest.nodes["marked"].recovery_marker is False
 
@@ -318,11 +319,11 @@ class TestReconcileObservationScope:
 
         restarted = load_manifest(path)
         assert loop.reconcile_active_keys(restarted) == {"marked"}
-        assert loop.reconcile(store, restarted, path) is False
+        assert loop.reconcile(store, MockCodeHost(), restarted, path) is False
         assert restarted.nodes["marked"].recovery_marker is True
 
         store.update_work_item_metadata(item.id, decision_required={})
-        assert loop.reconcile(store, restarted, path) is True
+        assert loop.reconcile(store, MockCodeHost(), restarted, path) is True
         assert restarted.nodes["marked"].recovery_marker is False
         assert loop.reconcile_active_keys(load_manifest(path)) == set()
 
@@ -368,7 +369,7 @@ class TestReconcileObservationScope:
         store.observe_work_item_control = lambda item_id: (
             observed.append(item_id) or original(item_id))
 
-        build_status_report(manifest, store, path)
+        build_status_report(manifest, store, MockCodeHost(), path)
 
         assert observed == [static.id]
         assert load_manifest(path).meta["reconcile_audit"] == audit_state

@@ -56,6 +56,7 @@ from ..core.workitem import (
     WorkItemPayload,
     WorkItemStatus,
 )
+from ..engines.codehost import CodeHost
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import AuthError, PlatformError, WorkItemNotFoundError
@@ -1237,7 +1238,7 @@ def _validate_structured_recovery_payloads(
 
 def _observe_reconcile_inputs(
     store: WorkItemStore,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     max_parallel: int = 4,
     *,
     full_scan: bool = False,
@@ -1410,7 +1411,7 @@ def _observe_reconcile_inputs(
         item = observation.work_item
         if not _requires_pull_request_observation(node, item):
             continue
-        pull_requests[key] = store.observe_pull_request(
+        pull_requests[key] = code_host.observe_pull_request(
             _pull_request_url(item))
     return ReconcileInputs(
         observations=observations,
@@ -1895,20 +1896,20 @@ def _retry_reviewer_attempt(
 def _dispatch_reviewer_for_current_subject(
     store: WorkItemStore,
     runtime: AgentRuntime,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     key: str,
 ) -> bool:
     """Run Reviewer handoff preparation and guarded assign/wake as one window."""
     item_id = manifest.nodes[key].work_item_id
     with store.reviewer_dispatch_lock(item_id):
         return _dispatch_reviewer_for_current_subject_locked(
-            store, runtime, manifest, key)
+            store, runtime, code_host, manifest, key)
 
 
 def _dispatch_reviewer_for_current_subject_locked(
     store: WorkItemStore,
     runtime: AgentRuntime,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     key: str,
 ) -> bool:
     """幂等完成当前交付的 reviewer handoff；同 subject 不重置评审事实。"""
@@ -1918,7 +1919,7 @@ def _dispatch_reviewer_for_current_subject_locked(
     if reviewer_dispatch_stopped(current):
         _block_existing_reviewer_decision(store, manifest, key, current)
         return False
-    _validate_controller_sealed_delivery(store, current)
+    _validate_controller_sealed_delivery(store, code_host, current)
     subject_digest = _review_subject_for_current_delivery(
         manifest, key, current)
     subject_changed = current.review_subject_digest != subject_digest
@@ -2047,7 +2048,7 @@ def _dispatch_reviewer_for_current_subject_locked(
         store, manifest, key, item_id) is not None:
         return False
     current = store.get_work_item(item_id)
-    _validate_controller_sealed_delivery(store, current)
+    _validate_controller_sealed_delivery(store, code_host, current)
     if (
         _review_subject_for_current_delivery(manifest, key, current) != subject_digest
         or current.reviewer_run_baseline != baseline
@@ -2063,18 +2064,18 @@ def _dispatch_reviewer_for_current_subject_locked(
     return True
 
 
-def _dispatch_worker_handoff(store, runtime, manifest, key, **kwargs):
+def _dispatch_worker_handoff(store, runtime, code_host: CodeHost, manifest, key, **kwargs):
     # Same-host writers serialize; remote platform state still requires fresh reads.
     with store.worker_control_lock(manifest.nodes[key].work_item_id):
         kwargs["projection"] = store.observe_work_item_control(
             manifest.nodes[key].work_item_id)
-        return _dispatch_worker_handoff_locked(store, runtime, manifest, key, **kwargs)
+        return _dispatch_worker_handoff_locked(store, runtime, code_host, manifest, key, **kwargs)
 
 
 def _dispatch_worker_handoff_locked(
     store: WorkItemStore,
     runtime: AgentRuntime,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     key: str,
     *,
     review_bounce: int | None = None,
@@ -2299,14 +2300,14 @@ def _dispatch_worker_handoff_locked(
     if intent.is_causally_bound():
         try:
             result = _observe_worker_handoff(
-                store, runtime, manifest, key, intent, projection=projection)
+                store, runtime, code_host, manifest, key, intent, projection=projection)
         except PlatformError as exc:
             if store.is_transient_transport_error(exc):
                 return _WorkerHandoffResult("pending-preparation", intent)
             raise
         if result.state == "pending-submit":
             result = _observe_worker_handoff_bounded(
-                store, runtime, manifest, key, result.intent)
+                store, runtime, code_host, manifest, key, result.intent)
         intent = result.intent
         resolved = _resolved_worker_handoff_dispatch(result)
         if resolved is not None:
@@ -2366,7 +2367,7 @@ def _dispatch_worker_handoff_locked(
 
     try:
         result = _observe_worker_handoff(
-            store, runtime, manifest, key, intent)
+            store, runtime, code_host, manifest, key, intent)
     except PlatformError as exc:
         if store.is_transient_transport_error(exc):
             return _WorkerHandoffResult("pending-preparation", intent)
@@ -2417,7 +2418,7 @@ def _dispatch_worker_handoff_locked(
         store.assign_work_item(item_id, intent.target_worker, "worker")
     except PlatformError as assign_error:
         result = _observe_worker_handoff_bounded(
-            store, runtime, manifest, key, intent)
+            store, runtime, code_host, manifest, key, intent)
         intent = result.intent
         resolved = _resolved_worker_handoff_dispatch(result)
         if resolved is not None:
@@ -2425,7 +2426,7 @@ def _dispatch_worker_handoff_locked(
         raise assign_error
 
     result = _observe_worker_handoff_bounded(
-        store, runtime, manifest, key, intent)
+        store, runtime, code_host, manifest, key, intent)
     intent = result.intent
     resolved = _resolved_worker_handoff_dispatch(result)
     if resolved is not None:
@@ -2441,7 +2442,7 @@ def _dispatch_worker_handoff_locked(
         runtime.wake(item_id, intent.target_worker, "worker")
     except PlatformError as wake_error:
         result = _observe_worker_handoff_bounded(
-            store, runtime, manifest, key, intent)
+            store, runtime, code_host, manifest, key, intent)
         intent = result.intent
         resolved = _resolved_worker_handoff_dispatch(result)
         if resolved is not None:
@@ -2449,7 +2450,7 @@ def _dispatch_worker_handoff_locked(
         raise wake_error
 
     result = _observe_worker_handoff_bounded(
-        store, runtime, manifest, key, intent)
+        store, runtime, code_host, manifest, key, intent)
     resolved = _resolved_worker_handoff_dispatch(result)
     if resolved is not None:
         return resolved
@@ -2532,7 +2533,7 @@ def _apply_observed_handoff_preparation_write(
 def _observe_worker_handoff_bounded(
     store: WorkItemStore,
     runtime: AgentRuntime,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     key: str,
     intent: WorkerHandoffIntent,
 ) -> _WorkerHandoffResult:
@@ -2540,7 +2541,7 @@ def _observe_worker_handoff_bounded(
     result = _WorkerHandoffResult("missing", intent)
     for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
         result = _observe_worker_handoff(
-            store, runtime, manifest, key, result.intent)
+            store, runtime, code_host, manifest, key, result.intent)
         if result.state not in {"missing", "pending-submit"}:
             return result
         if attempt + 1 < _HANDOFF_OBSERVATION_ATTEMPTS:
@@ -2549,7 +2550,7 @@ def _observe_worker_handoff_bounded(
 
 
 def _retry_worker_handoff(
-    store, runtime, manifest, key, item, *, consume_business_bounce=True,
+    store, runtime, code_host: CodeHost, manifest, key, item, *, consume_business_bounce=True,
 ):
     with store.worker_control_lock(item.id):
         projection = store.observe_work_item_control(item.id)
@@ -2571,7 +2572,7 @@ def _retry_worker_handoff(
             store.clear_assignment(item.id)
         _mark_recovery_pending(manifest, key)
         store.update_work_item_metadata(item.id, worker_handoff=retry_intent)
-        return _dispatch_worker_handoff(store, runtime, manifest, key)
+        return _dispatch_worker_handoff(store, runtime, code_host, manifest, key)
 
 
 def _next_worker_handoff_attempt(
@@ -2687,7 +2688,7 @@ def _attachment_is_causal_for_run(observation, run, agent_id: str) -> bool:
     )
 
 
-def _observe_delivery_projection(store: WorkItemStore, item, attachment=None):
+def _observe_delivery_projection(store: WorkItemStore, code_host: CodeHost, item, attachment=None):
     artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
     verification_ref = (
         item.verification_ref if isinstance(item.verification_ref, dict) else {}
@@ -2710,7 +2711,7 @@ def _observe_delivery_projection(store: WorkItemStore, item, attachment=None):
             f"Parsed verification projection does not match downloaded attachment "
             f"for work item {item.id}")
 
-    readiness = store.read_pull_request_readiness(pr_url)
+    readiness = code_host.read_pull_request_readiness(pr_url)
     if isinstance(readiness, PullRequestReadinessFailure):
         raise PlatformError(
             f"Remote PR HEAD observation failed for {pr_url}: {readiness.detail}")
@@ -2725,7 +2726,7 @@ def _observe_delivery_projection(store: WorkItemStore, item, attachment=None):
 
 def _seal_worker_delivery(
     store: WorkItemStore,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     key: str,
     current,
     intent: WorkerHandoffIntent,
@@ -2734,7 +2735,7 @@ def _seal_worker_delivery(
     attachment=None,
 ) -> DeliveryIdentity:
     attachment, pr_url, remote_head = _observe_delivery_projection(
-        store, current, attachment)
+        store, code_host, current, attachment)
     if (
         intent.baseline_verification_attachment_id
         and attachment.attachment_id
@@ -2767,7 +2768,7 @@ def _seal_worker_delivery(
 
 
 def _validate_controller_sealed_delivery(
-    store: WorkItemStore, item,
+    store: WorkItemStore, code_host: CodeHost, item,
 ) -> None:
     identity = _delivery_identity(item)
     if identity is None:
@@ -2775,7 +2776,7 @@ def _validate_controller_sealed_delivery(
     if not identity.is_complete():
         raise PlatformError(
             f"Controller-sealed delivery identity is incomplete for work item {item.id}")
-    attachment, pr_url, remote_head = _observe_delivery_projection(store, item)
+    attachment, pr_url, remote_head = _observe_delivery_projection(store, code_host, item)
     if (
         identity.pr_url != pr_url
         or identity.pr_head_sha != remote_head
@@ -2958,7 +2959,7 @@ def _finalize_worker_handoff_or_defer(
 def _recover_late_worker_delivery(
     store: WorkItemStore,
     runtime: AgentRuntime,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     key: str,
     node,
     result: _WorkerHandoffResult,
@@ -2983,7 +2984,7 @@ def _recover_late_worker_delivery(
     if current.worker_handoff.generation != result.intent.generation:
         return None
     observed = _observe_worker_handoff(
-        store, runtime, manifest, key, current.worker_handoff,
+        store, runtime, code_host, manifest, key, current.worker_handoff,
         projection=projection,
     )
     if observed.state != "complete":
@@ -2994,7 +2995,7 @@ def _recover_late_worker_delivery(
 def _observe_worker_handoff(
     store: WorkItemStore,
     runtime: AgentRuntime,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     key: str,
     intent: WorkerHandoffIntent,
     *,
@@ -3062,7 +3063,7 @@ def _observe_worker_handoff(
         current = projection.work_item
         sealed = _seal_worker_delivery(
             store,
-            manifest,
+            code_host, manifest,
             key,
             current,
             intent,
@@ -3163,12 +3164,12 @@ def _legacy_delivery_requires_retry(manifest, key, node, item) -> bool:
 
 
 def _complete_merge_if_confirmed(
-    store: WorkItemStore, runtime: AgentRuntime, manifest: Manifest, key: str,
+    store: WorkItemStore, runtime: AgentRuntime, code_host: CodeHost, manifest: Manifest, key: str,
     retry_limits: dict, config: dict, manifest_path: str,
 ) -> str:
     node = manifest.nodes[key]
     item = store.get_work_item(node.work_item_id)
-    _validate_controller_sealed_delivery(store, item)
+    _validate_controller_sealed_delivery(store, code_host, item)
     recovering_merge_handoff = (
         merge_bounce_attempt(node.merge_request_state) is not None
         and item.phase == TaskPhase.AUTHORING
@@ -3184,7 +3185,7 @@ def _complete_merge_if_confirmed(
         )
     ):
         _dispatch_reviewer_for_current_subject(
-            store, runtime, manifest, key)
+            store, runtime, code_host, manifest, key)
         if manifest.nodes[key].status == "blocked":
             save_manifest(manifest, manifest_path)
             return "blocked"
@@ -3192,7 +3193,7 @@ def _complete_merge_if_confirmed(
         save_manifest(manifest, manifest_path)
         return "review"
     action = run_merge_delivery(
-        config, manifest, key, store, runtime, retry_limits, manifest_path)
+        config, manifest, key, store, runtime, code_host, retry_limits, manifest_path)
     if action == "pass":
         store.update_status(node.work_item_id, WorkItemStatus.DONE)
         set_node(manifest, key, status="done")
@@ -3299,7 +3300,7 @@ def _clear_recovery_pending(manifest: Manifest, key: str, item) -> None:
 
 def reconcile_with_observations(
     store: WorkItemStore,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     manifest_path: str,
     max_parallel: int = 4,
     *,
@@ -3322,7 +3323,7 @@ def reconcile_with_observations(
     ensure_amendment_apply_complete(manifest, manifest_path)
     manifest._recovery_manifest_path = manifest_path
     reconcile_inputs = _observe_reconcile_inputs(
-        store, manifest, max_parallel=max_parallel, full_scan=full_scan)
+        store, code_host, manifest, max_parallel=max_parallel, full_scan=full_scan)
     observations = reconcile_inputs.observations
     pull_requests = reconcile_inputs.pull_requests
     candidate = copy.deepcopy(manifest)
@@ -3352,7 +3353,7 @@ def reconcile_with_observations(
 
 def reconcile(
     store: WorkItemStore,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     manifest_path: str,
     max_parallel: int = 4,
     *,
@@ -3360,7 +3361,7 @@ def reconcile(
 ) -> bool:
     """Compatibility entry point returning only whether manifest state changed."""
     return reconcile_with_observations(
-        store, manifest, manifest_path, max_parallel=max_parallel,
+        store, code_host, manifest, manifest_path, max_parallel=max_parallel,
         full_scan=full_scan).changed
 
 
@@ -3560,7 +3561,7 @@ def _reconcile_candidate(
 def collect_results(
     store: WorkItemStore,
     runtime: AgentRuntime,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     manifest_path: str,
     retry_limits: dict | None = None,
     config: dict | None = None,
@@ -3700,7 +3701,7 @@ def collect_results(
                     f"Worker handoff for {node.work_item_id} predates causal "
                     "delivery identity support; refusing to infer completion")
             handoff = _dispatch_worker_handoff(
-                store, runtime, manifest, key,
+                store, runtime, code_host, manifest, key,
                 projection=projection)
             if handoff.state == "needs-decision":
                 set_node(manifest, key, status="blocked")
@@ -3741,7 +3742,7 @@ def collect_results(
                     _TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS
                     * failure.consecutive_runs)
                 handoff = _retry_worker_handoff(
-                    store, runtime, manifest, key, item, consume_business_bounce=False)
+                    store, runtime, code_host, manifest, key, item, consume_business_bounce=False)
                 if handoff.state == "needs-decision":
                     set_node(manifest, key, status="blocked")
                     failures[key] = "worker-decision-required"
@@ -3799,7 +3800,7 @@ def collect_results(
                     continue
                 store.reset_review(node.work_item_id)
                 _dispatch_reviewer_for_current_subject(
-                    store, runtime, manifest, key)
+                    store, runtime, code_host, manifest, key)
                 if manifest.nodes[key].status == "blocked":
                     failures[key] = ui(
                         "Reviewer dispatch is blocked by the existing decision.",
@@ -3878,7 +3879,7 @@ def collect_results(
                 limit_exhausted = worker_limit == 0 or consumed >= worker_limit
                 late_delivery = (
                     _recover_late_worker_delivery(
-                        store, runtime, manifest, key, node, handoff)
+                        store, runtime, code_host, manifest, key, node, handoff)
                     if limit_exhausted else None
                 )
                 if late_delivery is not None:
@@ -3904,7 +3905,7 @@ def collect_results(
                 else:
                     try:
                         handoff = _retry_worker_handoff(
-                            store, runtime, manifest, key, item)
+                            store, runtime, code_host, manifest, key, item)
                         if handoff.state == "needs-decision":
                             set_node(manifest, key, status="blocked")
                             failures[key] = "worker-decision-required"
@@ -3984,7 +3985,7 @@ def collect_results(
                 # advance_delivery 已处理节点状态与平台状态切换;返回 'pass' 继续,
                 # 'bounce' 已转回 worker(本 tick 不再推进), 'blocked' 则阻止后续。
                 ci_action = advance_delivery(
-                    config or {}, manifest, key, store, runtime, limits,
+                    config or {}, manifest, key, store, runtime, code_host, limits,
                     project_root=_project_root_from_manifest_path(manifest_path))
                 if ci_action == "bounce":
                     failures[key] = ui(
@@ -4004,7 +4005,7 @@ def collect_results(
                 # 只有绑定当前 worker delivery subject 的通过结论才能进入 merge。
                 if _current_delivery_passed_review(item):
                     merge_action = _complete_merge_if_confirmed(
-                        store, runtime, manifest, key, limits, config or {}, manifest_path)
+                        store, runtime, code_host, manifest, key, limits, config or {}, manifest_path)
                     if merge_action == "pass":
                         store.reset_review(node.work_item_id)
                     elif merge_action == "blocked":
@@ -4018,7 +4019,7 @@ def collect_results(
                     pending_review.append((key, node.work_item_id, node.reviewer))
                 else:
                     merge_action = _complete_merge_if_confirmed(
-                        store, runtime, manifest, key, limits, config or {}, manifest_path)
+                        store, runtime, code_host, manifest, key, limits, config or {}, manifest_path)
                     if merge_action == "blocked":
                         failures[key] = ui(
                             "Merge outcome cannot be confirmed.",
@@ -4331,7 +4332,7 @@ def collect_results(
             if not gate_errors and verdict != "reject":
                 # reviewer pass → P4.2 自动 merge 门。命令与远端观察均由引擎适配器执行。
                 merge_action = _complete_merge_if_confirmed(
-                    store, runtime, manifest, key, limits, config or {}, manifest_path)
+                    store, runtime, code_host, manifest, key, limits, config or {}, manifest_path)
                 if merge_action == "blocked":
                     failures[key] = ui(
                         "Merge failed and retry.merge is exhausted.",
@@ -4358,7 +4359,7 @@ def collect_results(
                     # 有界「回到 worker」由持久化 intent 串起各 checkpoint；
                     # 任一步结果未知都保留 intent 与绝对 bounce，交给 restart 幂等续跑。
                     handoff = _dispatch_worker_handoff(
-                        store, runtime, manifest, key,
+                        store, runtime, code_host, manifest, key,
                         review_bounce=rework_budget.next_round,
                         gate="review",
                         projection=projection,
@@ -4374,7 +4375,7 @@ def collect_results(
 
         elif node.status == "merging":
             merge_action = _complete_merge_if_confirmed(
-                store, runtime, manifest, key, limits,
+                store, runtime, code_host, manifest, key, limits,
                 config or {}, manifest_path)
             if merge_action == "blocked":
                 failures[key] = ui(
@@ -4388,7 +4389,7 @@ def collect_results(
     for key, item_id, reviewer in pending_review:
         try:
             dispatched = _dispatch_reviewer_for_current_subject(
-                store, runtime, manifest, key)
+                store, runtime, code_host, manifest, key)
             if manifest.nodes[key].status == "blocked":
                 failures[key] = ui(
                     "Reviewer dispatch is blocked by the existing decision.",
@@ -4511,7 +4512,7 @@ def _develop_issue_body_metadata(
 def _dispatch(
     store: WorkItemStore,
     runtime: AgentRuntime,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     manifest_path: str,
     ready: List[str],
     max_parallel: int,
@@ -4563,7 +4564,7 @@ def _dispatch(
             handoff = _dispatch_worker_handoff(
                 store,
                 runtime,
-                manifest,
+                code_host, manifest,
                 key,
                 review_bounce=item.bounces.review,
                 gate="explicit-dispatch",
@@ -4842,7 +4843,7 @@ def _restore_active_formal_run_stages(
 def tick(
     store: WorkItemStore,
     runtime: AgentRuntime,
-    manifest: Manifest,
+    code_host: CodeHost, manifest: Manifest,
     manifest_path: str,
     max_parallel: int = 4,
     retry_limits: dict | None = None,
@@ -4865,7 +4866,7 @@ def tick(
 
     # 1. Reconcile: 平台状态同步回 manifest
     reconcile_result = reconcile_with_observations(
-        store, manifest, manifest_path, max_parallel=max_parallel,
+        store, code_host, manifest, manifest_path, max_parallel=max_parallel,
         full_scan=full_scan)
 
     # A graph-level blocked projection must not hide an already-dispatched,
@@ -4881,7 +4882,7 @@ def tick(
         for key, (projection, resolution) in convergence_blocks.items()
     }
     new_failures.update(collect_results(
-        store, runtime, manifest, manifest_path,
+        store, runtime, code_host, manifest, manifest_path,
         retry_limits=retry_limits, config=config,
         observations=reconcile_result.observations,
     ))
@@ -4905,7 +4906,7 @@ def tick(
     ready = graph.ready_nodes(snapshot)
 
     # 5. DISPATCH: 派发就绪节点(受 max_parallel 约束)
-    dispatched = _dispatch(store, runtime, manifest, manifest_path, ready, max_parallel)
+    dispatched = _dispatch(store, runtime, code_host, manifest, manifest_path, ready, max_parallel)
 
     # 6. 构建 TickResult
     done = [k for k, n in manifest.nodes.items() if n.status == "done"]

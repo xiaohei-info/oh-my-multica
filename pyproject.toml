@@ -89,5 +89,5 @@ id = "adapters-via-factory"
 name = "Concrete engine adapters are assembled only by the omac.engines factory"
 type = "forbidden"
 source_modules = ["omac.web", "omac.cli", "omac.pipeline", "omac.core"]
-forbidden_modules = ["omac.engines.multica", "omac.engines.mock"]
+forbidden_modules = ["omac.engines.multica", "omac.engines.mock", "omac.engines.github"]
 allow_indirect_imports = true

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from ..core.manifest import Manifest
 from ..core.workitem import WorkItemPayload
+from ..engines.codehost import CodeHost
 from ..engines.store import WorkItemStore
 from ..core import graph
 
@@ -290,6 +291,7 @@ def build_manifest_status_report(
 def build_status_report(
     manifest: Manifest,
     store: WorkItemStore,
+    code_host: CodeHost,
     manifest_path: str,
 ) -> dict:
     """reconcile + 快照 → 结构化报告 dict(schema 由 *_KEYS 常量锁定)。
@@ -302,7 +304,7 @@ def build_status_report(
     # ``dag status`` is the user-facing platform inspection command. It must
     # not inherit the normal tick/run active-set scope.
     result = reconcile_with_observations(
-        store, manifest, manifest_path, full_scan=True)
+        store, code_host, manifest, manifest_path, full_scan=True)
     items, deferred_payloads = _observations_to_items_and_payloads(
         result.observations)
 

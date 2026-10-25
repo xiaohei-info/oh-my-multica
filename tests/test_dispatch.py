@@ -615,7 +615,7 @@ class TestDispatchLoopIntegration:
                      reviewer="bob", contract=_full_contract()),
         })
         path = _tmp_manifest_path(manifest)
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
         assert item.id in item.description
         assert f"omac work show {item.id} --output json" in item.description
@@ -633,7 +633,7 @@ class TestDispatchLoopIntegration:
         })
         path = _tmp_manifest_path(manifest)
 
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         item_id = manifest.nodes["a"].work_item_id
         first_body = eng.store.get_work_item(item_id).description
         assert "package.json" not in first_body
@@ -649,7 +649,7 @@ class TestDispatchLoopIntegration:
         eng.store.clear_assignment(item_id)
         eng.store.update_work_item_metadata(item_id, worker_handoff={})
         eng.store.update_status(item_id, WorkItemStatus.BLOCKED)
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         refreshed = eng.store.get_work_item(item_id)
         assert manifest.nodes["a"].work_item_id == item_id
@@ -670,10 +670,10 @@ class TestDispatchLoopIntegration:
                      contract=_full_contract()),
         })
         path = _tmp_manifest_path(manifest)
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         item_id = manifest.nodes["a"].work_item_id
         eng.store.update_status(item_id, WorkItemStatus.DONE)
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         assert eng.store.get_work_item(item_id).status == WorkItemStatus.IN_REVIEW
         assert eng.store.get_work_item(item_id).reviewer == "bob"
         comments = eng.store.get_comments(item_id)
@@ -702,7 +702,7 @@ class TestDispatchLoopIntegration:
         path = _tmp_manifest_path(manifest)
 
         # 1) 派发 → 工单进入 in_progress,body 含真实 id
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         item_id = manifest.nodes["a"].work_item_id
         item = eng.store.get_work_item(item_id)
         assert item.status == WorkItemStatus.IN_PROGRESS
@@ -740,7 +740,7 @@ class TestDispatchLoopIntegration:
             verification_source=yaml.safe_dump(verification),
         )
         eng.store.update_status(item_id, WorkItemStatus.DONE)
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         assert eng.store.get_work_item(item_id).status == WorkItemStatus.IN_REVIEW
 
         # reviewer 接手靠 assign + metadata,正常路径不发阶段变更评论。
@@ -778,7 +778,7 @@ class TestDispatchLoopIntegration:
                 "nits": [],
             }),
         )
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         item = eng.store.get_work_item(item_id)
         assert item.status == WorkItemStatus.DONE

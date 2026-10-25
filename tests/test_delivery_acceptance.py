@@ -5,6 +5,7 @@
   - 增量并入:原 done 节点复用、新节点正确依赖、manifest 落盘可续跑
   - max_rounds 耗尽路径 exit 20
 """
+from omac.engines.mock import MockCodeHost
 import os
 import yaml
 
@@ -496,7 +497,7 @@ def test_decompose_submit_real_path(tmp_path):
 
     # 直接在真实 store 上调 dispatch.submit(manifest_file=..., base_manifest=existing)
     result = dispatch_mod.submit(
-        store, item.id, manifest_file=mpath,
+        store, item.id, code_host=MockCodeHost(), manifest_file=mpath,
         agent_pool={"alice", "bob"}, base_manifest=existing,
     )
     assert result.kind == TaskKind.DECOMPOSE
@@ -521,7 +522,7 @@ def test_decompose_submit_rejects_unknown_blocked_by(tmp_path):
 
     with pytest.raises(Exception):
         dispatch_mod.submit(
-            store, item.id, manifest_file=mpath,
+            store, item.id, code_host=MockCodeHost(), manifest_file=mpath,
             agent_pool={"alice"}, base_manifest=None,
         )
     # 失败不应推进状态
@@ -564,7 +565,7 @@ def test_final_acceptance_submit_real_path(tmp_path):
         _json.dump(results, f)
 
     result = dispatch_mod.submit(
-        store, item.id, acceptance_results_file=rpath,
+        store, item.id, code_host=MockCodeHost(), acceptance_results_file=rpath,
     )
     assert result.kind == TaskKind.FINAL_ACCEPTANCE
     assert result.advanced_to == _WIS.DONE
@@ -596,5 +597,5 @@ def test_final_acceptance_submit_requires_contract(tmp_path):
         _json.dump(results, f)
 
     with pytest.raises(Exception) as exc:
-        dispatch_mod.submit(store, item.id, acceptance_results_file=rpath)
+        dispatch_mod.submit(store, item.id, code_host=MockCodeHost(), acceptance_results_file=rpath)
     assert "acceptance_doc" in str(exc.value)

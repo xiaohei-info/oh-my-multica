@@ -8,6 +8,7 @@
 - 不存在任何自动重试路径(blocked 节点在后续 tick 保持 blocked)
 """
 from copy import deepcopy
+from omac.engines.mock import MockCodeHost
 import os
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -178,7 +179,7 @@ def test_incomplete_full_scan_cannot_report_converged(
     )
 
     result = tick(
-        store, MockRuntime(store), manifest, path, full_scan=True,
+        store, MockRuntime(store), MockCodeHost(), manifest, path, full_scan=True,
     )
 
     assert result.state == "running"
@@ -454,7 +455,7 @@ def _loop_to_settle(store, runtime, manifest, path, max_rounds=50, max_parallel=
     """反复调 tick 直到非 running,返回最终 TickResult。"""
     result = None
     for _ in range(max_rounds):
-        result = tick(store, runtime, manifest, path, max_parallel=max_parallel)
+        result = tick(store, runtime, MockCodeHost(), manifest, path, max_parallel=max_parallel)
         if result.state != "running":
             break
     assert result is not None, "never ran a tick"
@@ -520,7 +521,7 @@ def test_pending_legacy_review_handoff_is_blocked_before_assign_or_wake(
         )
 
     result = loop._dispatch_worker_handoff(
-        engine.store, engine.runtime, manifest, node.id,
+        engine.store, engine.runtime, engine.code_host, manifest, node.id,
     )
 
     assert result.state == "needs-decision"
@@ -556,9 +557,9 @@ def test_runner_persists_legacy_convergence_decision_once_without_dispatch(
         lambda *_args, **_kwargs: pytest.fail("legacy decision must not wake"),
     )
 
-    first = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    first = tick(engine.store, engine.runtime, engine.code_host, manifest, path, max_parallel=1)
     persisted = engine.store.get_work_item(item.id).decision_required
-    second = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    second = tick(engine.store, engine.runtime, engine.code_host, manifest, path, max_parallel=1)
 
     from types import SimpleNamespace
     from omac.cli.commands import dag as dag_cmd
@@ -597,7 +598,7 @@ def _legacy_delivery(tmp_path):
     path = str(tmp_path / "demo-project.yaml")
     save_manifest(manifest, path)
 
-    tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    tick(engine.store, engine.runtime, engine.code_host, manifest, path, max_parallel=1)
     item = engine.store.get_work_item(node.work_item_id)
     engine.store.set_node_contract(item.id, contract)
     verification = {
@@ -653,7 +654,7 @@ def test_legacy_delivery_requires_explicit_node_retry(
     )
 
     result = tick(
-        engine.store, engine.runtime, manifest, path, max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, max_parallel=1)
 
     current = engine.store.get_work_item(item.id)
     retry = f"omac node retry {path} {node.id}"
@@ -693,7 +694,7 @@ def test_legacy_detection_waits_for_active_direct_run_without_writes(
     )
 
     result = tick(
-        engine.store, engine.runtime, manifest, path, max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, max_parallel=1)
 
     assert result.state == "running"
     assert result.failed == []
@@ -722,7 +723,7 @@ def test_legacy_detection_propagates_run_observation_failure(
     )
 
     with pytest.raises(PlatformError, match="runs unavailable"):
-        tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+        tick(engine.store, engine.runtime, engine.code_host, manifest, path, max_parallel=1)
 
     assert engine.store.get_work_item(item.id).decision_required is None
 
@@ -745,7 +746,7 @@ def test_legacy_decision_restart_does_not_duplicate_comment_or_dispatch(
 
     monkeypatch.setattr(loop, "save_manifest", crash_before_manifest_save)
     with pytest.raises(RuntimeError, match="legacy decision manifest save"):
-        tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+        tick(engine.store, engine.runtime, engine.code_host, manifest, path, max_parallel=1)
 
     assert len(engine.store.get_comments(item.id)) == 1
     assert engine.store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
@@ -771,7 +772,7 @@ def test_legacy_decision_restart_does_not_duplicate_comment_or_dispatch(
 
     restarted = load_manifest(path)
     result = tick(
-        engine.store, engine.runtime, restarted, path, max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, restarted, path, max_parallel=1)
 
     assert result.state == "needs_decision"
     assert restarted.nodes[node.id].status == "blocked"
@@ -830,7 +831,7 @@ def test_handoff_preparation_timeout_after_apply_observes_and_dispatches(
     )
 
     dispatched = loop._dispatch(
-        engine.store, engine.runtime, manifest, path, [node.id], 1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, [node.id], 1)
 
     current = engine.store.get_work_item(item.id)
     assert dispatched == [node.id]
@@ -868,7 +869,7 @@ def test_handoff_intent_timeout_after_apply_confirms_same_generation(
         engine.store, "is_transient_transport_error", lambda _error: True)
 
     dispatched = loop._dispatch(
-        engine.store, engine.runtime, manifest, path, [node.id], 1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, [node.id], 1)
 
     current = engine.store.get_work_item(item.id)
     assert dispatched == [node.id]
@@ -902,7 +903,7 @@ def test_handoff_intent_timeout_before_apply_keeps_manifest_retryable(
         engine.store, "is_transient_transport_error", lambda _error: True)
 
     first = loop._dispatch(
-        engine.store, engine.runtime, manifest, path, [node.id], 1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, [node.id], 1)
 
     interrupted = engine.store.get_work_item(item.id)
     assert first == []
@@ -916,7 +917,7 @@ def test_handoff_intent_timeout_before_apply_keeps_manifest_retryable(
         engine.store, "update_work_item_metadata", original_update)
     restarted = load_manifest(path)
     result = tick(
-        engine.store, engine.runtime, restarted, path, max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, restarted, path, max_parallel=1)
 
     recovered = engine.store.get_work_item(item.id)
     assert result.state == "running"
@@ -959,7 +960,7 @@ def test_handoff_intent_read_failure_keeps_todo_and_reuses_persisted_intent(
     monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
 
     first = loop._dispatch(
-        engine.store, engine.runtime, manifest, path, [node.id], 1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, [node.id], 1)
 
     assert first == []
     assert manifest.nodes[node.id].status == "todo"
@@ -975,7 +976,7 @@ def test_handoff_intent_read_failure_keeps_todo_and_reuses_persisted_intent(
 
     restarted = load_manifest(path)
     result = tick(
-        engine.store, engine.runtime, restarted, path, max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, restarted, path, max_parallel=1)
 
     recovered = engine.store.get_work_item(item.id)
     assert result.state == "running"
@@ -1008,7 +1009,7 @@ def test_handoff_preparation_timeout_before_apply_stays_pending_and_restarts(
     )
 
     first = loop._dispatch(
-        engine.store, engine.runtime, manifest, path, [node.id], 1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, [node.id], 1)
 
     interrupted = engine.store.get_work_item(item.id)
     assert first == []
@@ -1023,9 +1024,9 @@ def test_handoff_preparation_timeout_before_apply_stays_pending_and_restarts(
     monkeypatch.setattr(engine.store, "reset_review", original_reset)
     restarted = load_manifest(path)
     second = tick(
-        engine.store, engine.runtime, restarted, path, max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, restarted, path, max_parallel=1)
     third = tick(
-        engine.store, engine.runtime, restarted, path, max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, restarted, path, max_parallel=1)
 
     recovered = engine.store.get_work_item(item.id)
     assert second.state == "running"
@@ -1058,7 +1059,7 @@ def test_handoff_preparation_hard_error_still_blocks(tmp_path, monkeypatch):
     )
 
     dispatched = loop._dispatch(
-        engine.store, engine.runtime, manifest, path, [node.id], 1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, [node.id], 1)
 
     current = engine.store.get_work_item(item.id)
     assert dispatched == []
@@ -1098,7 +1099,7 @@ def test_handoff_successful_write_observes_stale_projection_until_converged(
     monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
 
     dispatched = loop._dispatch(
-        engine.store, engine.runtime, manifest, path, [node.id], 1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, [node.id], 1)
 
     assert dispatched == [node.id]
     assert stale_reads == 2
@@ -1132,7 +1133,7 @@ def test_handoff_successful_write_stays_pending_when_projection_never_converges(
     monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
 
     first = loop._dispatch(
-        engine.store, engine.runtime, manifest, path, [node.id], 1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, [node.id], 1)
 
     assert first == []
     assert manifest.nodes[node.id].status == "in_progress"
@@ -1142,7 +1143,7 @@ def test_handoff_successful_write_stays_pending_when_projection_never_converges(
     monkeypatch.setattr(engine.store, "observe_work_item_control", original_observe)
     restarted = load_manifest(path)
     result = tick(
-        engine.store, engine.runtime, restarted, path, max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, restarted, path, max_parallel=1)
 
     assert result.state == "running"
     assert len(engine.runtime.list_runs(item.id)) == 1
@@ -1183,7 +1184,7 @@ def test_handoff_body_partial_apply_stays_pending_and_restarts(
     monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
 
     first = loop._dispatch(
-        engine.store, engine.runtime, manifest, path, [node.id], 1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, [node.id], 1)
 
     interrupted = engine.store.get_work_item(item.id)
     stale_source_refs = list(interrupted.source_refs)
@@ -1200,7 +1201,7 @@ def test_handoff_body_partial_apply_stays_pending_and_restarts(
         engine.store, "update_work_item_metadata", original_update)
     restarted = load_manifest(path)
     result = tick(
-        engine.store, engine.runtime, restarted, path, max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, restarted, path, max_parallel=1)
 
     assert result.state == "running"
     recovered = engine.store.get_work_item(item.id)
@@ -1235,7 +1236,7 @@ def test_handoff_body_timeout_after_full_apply_observes_and_dispatches(
         engine.store, "is_transient_transport_error", lambda _error: True)
 
     dispatched = loop._dispatch(
-        engine.store, engine.runtime, manifest, path, [node.id], 1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, [node.id], 1)
 
     current = engine.store.get_work_item(item.id)
     assert dispatched == [node.id]
@@ -1278,7 +1279,7 @@ def test_handoff_body_read_failure_stays_pending_and_restarts(
     monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
 
     first = loop._dispatch(
-        engine.store, engine.runtime, manifest, path, [node.id], 1)
+        engine.store, engine.runtime, engine.code_host, manifest, path, [node.id], 1)
 
     assert first == []
     assert manifest.nodes[node.id].status == "in_progress"
@@ -1290,7 +1291,7 @@ def test_handoff_body_read_failure_stays_pending_and_restarts(
         engine.store, "update_work_item_metadata", original_update)
     restarted = load_manifest(path)
     result = tick(
-        engine.store, engine.runtime, restarted, path, max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, restarted, path, max_parallel=1)
 
     assert result.state == "running"
     assert len(engine.runtime.list_runs(item.id)) == 1
@@ -1343,7 +1344,7 @@ class TestHappyPath:
         path = _tmp_manifest_path(manifest)
         eng = _engine()
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         assert result.state == "running"
         assert sorted(result.dispatched) == ["a", "b", "c"]
@@ -1364,7 +1365,7 @@ class TestHappyPath:
         path = _tmp_manifest_path(manifest)
         eng = _engine()
 
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
 
         assert item.source_refs == [
@@ -1410,7 +1411,7 @@ class TestHappyPath:
             "source_issues": ["plan-1", "acc-1", "dec-1"],
         })
         path = _tmp_manifest_path(manifest)
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         item = eng.store.get_work_item(manifest.nodes["feature"].work_item_id)
 
         assert item.source_refs[-2:] == [
@@ -1542,7 +1543,7 @@ class TestHappyPath:
                 "assignment-created Run must not also be woken"),
         )
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         current = eng.store.get_work_item(reused.id)
         summary = build_show_output(current, "worker:alice")
@@ -1618,7 +1619,7 @@ class TestHappyPath:
         monkeypatch.setattr(loop, "_HANDOFF_OBSERVATION_INTERVAL", 0)
 
         with pytest.raises(RuntimeError, match="crash before first wake"):
-            tick(eng.store, runtime, manifest, path, max_parallel=1)
+            tick(eng.store, runtime, eng.code_host, manifest, path, max_parallel=1)
 
         interrupted = eng.store.get_work_item(item.id)
         assert interrupted.status is WorkItemStatus.IN_PROGRESS
@@ -1631,7 +1632,7 @@ class TestHappyPath:
         runtime.crash_before_wake = False
         restarted = load_manifest(path)
         recovered = tick(
-            eng.store, runtime, restarted, path, max_parallel=1)
+            eng.store, runtime, eng.code_host, restarted, path, max_parallel=1)
 
         current = eng.store.get_work_item(item.id)
         assert recovered.state == "running"
@@ -1641,7 +1642,7 @@ class TestHappyPath:
         assert current.worker_handoff.target_run_id == "run-explicit-retry"
         assert len(runtime.runs) == 2
 
-        tick(eng.store, runtime, restarted, path, max_parallel=1)
+        tick(eng.store, runtime, eng.code_host, restarted, path, max_parallel=1)
         assert len(runtime.runs) == 2
         assert runtime.wake_calls == 2
 
@@ -1655,7 +1656,7 @@ class TestHappyPath:
         path = _tmp_manifest_path(manifest)
         eng = _engine(MOCK_AUTO_COMPLETE="false")
 
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         item = eng.store.get_work_item(
             manifest.nodes["foundation-contract-skeleton"].work_item_id)
 
@@ -1670,7 +1671,7 @@ class TestHappyPath:
         path = _tmp_manifest_path(manifest)
         eng = _engine()
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
 
         assert len(result.dispatched) == 1
         assert len(result.running) == 1
@@ -1682,7 +1683,7 @@ class TestHappyPath:
         path = _tmp_manifest_path(manifest)
         eng = _engine(MOCK_AUTO_COMPLETE="false")
 
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
         item_id = manifest.nodes["a"].work_item_id
 
         class RecordingRuntime(MockRuntime):
@@ -1695,7 +1696,7 @@ class TestHappyPath:
                 super().wake(item_id, agent, role)
 
         runtime = RecordingRuntime(eng.store)
-        result = tick(eng.store, runtime, manifest, path, max_parallel=1)
+        result = tick(eng.store, runtime, eng.code_host, manifest, path, max_parallel=1)
 
         assert result.state == "running"
         assert runtime.calls == []
@@ -1706,7 +1707,7 @@ class TestHappyPath:
         manifest = _manifest([_node("a")])
         path = _tmp_manifest_path(manifest)
         eng = _engine(MOCK_AUTO_COMPLETE="false")
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
         body_updates = 0
         original_update = eng.store.update_work_item_metadata
 
@@ -1718,8 +1719,8 @@ class TestHappyPath:
 
         monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
 
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
 
         assert body_updates == 0
 
@@ -1758,7 +1759,7 @@ class TestHappyPath:
         monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
         monkeypatch.setattr(eng.runtime, "wake", wake)
 
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
 
         assert body_updates == 1
         assert wake_calls == 1
@@ -1817,7 +1818,7 @@ class TestHappyPath:
         )
 
         result = loop._dispatch_worker_handoff(
-            eng.store, eng.runtime, manifest, "a")
+            eng.store, eng.runtime, eng.code_host, manifest, "a")
 
         assert result.state == "waiting"
         assert body_updates == 0
@@ -1837,7 +1838,7 @@ class TestHappyPath:
         path = _tmp_manifest_path(manifest)
         eng = _engine(MOCK_AUTO_COMPLETE="false")
 
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
         item_id = manifest.nodes["a"].work_item_id
         item = eng.store.get_work_item(item_id)
         item.phase = TaskPhase.AUTHORING
@@ -1859,7 +1860,7 @@ class TestHappyPath:
         runtime = RecordingRuntime(eng.store)
 
         failures = loop.collect_results(
-            eng.store, runtime, manifest, path)
+            eng.store, runtime, eng.code_host, manifest, path)
 
         assert failures == {}
         assert manifest.nodes["a"].status == manifest_status
@@ -1873,13 +1874,13 @@ class TestHappyPath:
         path = _tmp_manifest_path(manifest)
         eng = _engine(MOCK_AUTO_COMPLETE="false")
 
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
         item_id = manifest.nodes["a"].work_item_id
         eng.store.update_work_item_metadata(item_id, worker_handoff={})
         eng.store.get_work_item(item_id).agent_run_finished_without_submit = True
         assignments_before = len(eng.store.assign_log)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
         item = eng.store.get_work_item(item_id)
 
         assert item.status == WorkItemStatus.BLOCKED
@@ -1897,13 +1898,13 @@ class TestHappyPath:
         path = _tmp_manifest_path(manifest)
         eng = _engine(MOCK_AUTO_COMPLETE="false")
 
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
         item_id = manifest.nodes["a"].work_item_id
         eng.store.update_work_item_metadata(item_id, worker_handoff={})
         eng.store.get_work_item(item_id).agent_run_finished_without_submit = True
 
         result = tick(
-            eng.store, eng.runtime, manifest, path,
+            eng.store, eng.runtime, eng.code_host, manifest, path,
             max_parallel=1, retry_limits={"worker": 0},
         )
 
@@ -1917,7 +1918,7 @@ def _transient_worker_handoff_fixture(tmp_path):
     manifest = _manifest([_node("a", reviewer="bob", contract=_contract())])
     path = str(tmp_path / "dag.yaml")
     save_manifest(manifest, path)
-    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
     item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
     preserved_verification = {"marker": "preserve-existing-delivery"}
     eng.store.update_work_item_metadata(
@@ -2157,7 +2158,7 @@ def test_worker_codex_status_wrapper_reruns_without_consuming_business_bounce(
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
     failures = loop.collect_results(
-        eng.store, eng.runtime, manifest, path,
+        eng.store, eng.runtime, eng.code_host, manifest, path,
         retry_limits={"worker": 1, "review": 1},
     )
 
@@ -2183,7 +2184,7 @@ def test_initial_worker_capacity_failure_uses_causal_handoff_and_restarts_once(
     path = str(tmp_path / "dag.yaml")
     save_manifest(manifest, path)
 
-    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
     item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
     intent = item.worker_handoff
     assert intent is not None
@@ -2214,10 +2215,10 @@ def test_initial_worker_capacity_failure_uses_causal_handoff_and_restarts_once(
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
-    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path) == {}
     persisted = load_manifest(path)
     assert loop.collect_results(
-        eng.store, eng.runtime, persisted, path) == {}
+        eng.store, eng.runtime, eng.code_host, persisted, path) == {}
 
     recovered = eng.store.get_work_item(item.id)
     assert wake_calls == 1
@@ -2271,10 +2272,10 @@ def test_legacy_initial_worker_capacity_failure_migrates_and_restarts_once(
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
-    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path) == {}
     restarted = load_manifest(path)
     assert loop.collect_results(
-        eng.store, eng.runtime, restarted, path) == {}
+        eng.store, eng.runtime, eng.code_host, restarted, path) == {}
 
     recovered = eng.store.get_work_item(item.id)
     assert wake_calls == 1
@@ -2338,14 +2339,14 @@ def test_legacy_initial_worker_migration_replaces_stale_control_snapshot(
     assert loop.collect_results(
         eng.store,
         eng.runtime,
-        manifest,
+        eng.code_host, manifest,
         path,
         observations={"a": stale},
     ) == {}
     assert loop.collect_results(
         eng.store,
         eng.runtime,
-        manifest,
+        eng.code_host, manifest,
         path,
         observations={
             "a": WorkItemControlProjection(
@@ -2401,7 +2402,7 @@ def test_legacy_initial_worker_active_run_keeps_waiting_without_migration(
     )
 
     assert loop.collect_results(
-        eng.store, eng.runtime, manifest, path) == {}
+        eng.store, eng.runtime, eng.code_host, manifest, path) == {}
 
     current = eng.store.get_work_item(item.id)
     assert current.status is WorkItemStatus.IN_PROGRESS
@@ -2440,7 +2441,7 @@ def test_legacy_initial_worker_without_stable_run_identity_fails_closed(
     ])
 
     failures = loop.collect_results(
-        eng.store, eng.runtime, manifest, path)
+        eng.store, eng.runtime, eng.code_host, manifest, path)
 
     current = eng.store.get_work_item(item.id)
     assert "a" in failures
@@ -2475,7 +2476,7 @@ def test_transient_worker_rerun_response_unknown_observes_created_run(
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
     assert loop.collect_results(
-        eng.store, eng.runtime, manifest, path) == {}
+        eng.store, eng.runtime, eng.code_host, manifest, path) == {}
     assert wake_calls == 1
     assert eng.store.get_work_item(
         item.id).worker_handoff.target_run_id == "run-capacity-retry"
@@ -2502,8 +2503,8 @@ def test_transient_worker_retry_is_restart_safe_and_does_not_duplicate_active_ru
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
-    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
-    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path) == {}
     assert wake_calls == 1
     assert eng.store.get_work_item(item.id).bounces.worker == 0
 
@@ -2540,7 +2541,7 @@ def test_consecutive_transient_worker_failures_stop_at_infrastructure_limit(
         lambda *_args: pytest.fail("exhausted infrastructure retry must not wake"),
     )
 
-    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
     blocked = eng.store.get_work_item(item.id)
 
     assert result.state == "needs_decision"
@@ -2598,7 +2599,7 @@ def test_worker_transient_count_excludes_handoff_baseline_history(
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
-    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path) == {}
 
     recovered = eng.store.get_work_item(item.id)
     assert wake_calls == 1
@@ -2620,7 +2621,7 @@ def _reviewer_runtime_failure_fixture(tmp_path):
     manifest = _manifest([_node("a", reviewer="bob", contract=contract)])
     path = str(tmp_path / "dag.yaml")
     save_manifest(manifest, path)
-    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
     item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
     eng.store.set_node_contract(item.id, manifest.nodes["a"].contract)
     verification = eng.store._mock_verification(item.id)
@@ -2636,7 +2637,7 @@ def _reviewer_runtime_failure_fixture(tmp_path):
     )
     mock_engine._finish_mock_run(item.id)
     eng.store.update_status(item.id, WorkItemStatus.DONE)
-    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
     current = eng.store.get_work_item(item.id)
     reviewer_id = eng.store.resolve_agent_id("bob")
     return eng, manifest, path, current, reviewer_id
@@ -2813,7 +2814,7 @@ def test_runner_clears_delayed_reviewer_decision_before_consuming_verdict(
     )
 
     with pytest.raises(PlatformError, match="decision clear response unknown"):
-        loop.collect_results(eng.store, eng.runtime, manifest, path)
+        loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path)
 
     interrupted = eng.store.get_work_item(item_id)
     assert not interrupted.decision_required
@@ -2827,7 +2828,7 @@ def test_runner_clears_delayed_reviewer_decision_before_consuming_verdict(
     monkeypatch.setattr(eng.store, "assign_work_item", original_assign)
     monkeypatch.setattr(eng.runtime, "wake", original_wake)
 
-    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path) == {}
     recovered = eng.store.get_work_item(item_id)
     assert not recovered.decision_required
     if verdict == "reject":
@@ -2898,7 +2899,7 @@ def test_runner_preserves_invalid_delayed_reviewer_decision(
             "invalid marker must fail before wake"),
     )
 
-    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+    failures = loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path)
 
     blocked = eng.store.get_work_item(item_id)
     assert "a" in failures
@@ -2965,7 +2966,7 @@ def test_runner_preserves_noncanonical_existing_reviewer_decision(
             "noncanonical decision must fail before wake"),
     )
 
-    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+    failures = loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path)
 
     blocked = eng.store.get_work_item(item_id)
     assert "a" in failures
@@ -3031,7 +3032,7 @@ def test_runner_classifies_decision_before_reviewer_no_submit_recovery(
     monkeypatch.setattr(eng.store, "assign_work_item", assign)
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
-    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+    failures = loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path)
 
     blocked = eng.store.get_work_item(item.id)
     assert "a" in failures
@@ -3068,8 +3069,8 @@ def test_reviewer_wrapped_provider_failure_reruns_without_review_bounce(
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
-    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
-    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path) == {}
     retried = eng.store.get_work_item(current.id)
     assert wake_calls == ["reviewer"]
     assert retried.phase is TaskPhase.REVIEW
@@ -3125,10 +3126,10 @@ def test_reviewer_completed_without_verdict_restarts_once_from_runtime_facts(
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
-    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path) == {}
     persisted = load_manifest(path)
     assert loop.collect_results(
-        eng.store, eng.runtime, persisted, path) == {}
+        eng.store, eng.runtime, eng.code_host, persisted, path) == {}
 
     recovered = eng.store.get_work_item(item.id)
     assert wake_calls == 1
@@ -3165,7 +3166,7 @@ def test_reviewer_completed_waits_for_late_verdict_within_grace(
     )
 
     assert loop.collect_results(
-        eng.store, eng.runtime, manifest, path) == {}
+        eng.store, eng.runtime, eng.code_host, manifest, path) == {}
     eng.store.update_work_item_metadata(item.id, review_verdict="pass")
 
     current = eng.store.get_work_item(item.id)
@@ -3202,7 +3203,7 @@ def test_reviewer_history_before_current_subject_is_not_no_submit(
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
     assert loop.collect_results(
-        eng.store, eng.runtime, manifest, path) == {}
+        eng.store, eng.runtime, eng.code_host, manifest, path) == {}
     current = eng.store.get_work_item(item.id)
     assert wake_calls == 0
     assert current.status is WorkItemStatus.IN_REVIEW
@@ -3248,7 +3249,7 @@ def test_late_visible_reviewer_history_before_delivery_cutoff_is_ignored(
     )
 
     assert loop.collect_results(
-        eng.store, eng.runtime, manifest, path) == {}
+        eng.store, eng.runtime, eng.code_host, manifest, path) == {}
 
     current = eng.store.get_work_item(item.id)
     assert current.status is WorkItemStatus.IN_REVIEW
@@ -3304,10 +3305,10 @@ def test_reviewer_no_submit_retry_blocks_when_run_stays_invisible(
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
     failures = loop.collect_results(
-        eng.store, eng.runtime, manifest, path)
+        eng.store, eng.runtime, eng.code_host, manifest, path)
     restarted = load_manifest(path)
     loop.collect_results(
-        eng.store, eng.runtime, restarted, path)
+        eng.store, eng.runtime, eng.code_host, restarted, path)
 
     recovered = eng.store.get_work_item(item.id)
     assert "a" in failures
@@ -3375,7 +3376,7 @@ def test_reviewer_no_submit_retry_crash_after_intent_fails_closed_on_restart(
     monkeypatch.setattr(
         eng.store, "update_work_item_metadata", crash_after_retry_intent)
     with pytest.raises(RuntimeError, match="reviewer retry intent"):
-        loop.collect_results(eng.store, eng.runtime, manifest, path)
+        loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path)
 
     interrupted = eng.store.get_work_item(item.id)
     assert interrupted.reviewer_run_baseline.attempt == 2
@@ -3392,7 +3393,7 @@ def test_reviewer_no_submit_retry_crash_after_intent_fails_closed_on_restart(
     monkeypatch.setattr(eng.runtime, "wake", wake_after_restart)
     restarted = load_manifest(path)
     failures = loop.collect_results(
-        eng.store, eng.runtime, restarted, path)
+        eng.store, eng.runtime, eng.code_host, restarted, path)
 
     recovered = eng.store.get_work_item(item.id)
     assert "a" in failures
@@ -3458,7 +3459,7 @@ def test_legacy_review_projection_uses_delivery_time_not_issue_update_time(
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
     assert loop.collect_results(
-        eng.store, eng.runtime, manifest, path) == {}
+        eng.store, eng.runtime, eng.code_host, manifest, path) == {}
 
     recovered = eng.store.get_work_item(item.id)
     assert wake_calls == 1
@@ -3502,7 +3503,7 @@ def test_legacy_review_projection_without_delivery_time_fails_closed(
     )
 
     failures = loop.collect_results(
-        eng.store, eng.runtime, manifest, path)
+        eng.store, eng.runtime, eng.code_host, manifest, path)
     blocked = eng.store.get_work_item(item.id)
 
     assert "a" in failures
@@ -3569,7 +3570,7 @@ def test_invalid_persisted_reviewer_cutoff_fails_closed_across_collects(
 
     for attempt in range(3):
         failures = loop.collect_results(
-            eng.store, eng.runtime, manifest, path)
+            eng.store, eng.runtime, eng.code_host, manifest, path)
         blocked = eng.store.get_work_item(item.id)
 
         if attempt == 0:
@@ -3602,7 +3603,7 @@ def test_persisted_reviewer_cutoff_accepts_equivalent_instant(tmp_path, monkeypa
     )
 
     assert loop.collect_results(
-        eng.store, eng.runtime, manifest, path) == {}
+        eng.store, eng.runtime, eng.code_host, manifest, path) == {}
     current = eng.store.get_work_item(item.id)
     assert current.status is WorkItemStatus.IN_REVIEW
     assert current.decision_required is None
@@ -3624,7 +3625,7 @@ def test_reviewer_dispatch_rejects_naive_delivery_cutoff(tmp_path):
 
     with pytest.raises(PlatformError, match="verification time"):
         loop._dispatch_reviewer_for_current_subject(
-            eng.store, eng.runtime, manifest, "a")
+            eng.store, eng.runtime, eng.code_host, manifest, "a")
 
 
 def test_pending_review_with_existing_decision_fails_closed(
@@ -3665,7 +3666,7 @@ def test_pending_review_with_existing_decision_fails_closed(
             "existing decision must not wake Reviewer"),
     )
 
-    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+    failures = loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path)
 
     blocked = eng.store.get_work_item(item.id)
     assert "a" in failures
@@ -3710,7 +3711,7 @@ def test_reviewer_dispatch_guard_preserves_existing_decision(
     )
 
     assert loop._dispatch_reviewer_for_current_subject(
-        eng.store, eng.runtime, manifest, "a") is False
+        eng.store, eng.runtime, eng.code_host, manifest, "a") is False
 
     blocked = eng.store.get_work_item(item.id)
     assert manifest.nodes["a"].status == "blocked"
@@ -3761,7 +3762,7 @@ def test_reviewer_dispatch_rechecks_control_before_final_assignment(
     )
 
     assert loop._dispatch_reviewer_for_current_subject(
-        eng.store, eng.runtime, manifest, "a") is False
+        eng.store, eng.runtime, eng.code_host, manifest, "a") is False
 
     blocked = eng.store.get_work_item(item.id)
     assert manifest.nodes["a"].status == "blocked"
@@ -3812,7 +3813,7 @@ def test_reviewer_pending_review_rechecks_control_before_dispatch(
             "pending decision must block before Reviewer wake"),
     )
 
-    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+    failures = loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path)
 
     blocked = eng.store.get_work_item(item.id)
     assert "a" in failures
@@ -3876,7 +3877,7 @@ def test_reviewer_terminal_decision_stops_no_submit_retry(
             "terminal decision must stop no-submit continuation"),
     )
 
-    failures = loop.collect_results(eng.store, eng.runtime, manifest, path)
+    failures = loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path)
 
     blocked = eng.store.get_work_item(item.id)
     assert "a" in failures
@@ -3898,7 +3899,7 @@ def test_reviewer_dispatch_refreshes_reused_issue_with_control_protocol(
     monkeypatch.setattr(eng.runtime, "wake", lambda *_args: None)
 
     loop._dispatch_reviewer_for_current_subject(
-        eng.store, eng.runtime, manifest, "a")
+        eng.store, eng.runtime, eng.code_host, manifest, "a")
 
     refreshed = eng.store.get_work_item(item.id)
     first_screen = refreshed.description.split("# ", 1)[0]
@@ -3920,7 +3921,7 @@ def test_initial_develop_reviewer_handoff_assigns_without_starting_run(
     manifest = _manifest([_node("a", reviewer="bob", contract=_contract())])
     path = str(tmp_path / "dag.yaml")
     save_manifest(manifest, path)
-    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
     item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
     eng.store.set_node_contract(item.id, manifest.nodes["a"].contract)
     verification = eng.store._mock_verification(item.id)
@@ -3947,7 +3948,7 @@ def test_initial_develop_reviewer_handoff_assigns_without_starting_run(
 
     monkeypatch.setattr(eng.store, "assign_work_item", assign)
 
-    tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
 
     assert reviewer_calls == [{"start_run": False}]
 
@@ -3996,7 +3997,7 @@ def test_reviewer_dispatch_new_baseline_is_dispatched_then_existing_baseline_is_
     )
 
     assert loop._dispatch_reviewer_for_current_subject(
-        eng.store, eng.runtime, manifest, "a") is True
+        eng.store, eng.runtime, eng.code_host, manifest, "a") is True
     assert dispatch_calls == [(item.id, "bob")]
     current = eng.store.get_work_item(item.id)
     assert current.decision_required is None
@@ -4014,7 +4015,7 @@ def test_reviewer_dispatch_new_baseline_is_dispatched_then_existing_baseline_is_
         match="no uniquely observable target Run",
     ):
         loop._dispatch_reviewer_for_current_subject(
-            eng.store, eng.runtime, manifest, "a")
+            eng.store, eng.runtime, eng.code_host, manifest, "a")
 
 
 def test_initial_reviewer_dispatch_crash_after_assignment_fails_closed(
@@ -4034,7 +4035,7 @@ def test_initial_reviewer_dispatch_crash_after_assignment_fails_closed(
     monkeypatch.setattr(eng.runtime, "wake", crash_before_wake)
     with pytest.raises(RuntimeError, match="suppressed reviewer assignment"):
         loop._dispatch_reviewer_for_current_subject(
-            eng.store, eng.runtime, manifest, "a")
+            eng.store, eng.runtime, eng.code_host, manifest, "a")
 
     interrupted = eng.store.get_work_item(item.id)
     assert interrupted.status is WorkItemStatus.IN_REVIEW
@@ -4054,7 +4055,7 @@ def test_initial_reviewer_dispatch_crash_after_assignment_fails_closed(
         match="no uniquely observable target Run",
     ):
         loop._dispatch_reviewer_for_current_subject(
-            eng.store, eng.runtime, manifest, "a")
+            eng.store, eng.runtime, eng.code_host, manifest, "a")
 
 
 @pytest.mark.parametrize(
@@ -4087,7 +4088,7 @@ def test_initial_reviewer_dispatch_recovery_requires_formal_dispatch(
     )
     with pytest.raises(RuntimeError, match="dispatch crash"):
         loop._dispatch_reviewer_for_current_subject(
-            eng.store, eng.runtime, manifest, "a")
+            eng.store, eng.runtime, eng.code_host, manifest, "a")
 
     candidate = AgentRunObservation(
         id=f"run-{trigger_kind}",
@@ -4111,11 +4112,11 @@ def test_initial_reviewer_dispatch_recovery_requires_formal_dispatch(
             match="not a formal assignment/rerun dispatch",
         ):
             loop._dispatch_reviewer_for_current_subject(
-                eng.store, eng.runtime, manifest, "a")
+                eng.store, eng.runtime, eng.code_host, manifest, "a")
         return
 
     assert loop._dispatch_reviewer_for_current_subject(
-        eng.store, eng.runtime, manifest, "a") is False
+        eng.store, eng.runtime, eng.code_host, manifest, "a") is False
     recovered = eng.store.get_work_item(item.id)
     assert recovered.reviewer_run_baseline.target_run_id == candidate.id
 
@@ -4191,7 +4192,7 @@ def test_reviewer_completed_without_verdict_is_bounded_by_run_attempts(
     )
 
     result = tick(
-        eng.store, eng.runtime, manifest, path, max_parallel=1, config=config)
+        eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1, config=config)
     blocked = eng.store.get_work_item(item.id)
 
     assert result.state == "needs_decision"
@@ -4260,7 +4261,7 @@ def test_reviewer_no_submit_continues_under_larger_budget(tmp_path, monkeypatch)
     monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
 
     result = tick(
-        eng.store, eng.runtime, manifest, path, max_parallel=1,
+        eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1,
         config={"retry": {"no_submit_runs": 4}})
     recovered = eng.store.get_work_item(item.id)
 
@@ -4306,7 +4307,7 @@ def test_reviewer_no_submit_exhausts_only_beyond_larger_budget(
     )
 
     result = tick(
-        eng.store, eng.runtime, manifest, path, max_parallel=1,
+        eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1,
         config={"retry": {"no_submit_runs": 4}})
     blocked = eng.store.get_work_item(item.id)
 
@@ -4326,7 +4327,7 @@ def test_reviewer_no_submit_invalid_budget_fails_closed(tmp_path):
     for bad in (0, -1, "6", 2.5):
         with pytest.raises(ValidationError, match="no_submit_runs"):
             tick(
-                eng.store, eng.runtime, manifest, path, max_parallel=1,
+                eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1,
                 config={"retry": {"no_submit_runs": bad}})
 
 
@@ -4367,7 +4368,7 @@ def test_reviewer_transient_failures_ignore_no_submit_budget(
     )
 
     result = tick(
-        eng.store, eng.runtime, manifest, path, max_parallel=1,
+        eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1,
         config={"retry": {"no_submit_runs": 10}})
     blocked = eng.store.get_work_item(item.id)
 
@@ -4394,7 +4395,7 @@ def test_nonretryable_worker_failure_blocks_without_business_bounce(
         lambda *_args: pytest.fail("nonretryable failure must not wake"),
     )
 
-    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
     blocked = eng.store.get_work_item(item.id)
 
     assert result.state == "needs_decision"
@@ -4432,7 +4433,7 @@ def test_worker_runtime_failure_next_action_recovers_authoring(
         lambda *_args: pytest.fail("runtime decision must not wake"),
     )
 
-    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
     blocked = eng.store.get_work_item(item.id)
     next_action = blocked.decision_required["next_action"]
 
@@ -4474,7 +4475,7 @@ def test_nonretryable_reviewer_failure_blocks_without_review_bounce(
         lambda *_args: pytest.fail("nonretryable reviewer must not wake"),
     )
 
-    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
     blocked = eng.store.get_work_item(item.id)
 
     assert result.state == "needs_decision"
@@ -4511,7 +4512,7 @@ def test_reviewer_runtime_failure_next_action_recovers_review(
         lambda *_args: pytest.fail("runtime decision must not wake"),
     )
 
-    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
     blocked = eng.store.get_work_item(item.id)
     next_action = blocked.decision_required["next_action"]
 
@@ -4569,7 +4570,7 @@ def test_reviewer_transient_failures_stop_at_infrastructure_limit(
         lambda *_args: pytest.fail("exhausted reviewer retry must not wake"),
     )
 
-    result = tick(eng.store, eng.runtime, manifest, path, max_parallel=1)
+    result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=1)
     blocked = eng.store.get_work_item(item.id)
 
     assert result.state == "needs_decision"
@@ -4609,7 +4610,7 @@ def test_reviewer_ignores_comment_run_and_never_retries_other_agent_failure(
         lambda *_args: wake_calls.append("wake"),
     )
 
-    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path) == {}
     assert wake_calls == []
     assert eng.store.get_work_item(item.id).bounces.review == 0
 
@@ -4736,7 +4737,7 @@ class TestFailureInjection:
                 "provisional decision recovery must not wake"),
         )
 
-        result = tick(eng.store, eng.runtime, manifest, path)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         recovered = eng.store.get_work_item(item.id)
         assert result.state == "running"
@@ -4759,7 +4760,7 @@ class TestFailureInjection:
                     eng.store.get_work_item(item.id)),
             }),
         )
-        second = tick(eng.store, eng.runtime, restarted, path)
+        second = tick(eng.store, eng.runtime, eng.code_host, restarted, path)
 
         assert second.state == "running"
         assert restarted.nodes["a"].status == "in_review"
@@ -4924,7 +4925,7 @@ class TestFailureInjection:
                 "invalid provisional decision must not wake"),
         )
 
-        result = tick(eng.store, eng.runtime, manifest, path)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert result.state == "needs_decision"
         assert result.running == []
@@ -4987,7 +4988,7 @@ class TestFailureInjection:
         )
 
         with pytest.raises(PlatformError):
-            tick(eng.store, eng.runtime, manifest, path)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert manifest.nodes["a"].status == "blocked"
         assert eng.store.get_work_item(item.id).decision_required == decision
@@ -5073,7 +5074,7 @@ class TestFailureInjection:
             else RuntimeError
         )
         with pytest.raises(error_type):
-            tick(eng.store, eng.runtime, manifest, path)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert not eng.store.get_work_item(item.id).decision_required
         persisted = load_manifest(path)
@@ -5091,7 +5092,7 @@ class TestFailureInjection:
                 False, {"a": eng.store.observe_work_item_control(item.id)}),
         )
 
-        recovered = tick(eng.store, eng.runtime, persisted, path)
+        recovered = tick(eng.store, eng.runtime, eng.code_host, persisted, path)
 
         current = eng.store.get_work_item(item.id)
         assert recovered.state == "running"
@@ -5111,7 +5112,7 @@ class TestFailureInjection:
         monkeypatch.setattr(
             eng.runtime, "list_runs", lambda _item_id: list(runs))
 
-        first = tick(eng.store, eng.runtime, manifest, path)
+        first = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert first.state == "running"
         current = eng.store.get_work_item(item.id)
@@ -5131,7 +5132,7 @@ class TestFailureInjection:
         mock_engine._finish_mock_run(item.id)
         monkeypatch.setattr(eng.runtime, "list_runs", original_list_runs)
 
-        second = tick(eng.store, eng.runtime, manifest, path)
+        second = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         recovered = eng.store.get_work_item(item.id)
         assert second.state == "running"
@@ -5171,7 +5172,7 @@ class TestFailureInjection:
         assignments_before = list(eng.store.assign_log)
         runs_before = list(runs)
 
-        result = tick(eng.store, eng.runtime, manifest, path)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert result.state == "running"
         assert result.running == ["active"]
@@ -5184,7 +5185,7 @@ class TestFailureInjection:
         assert runs == runs_before
 
         restarted = load_manifest(path)
-        second = tick(eng.store, eng.runtime, restarted, path)
+        second = tick(eng.store, eng.runtime, eng.code_host, restarted, path)
 
         assert second.state == "running"
         assert second.running == ["active"]
@@ -5323,7 +5324,7 @@ class TestFailureInjection:
         )
 
         with pytest.raises(PlatformError, match="review ledger"):
-            tick(eng.store, eng.runtime, manifest, path)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert manifest.nodes["active"].status == "blocked"
         assert observations["active"] is deferred
@@ -5349,7 +5350,7 @@ class TestFailureInjection:
             eng.runtime, "list_runs", lambda _item_id: list(runs))
         assignments_before = list(eng.store.assign_log)
 
-        result = tick(eng.store, eng.runtime, manifest, path)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert result.state == "needs_decision"
         assert result.running == []
@@ -5358,7 +5359,7 @@ class TestFailureInjection:
         assert eng.store.assign_log == assignments_before
 
         restarted = load_manifest(path)
-        second = tick(eng.store, eng.runtime, restarted, path)
+        second = tick(eng.store, eng.runtime, eng.code_host, restarted, path)
 
         assert second.state == "needs_decision"
         assert second.running == []
@@ -5383,7 +5384,7 @@ class TestFailureInjection:
         monkeypatch.setattr(
             eng.runtime, "list_runs", lambda _item_id: list(runs))
 
-        result = tick(eng.store, eng.runtime, manifest, path)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert result.state == "running"
         assert result.running == ["active"]
@@ -5415,7 +5416,7 @@ class TestFailureInjection:
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ])
 
-        first = tick(eng.store, eng.runtime, manifest, path)
+        first = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert first.state == "running"
         assert first.running == ["a"]
@@ -5436,12 +5437,12 @@ class TestFailureInjection:
         submit_work(
             eng.store,
             item.id,
-            verdict=verdict,
+            code_host=eng.code_host, verdict=verdict,
             report_file=str(report_path),
         )
         mock_engine._finish_mock_run(item.id)
 
-        second = tick(eng.store, eng.runtime, manifest, path)
+        second = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         recovered = eng.store.get_work_item(item.id)
         assert second.state == "running"
@@ -5502,7 +5503,7 @@ class TestFailureInjection:
                 "tick must reuse reconcile observations"),
         )
 
-        result = tick(eng.store, eng.runtime, manifest, path)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert result.state == "needs_decision"
         assert result.running == []
@@ -5539,7 +5540,7 @@ class TestFailureInjection:
                 "tick must reuse reconcile observations"),
         )
 
-        result = tick(eng.store, eng.runtime, manifest, path)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert result.state == "needs_decision"
         assert result.running == []
@@ -5612,7 +5613,7 @@ def test_reconcile_does_not_swallow_programming_errors(tmp_path):
     store.get_work_item = lambda item_id: (_ for _ in ()).throw(ValueError("bug"))
 
     with pytest.raises(ValueError, match="bug"):
-        loop.reconcile(store, manifest, str(tmp_path / "m.yaml"))
+        loop.reconcile(store, MockCodeHost(), manifest, str(tmp_path / "m.yaml"))
 
 class TestIdempotency:
     def test_confirmed_merge_without_work_item_remains_closed(self):
@@ -5623,11 +5624,11 @@ class TestIdempotency:
         eng = _engine()
 
         # 第一轮 tick:派发 a
-        r1 = tick(eng.store, eng.runtime, manifest, path)
+        r1 = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
         assert "a" in r1.dispatched
 
         # 第二轮 tick:a 完成,b 派发
-        r2 = tick(eng.store, eng.runtime, manifest, path)
+        r2 = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
         assert "a" in r2.done
 
         # 记录 a 的 work_item_id
@@ -5640,7 +5641,7 @@ class TestIdempotency:
         from omac.core.manifest import set_node
         set_node(manifest, "a", work_item_id=None)
 
-        r3 = tick(eng2.store, eng2.runtime, manifest, path)
+        r3 = tick(eng2.store, eng2.runtime, eng2.code_host, manifest, path)
         assert "a" in r3.done
         assert manifest.nodes["a"].status == "done"
         assert manifest.nodes["a"].work_item_id is None
@@ -5659,7 +5660,7 @@ class TestIdempotency:
         # 新 engine tick 一次:reconcile 发现 work_item_id 不存在 → 清空
         # 但 done 状态保持,ready_nodes 跳过 done → 仍 converged
         eng2 = _engine()
-        r2 = tick(eng2.store, eng2.runtime, manifest, path)
+        r2 = tick(eng2.store, eng2.runtime, eng2.code_host, manifest, path)
         assert r2.state == "converged"
         assert sorted(r2.done) == ["a", "b"]
 
@@ -5703,12 +5704,12 @@ class TestReviewerHandoff:
         eng = _engine()
 
         # 第一轮:派发 a(in_progress)
-        r1 = tick(eng.store, eng.runtime, manifest, path)
+        r1 = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
         assert "a" in r1.dispatched
         assert "a" in r1.running
 
         # 第二轮:worker 完成 → 转 in_review(有 reviewer)
-        r2 = tick(eng.store, eng.runtime, manifest, path)
+        r2 = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
         # a 要么在 in_review(running),要么已完成 review(done)
         assert "a" in r2.running or "a" in r2.done
 
@@ -5740,7 +5741,7 @@ class TestNoAutoRetry:
 
         # 再 tick 多次:blocked 节点保持 blocked
         for _ in range(5):
-            r = tick(eng.store, eng.runtime, manifest, path)
+            r = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
             assert "a" in r.failed
             assert "b" in r.failed
             assert "c" in r.failed
@@ -5779,7 +5780,7 @@ class TestReconcile:
         manifest.nodes["a"].status = "in_progress"
         save_manifest(manifest, path)
 
-        r = tick(eng.store, eng.runtime, manifest, path)
+        r = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
         # reconcile 不再把 in_progress → done;collect_results 过证据门 → blocked
         assert "a" in r.failed
         assert r.state == "needs_decision"
@@ -5801,7 +5802,7 @@ class TestReconcile:
         manifest.nodes["a"].status = "todo"
         save_manifest(manifest, path)
 
-        r = tick(eng.store, eng.runtime, manifest, path)
+        r = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
         # reconcile 把 todo → done(非运行态,直接同步)
         assert "a" in r.done
         assert r.state == "converged"
@@ -5817,7 +5818,7 @@ class TestReconcile:
         manifest.nodes["a"].status = "in_progress"
         save_manifest(manifest, path)
 
-        r = tick(eng.store, eng.runtime, manifest, path)
+        r = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
         # reconcile 清空 → todo → ready → dispatch → running
         assert "a" in r.dispatched
         assert r.state == "running"
@@ -5835,7 +5836,7 @@ class TestReconcile:
 
         # Missing static items are discovered by an explicit full audit; normal
         # ticks leave this blocked projection for P3's audit scheduler.
-        r = tick(eng.store, eng.runtime, manifest, path, full_scan=True)
+        r = tick(eng.store, eng.runtime, eng.code_host, manifest, path, full_scan=True)
 
         assert "a" in r.dispatched
         assert r.state == "running"
@@ -5905,7 +5906,7 @@ class TestEvidenceGateRegression:
         manifest.nodes["a"].status = "in_progress"
         save_manifest(manifest, path)
 
-        result = tick(eng.store, eng.runtime, manifest, path)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert result.state == "needs_decision"
         assert "a" in result.failed
@@ -5945,7 +5946,7 @@ class TestEvidenceGateRegression:
         manifest.nodes["a"].status = "in_progress"
         save_manifest(manifest, path)
 
-        result = tick(eng.store, eng.runtime, manifest, path)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert result.state == "needs_decision"
         assert "a" in result.failed
@@ -5984,7 +5985,7 @@ class TestEvidenceGateRegression:
         manifest.nodes["a"].status = "in_progress"
         save_manifest(manifest, path)
 
-        result = tick(eng.store, eng.runtime, manifest, path)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert result.state == "converged"
         assert "a" in result.done
@@ -6026,7 +6027,7 @@ class TestReviewerRejectBoundedFallback:
         save_manifest(manifest, path)
 
         # tick 1: 派发 worker
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         # 手动模拟 worker 合规提交(DONE + 过证据门),让节点进入 in_review
         item = eng.store.get_work_item(manifest.nodes[key].work_item_id)
@@ -6053,7 +6054,7 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_status(item.id, WorkItemStatus.DONE)
 
         # tick 2: worker 完成 → 转评审(in_review + assign reviewer)
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         from omac.core.manifest import set_node
         set_node(manifest, key, status="in_review")
         save_manifest(manifest, path)
@@ -6292,7 +6293,7 @@ class TestReviewerRejectBoundedFallback:
         first = loop.collect_results(
             eng.store,
             eng.runtime,
-            manifest,
+            eng.code_host, manifest,
             path,
             retry_limits={"worker": 1},
         )
@@ -6306,7 +6307,7 @@ class TestReviewerRejectBoundedFallback:
         second = loop.collect_results(
             eng.store,
             eng.runtime,
-            manifest,
+            eng.code_host, manifest,
             path,
             retry_limits={"worker": 1},
         )
@@ -6314,7 +6315,7 @@ class TestReviewerRejectBoundedFallback:
         third = loop.collect_results(
             eng.store,
             eng.runtime,
-            manifest,
+            eng.code_host, manifest,
             path,
             retry_limits={"worker": 1},
         )
@@ -6382,17 +6383,17 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(eng.runtime, "wake", wake)
 
         assert loop.collect_results(
-            eng.store, eng.runtime, manifest, path,
+            eng.store, eng.runtime, eng.code_host, manifest, path,
             retry_limits={"worker": 1},
         ) == {}
         now[0] += timedelta(seconds=loop._HANDOFF_TERMINAL_GRACE_SECONDS + 1)
         assert loop.collect_results(
-            eng.store, eng.runtime, manifest, path,
+            eng.store, eng.runtime, eng.code_host, manifest, path,
             retry_limits={"worker": 1},
         ) == {}
         persisted = load_manifest(path)
         assert loop.collect_results(
-            eng.store, eng.runtime, persisted, path,
+            eng.store, eng.runtime, eng.code_host, persisted, path,
             retry_limits={"worker": 1},
         ) == {}
 
@@ -6435,7 +6436,7 @@ class TestReviewerRejectBoundedFallback:
         assert loop.collect_results(
             eng.store,
             eng.runtime,
-            manifest,
+            eng.code_host, manifest,
             path,
             retry_limits={"worker": 0},
         ) == {}
@@ -6443,7 +6444,7 @@ class TestReviewerRejectBoundedFallback:
 
         now[0] += timedelta(seconds=loop._HANDOFF_TERMINAL_GRACE_SECONDS + 1)
         failures = loop.collect_results(
-            eng.store, eng.runtime, manifest, path,
+            eng.store, eng.runtime, eng.code_host, manifest, path,
             retry_limits={"worker": 0})
 
         recovered = eng.store.get_work_item(item.id)
@@ -6459,6 +6460,7 @@ class TestReviewerRejectBoundedFallback:
         self, tmp_path, monkeypatch,
     ):
         """A valid submit at the worker limit must not be blocked as no-submit."""
+        code_host = MockCodeHost()
         from omac.engines import create_engine
         from omac.core.workitem import AgentRunObservation, PullRequestReadiness
 
@@ -6478,9 +6480,7 @@ class TestReviewerRejectBoundedFallback:
         submitted = False
         verification_path = tmp_path / "verification.yaml"
         pr_url = f"https://github.com/acme/repo/pull/{item.id}-limit"
-        monkeypatch.setattr(
-            eng.store,
-            "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda _url: PullRequestReadiness(
                 is_draft=False, state="OPEN", head_sha="head-limit"),
         )
@@ -6515,7 +6515,7 @@ class TestReviewerRejectBoundedFallback:
                 submitted_result = submit_work(
                     eng.store,
                     item.id,
-                    pr_url=pr_url,
+                    code_host=code_host, pr_url=pr_url,
                     verification_file=str(verification_path),
                 )
                 assert submitted_result.advanced_to is WorkItemStatus.DONE
@@ -6532,13 +6532,13 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(loop, "_dispatch_worker_handoff", dispatch_with_late_submit)
 
         assert loop.collect_results(
-            eng.store, eng.runtime, manifest, path,
+            eng.store, eng.runtime, code_host, manifest, path,
             retry_limits={"worker": limit},
         ) == {}
         now[0] += timedelta(
             seconds=loop._HANDOFF_TERMINAL_GRACE_SECONDS + 1)
         failures = loop.collect_results(
-            eng.store, eng.runtime, manifest, path,
+            eng.store, eng.runtime, code_host, manifest, path,
             retry_limits={"worker": limit},
         )
 
@@ -6556,6 +6556,7 @@ class TestReviewerRejectBoundedFallback:
         self, tmp_path, monkeypatch,
     ):
         """A blocked projection must not hide a terminal submitted handoff."""
+        code_host = MockCodeHost()
         from omac.engines import create_engine
         from omac.core.workitem import AgentRunObservation, PullRequestReadiness
 
@@ -6582,16 +6583,14 @@ class TestReviewerRejectBoundedFallback:
             "pr_base": "main",
             "coverage": 90,
         }))
-        monkeypatch.setattr(
-            eng.store,
-            "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda _url: PullRequestReadiness(
                 is_draft=False, state="OPEN", head_sha="head-blocked"),
         )
         submitted = submit_work(
             eng.store,
             item.id,
-            pr_url=pr_url,
+            code_host=code_host, pr_url=pr_url,
             verification_file=str(verification_path),
         )
         assert submitted.advanced_to is WorkItemStatus.DONE
@@ -6618,7 +6617,7 @@ class TestReviewerRejectBoundedFallback:
         ])
         reviewer_dispatches = []
 
-        def record_reviewer_dispatch(store, _runtime, _manifest, key):
+        def record_reviewer_dispatch(store, _runtime, _code_host, _manifest, key):
             reviewer_dispatches.append(key)
             store.update_status(item.id, WorkItemStatus.IN_REVIEW)
 
@@ -6629,7 +6628,7 @@ class TestReviewerRejectBoundedFallback:
         )
 
         result = tick(
-            eng.store, eng.runtime, manifest, path,
+            eng.store, eng.runtime, code_host, manifest, path,
             retry_limits={"worker": 20},
         )
 
@@ -6647,6 +6646,7 @@ class TestReviewerRejectBoundedFallback:
         self, tmp_path, monkeypatch,
     ):
         """有限观察窗口内晚到的新 attachment 仍按 causal submit 收割。"""
+        code_host = MockCodeHost()
         from omac.engines import create_engine
         from omac.core.workitem import AgentRunObservation, PullRequestReadiness
 
@@ -6670,7 +6670,7 @@ class TestReviewerRejectBoundedFallback:
         ])
 
         assert loop.collect_results(
-            eng.store, eng.runtime, manifest, path) == {}
+            eng.store, eng.runtime, code_host, manifest, path) == {}
         assert eng.store.get_work_item(
             item.id).worker_handoff.terminal_observed_at
 
@@ -6678,15 +6678,13 @@ class TestReviewerRejectBoundedFallback:
         fresh = eng.store.get_work_item(item.id)
         now[0] += timedelta(
             seconds=max(1, loop._HANDOFF_TERMINAL_GRACE_SECONDS // 2))
-        monkeypatch.setattr(
-            eng.store,
-            "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda _pr_url: PullRequestReadiness(
                 is_draft=False, state="OPEN",
                 head_sha=fresh.artifacts["head_sha"]),
         )
         failures = loop.collect_results(
-            eng.store, eng.runtime, manifest, path)
+            eng.store, eng.runtime, code_host, manifest, path)
 
         recovered = eng.store.get_work_item(item.id)
         assert failures == {}
@@ -6735,7 +6733,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(eng.runtime, "list_runs", list_runs)
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
         assert loop.collect_results(
-            eng.store, eng.runtime, manifest, path,
+            eng.store, eng.runtime, eng.code_host, manifest, path,
             retry_limits={"worker": 1}) == {}
         now[0] += timedelta(seconds=loop._HANDOFF_TERMINAL_GRACE_SECONDS + 1)
 
@@ -6757,7 +6755,7 @@ class TestReviewerRejectBoundedFallback:
             eng.store, "update_work_item_metadata", crash_after_retry_intent)
         with pytest.raises(RuntimeError, match="retry intent"):
             loop.collect_results(
-                eng.store, eng.runtime, manifest, path,
+                eng.store, eng.runtime, eng.code_host, manifest, path,
                 retry_limits={"worker": 1})
 
         interrupted = eng.store.get_work_item(item.id)
@@ -6769,11 +6767,11 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(
             eng.store, "update_work_item_metadata", original_update)
         assert loop.collect_results(
-            eng.store, eng.runtime, manifest, path,
+            eng.store, eng.runtime, eng.code_host, manifest, path,
             retry_limits={"worker": 1}) == {}
         assignments_after_restart = retry_assignments
         assert loop.collect_results(
-            eng.store, eng.runtime, manifest, path,
+            eng.store, eng.runtime, eng.code_host, manifest, path,
             retry_limits={"worker": 1}) == {}
 
         recovered = eng.store.get_work_item(item.id)
@@ -6806,7 +6804,7 @@ class TestReviewerRejectBoundedFallback:
             monkeypatch.setattr(eng.store, "hydrate_work_item_evidence", lambda projection, plan: (
                 replace(projection.work_item,
                         contract=reviewed.contract, review_report=reviewed.review_report)))
-        loop._dispatch_worker_handoff(eng.store, eng.runtime, manifest, "a", review_bounce=1, gate="review")
+        loop._dispatch_worker_handoff(eng.store, eng.runtime, eng.code_host, manifest, "a", review_bounce=1, gate="review")
         current = eng.store.get_work_item(item.id)
         intent = current.worker_handoff
         assert intent.gate == "review"
@@ -6838,7 +6836,7 @@ class TestReviewerRejectBoundedFallback:
         previous = eng.store.get_work_item(item.id)
         previous_head = previous.artifacts["head_sha"]
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         assert result.state == "running"
         handoff = eng.store.get_work_item(item.id).worker_handoff
@@ -6851,6 +6849,7 @@ class TestReviewerRejectBoundedFallback:
     def test_authoring_recovery_collects_same_head_submit_without_worker_retry(
         self, tmp_path, monkeypatch, causal_attachment,
     ):
+        code_host = MockCodeHost()
         from omac.core.stage_recovery import prepare_stage_recovery
         from omac.engines.mock import _finish_mock_run
 
@@ -6862,21 +6861,21 @@ class TestReviewerRejectBoundedFallback:
         pr_url, head = "https://github.com/acme/repo/pull/73", old.artifacts["head_sha"]
         eng.store.update_work_item_metadata(
             item.id, artifacts={"pr_url": pr_url, "head_sha": head})
-        monkeypatch.setattr(eng.store, "read_pull_request_readiness", lambda _: (
+        monkeypatch.setattr(code_host, "read_pull_request_readiness", lambda _: (
             PullRequestReadiness(is_draft=False, state="OPEN", head_sha=head)))
         verification = deepcopy(old.verification)
         _finish_mock_run(item.id)
         prepare_stage_recovery(manifest.nodes["a"], eng.store, "authoring")
         eng.store.update_work_item_metadata(item.id, worker_bounce=15)
         manifest.nodes["a"].status = "todo"
-        loop._dispatch(eng.store, eng.runtime, manifest, path, ["a"], 4)
+        loop._dispatch(eng.store, eng.runtime, code_host, manifest, path, ["a"], 4)
         intent = eng.store.get_work_item(item.id).worker_handoff
         assert intent.gate == "explicit-dispatch"
         assert intent.source_review_verdict is None
         assert intent.baseline_verification_attachment_id
         verification_path = tmp_path / "verification.yaml"
         verification_path.write_text(yaml.safe_dump(verification))
-        result = submit_work(eng.store, item.id, pr_url=pr_url,
+        result = submit_work(eng.store, item.id, code_host=code_host, pr_url=pr_url,
                              verification_file=str(verification_path))
         assert result.advanced_to == WorkItemStatus.DONE
         current = eng.store.get_work_item(item.id)
@@ -6890,10 +6889,10 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(loop.time, "sleep", lambda _: None)
         if not causal_attachment:
             with pytest.raises(PlatformError, match="causally bound"):
-                loop.collect_results(eng.store, eng.runtime, manifest, path)
+                loop.collect_results(eng.store, eng.runtime, code_host, manifest, path)
             assert eng.store.get_work_item(item.id).delivery_identity is None
         else:
-            assert loop.collect_results(eng.store, eng.runtime, manifest, path,
+            assert loop.collect_results(eng.store, eng.runtime, code_host, manifest, path,
                                         retry_limits={"worker": 15}) == {}
             recovered = eng.store.get_work_item(item.id)
             assert manifest.nodes["a"].status == "in_review"
@@ -6917,7 +6916,7 @@ class TestReviewerRejectBoundedFallback:
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ])
 
-        assert tick(eng.store, eng.runtime, manifest, path, max_parallel=4).state == "running"
+        assert tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4).state == "running"
         handoff = eng.store.get_work_item(item.id).worker_handoff
         assert handoff is not None
 
@@ -6932,7 +6931,7 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_status(item.id, WorkItemStatus.DONE)
         monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         assert result.state == "running"
         assert manifest.nodes["a"].status == "in_progress"
@@ -6948,7 +6947,7 @@ class TestReviewerRejectBoundedFallback:
         manifest, eng, item = self._setup_reject_node(eng, str(tmp_path / "m.yaml"))
         path = str(tmp_path / "m.yaml")
 
-        result = tick(eng.store, eng.runtime, manifest, path,
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path,
                       max_parallel=4, retry_limits={"review": 0})
 
         got = eng.store.get_work_item(item.id)
@@ -6978,7 +6977,7 @@ class TestReviewerRejectBoundedFallback:
         report_path = tmp_path / "review.yaml"
         report_path.write_text(yaml.safe_dump(report))
         submit_work(
-            eng.store, item.id, verdict="reject", report_file=str(report_path))
+            eng.store, item.id, code_host=eng.code_host, verdict="reject", report_file=str(report_path))
         submitted = eng.store.get_work_item(item.id)
         assert len(submitted.review_ledger["cycles"]) == 3
         convergence = review_convergence_decision(submitted.review_ledger)
@@ -6996,7 +6995,7 @@ class TestReviewerRejectBoundedFallback:
         result = tick(
             eng.store,
             eng.runtime,
-            manifest,
+            eng.code_host, manifest,
             path,
             max_parallel=4,
             retry_limits={"review": 20},
@@ -7070,9 +7069,9 @@ class TestReviewerRejectBoundedFallback:
                 "convergence decision must precede handoff observation/retry"),
         )
 
-        first = tick(eng.store, eng.runtime, manifest, path)
+        first = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
         persisted = load_manifest(path)
-        second = tick(eng.store, eng.runtime, persisted, path)
+        second = tick(eng.store, eng.runtime, eng.code_host, persisted, path)
 
         blocked = eng.store.get_work_item(item.id)
         assert first.state == "needs_decision"
@@ -7297,7 +7296,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
         monkeypatch.setattr(eng.store, "update_status", update_status)
 
-        result = tick(eng.store, eng.runtime, manifest, path)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         blocked = eng.store.get_work_item(item_id)
         assert events[0] == "decision"
@@ -7345,7 +7344,7 @@ class TestReviewerRejectBoundedFallback:
             )
 
         with pytest.raises(PlatformError, match="seen_count"):
-            tick(eng.store, eng.runtime, manifest, path)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert manifest.nodes["a"].status == "in_progress"
         assert Path(path).read_bytes() == before
@@ -7436,7 +7435,7 @@ class TestReviewerRejectBoundedFallback:
         )
 
         with pytest.raises(PlatformError, match="review ledger"):
-            tick(eng.store, eng.runtime, manifest, path)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert manifest.nodes["a"].status == "in_progress"
         assert Path(path).read_bytes() == before
@@ -7550,7 +7549,7 @@ class TestReviewerRejectBoundedFallback:
 
         for current_manifest in (manifest, load_manifest(path)):
             with pytest.raises(PlatformError, match="review ledger"):
-                tick(eng.store, eng.runtime, current_manifest, path)
+                tick(eng.store, eng.runtime, eng.code_host, current_manifest, path)
             assert current_manifest.nodes["a"].status == "in_progress"
             assert Path(path).read_bytes() == before
             assert eng.store.assign_log == assignments
@@ -7591,7 +7590,7 @@ class TestReviewerRejectBoundedFallback:
         )
 
         with pytest.raises(PlatformError, match="review ledger"):
-            tick(eng.store, eng.runtime, manifest, path)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path)
 
         assert manifest.nodes["a"].status == "in_progress"
         assert Path(path).read_bytes() == before
@@ -7619,7 +7618,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(loop, "_dispatch_worker_handoff", dispatch)
 
         assert loop.collect_results(
-            eng.store, eng.runtime, manifest, path) == {}
+            eng.store, eng.runtime, eng.code_host, manifest, path) == {}
         assert calls == [True]
         assert manifest.nodes["a"].status == "in_progress"
 
@@ -7660,7 +7659,7 @@ class TestReviewerRejectBoundedFallback:
         result = tick(
             eng.store,
             eng.runtime,
-            manifest,
+            eng.code_host, manifest,
             path,
             max_parallel=4,
             retry_limits={"review": 9},
@@ -7717,7 +7716,7 @@ class TestReviewerRejectBoundedFallback:
         )
 
         first = tick(
-            eng.store, eng.runtime, manifest, path, max_parallel=4,
+            eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4,
             retry_limits={"review": 2},
         )
 
@@ -7791,7 +7790,7 @@ class TestReviewerRejectBoundedFallback:
             loop._dispatch_worker_handoff(
                 eng.store,
                 eng.runtime,
-                manifest,
+                eng.code_host, manifest,
                 "a",
                 review_bounce=1,
                 gate="review-nits",
@@ -7841,7 +7840,7 @@ class TestReviewerRejectBoundedFallback:
         result = tick(
             eng.store,
             eng.runtime,
-            manifest,
+            eng.code_host, manifest,
             path,
             max_parallel=4,
             retry_limits={"review": 9},
@@ -7868,7 +7867,7 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_work_item_metadata(
             item.id, review_report=_review_report(item, "reject"))
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         got = eng.store.get_work_item(item.id)
         assert result.state == "running"
@@ -7907,7 +7906,7 @@ class TestReviewerRejectBoundedFallback:
             review_ledger=old_ledger,
         )
 
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         self._submit_revision(eng, item)
         eng.store.clear_assignment(item.id)
         manifest.nodes["a"].status = "in_progress"
@@ -7939,7 +7938,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
         monkeypatch.setattr(eng.runtime, "wake", wake)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert result.state == "running"
@@ -7986,7 +7985,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
         monkeypatch.setattr(eng.runtime, "wake", wake)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert result.state == "running"
@@ -8035,7 +8034,7 @@ class TestReviewerRejectBoundedFallback:
         with pytest.raises(
             RuntimeError, match="simulated crash after review_bounce",
         ):
-            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         crashed_item = eng.store.get_work_item(item.id)
         assert crashed_item.bounces.review == 1
@@ -8055,9 +8054,9 @@ class TestReviewerRejectBoundedFallback:
         persisted = load_manifest(path)
 
         first = tick(
-            eng.store, eng.runtime, persisted, path, max_parallel=4)
+            eng.store, eng.runtime, eng.code_host, persisted, path, max_parallel=4)
         second = tick(
-            eng.store, eng.runtime, persisted, path, max_parallel=4)
+            eng.store, eng.runtime, eng.code_host, persisted, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert first.state == "running"
@@ -8145,11 +8144,11 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
 
         with pytest.raises(RuntimeError, match="after multica reset"):
-            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         persisted = load_manifest(path)
-        first = tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
-        second = tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
+        first = tick(eng.store, eng.runtime, eng.code_host, persisted, path, max_parallel=4)
+        second = tick(eng.store, eng.runtime, eng.code_host, persisted, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert first.state == "running"
@@ -8209,7 +8208,7 @@ class TestReviewerRejectBoundedFallback:
 
         with pytest.raises(AssignmentReached):
             loop._dispatch_worker_handoff(
-                eng.store, eng.runtime, manifest, "a")
+                eng.store, eng.runtime, eng.code_host, manifest, "a")
 
         assert reset_calls == 1
 
@@ -8264,7 +8263,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
 
         result = loop._dispatch_worker_handoff(
-            eng.store, eng.runtime, manifest, "a")
+            eng.store, eng.runtime, eng.code_host, manifest, "a")
 
         assert result.state == "pending-preparation"
         assert eng.store.get_work_item(item.id).reviewer_run_baseline is not None
@@ -8364,7 +8363,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
 
         result = loop._dispatch_worker_handoff(
-            eng.store, eng.runtime, manifest, "a")
+            eng.store, eng.runtime, eng.code_host, manifest, "a")
 
         assert result.state == "pending-preparation"
         assert getattr(eng.store.get_work_item(item.id), field) is not None
@@ -8471,7 +8470,7 @@ class TestReviewerRejectBoundedFallback:
         with pytest.raises(
             RuntimeError, match=f"simulated crash after {checkpoint}",
         ):
-            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         persisted = load_manifest(path)
         assert persisted.nodes["a"].status == "in_review"
@@ -8513,10 +8512,10 @@ class TestReviewerRejectBoundedFallback:
         )
 
         first = tick(
-            eng.store, eng.runtime, persisted, path, max_parallel=4,
+            eng.store, eng.runtime, eng.code_host, persisted, path, max_parallel=4,
         )
         second = tick(
-            eng.store, eng.runtime, persisted, path, max_parallel=4,
+            eng.store, eng.runtime, eng.code_host, persisted, path, max_parallel=4,
         )
 
         recovered = eng.store.get_work_item(item.id)
@@ -8558,7 +8557,7 @@ class TestReviewerRejectBoundedFallback:
             review_obligations=build_review_obligations(current),
             review_report=_review_report(current, "reject"),
         )
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         handed_off = eng.store.get_work_item(item.id)
         assert handed_off.worker_handoff is not None
         assert handed_off.phase is TaskPhase.AUTHORING
@@ -8585,7 +8584,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(
             eng.store, "update_work_item_metadata", crash_before_intent_clear)
         with pytest.raises(RuntimeError, match="before intent clear"):
-            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         monkeypatch.setattr(
             eng.store, "update_work_item_metadata", original_update)
         original_assign = eng.store.assign_work_item
@@ -8598,8 +8597,8 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
         persisted = load_manifest(path)
 
-        first = tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
-        second = tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
+        first = tick(eng.store, eng.runtime, eng.code_host, persisted, path, max_parallel=4)
+        second = tick(eng.store, eng.runtime, eng.code_host, persisted, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert first.state == "running"
@@ -8642,7 +8641,7 @@ class TestReviewerRejectBoundedFallback:
         observed = WorkItemControlProjection(current)
         calls = []
 
-        def dispatch(_store, _runtime, _manifest, _key, **kwargs):
+        def dispatch(_store, _runtime, _code_host, _manifest, _key, **kwargs):
             projection = kwargs.get("projection")
             assert projection is observed
             assert projection.work_item.verification is current.verification
@@ -8654,7 +8653,7 @@ class TestReviewerRejectBoundedFallback:
         loop.collect_results(
             eng.store,
             eng.runtime,
-            manifest,
+            eng.code_host, manifest,
             path,
             observations={"a": observed},
         )
@@ -8726,7 +8725,7 @@ class TestReviewerRejectBoundedFallback:
         message = "source accepted" if source == "current" else "source is stale"
         with pytest.raises(error, match=message):
             loop._dispatch_worker_handoff(
-                eng.store, eng.runtime, manifest, "a",
+                eng.store, eng.runtime, eng.code_host, manifest, "a",
                 review_bounce=current.bounces.review + 1, gate="review",
                 projection=WorkItemControlProjection(current),
             )
@@ -8748,7 +8747,7 @@ class TestReviewerRejectBoundedFallback:
             return original(item_id, **metadata)
         monkeypatch.setattr(eng.store, "update_work_item_metadata", reject)
         with pytest.raises(PlatformError, match="8KB"):
-            loop._dispatch_worker_handoff(eng.store, eng.runtime, manifest, "a",
+            loop._dispatch_worker_handoff(eng.store, eng.runtime, eng.code_host, manifest, "a",
                 review_bounce=before.bounces.review + 1, gate="review")
         current = eng.store.get_work_item(item.id)
         assert current.delivery_identity == before.delivery_identity
@@ -8781,7 +8780,7 @@ class TestReviewerRejectBoundedFallback:
             return original(item_id, **metadata)
         monkeypatch.setattr(eng.store, "update_work_item_metadata", interrupt)
         with pytest.raises(RuntimeError, match="before source retirement"):
-            loop._dispatch_worker_handoff(eng.store, eng.runtime, manifest, "a",
+            loop._dispatch_worker_handoff(eng.store, eng.runtime, eng.code_host, manifest, "a",
                 review_bounce=before.bounces.review + 1, gate="review")
         staged = eng.store.get_work_item(item.id)
         generation = staged.worker_handoff.generation
@@ -8791,11 +8790,11 @@ class TestReviewerRejectBoundedFallback:
         if drift:
             staged.artifacts["head_sha"] = "foreign-head"
             with pytest.raises(PlatformError, match="source.*changed|source.*stale"):
-                loop._dispatch_worker_handoff(eng.store, eng.runtime, manifest, "a")
+                loop._dispatch_worker_handoff(eng.store, eng.runtime, eng.code_host, manifest, "a")
             assert staged.delivery_identity == before.delivery_identity
             assert staged.bounces == before.bounces
         else:
-            loop._dispatch_worker_handoff(eng.store, eng.runtime, manifest, "a")
+            loop._dispatch_worker_handoff(eng.store, eng.runtime, eng.code_host, manifest, "a")
             current = eng.store.get_work_item(item.id)
             assert current.delivery_identity is None
             assert current.worker_handoff.generation == generation
@@ -8843,7 +8842,7 @@ class TestReviewerRejectBoundedFallback:
             loop._dispatch_worker_handoff(
                 eng.store,
                 eng.runtime,
-                manifest,
+                eng.code_host, manifest,
                 "a",
                 review_bounce=current.bounces.review + 1,
                 gate="review",
@@ -8894,12 +8893,12 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
         monkeypatch.setattr(eng.runtime, "wake", wake)
 
-        first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        first = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         assert first.state == "running"
         assert manifest.nodes["a"].status == "in_progress"
         assert reviewer_wakes == 0
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert result.state == "running"
@@ -8946,7 +8945,7 @@ class TestReviewerRejectBoundedFallback:
 
         monkeypatch.setattr(eng.runtime, "wake", wake)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert result.state == "running"
@@ -9014,7 +9013,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(eng.store, "get_work_item", get_work_item)
         monkeypatch.setattr(eng.runtime, "wake", wake)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         recovered = original_get(item.id)
         assert result.state == "running"
@@ -9061,7 +9060,7 @@ class TestReviewerRejectBoundedFallback:
         ])
 
         with pytest.raises(PlatformError, match="causal|identity|handoff"):
-            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         assert reviewer_wakes == 0
         assert eng.store.get_work_item(item.id).worker_handoff is not None
@@ -9093,7 +9092,7 @@ class TestReviewerRejectBoundedFallback:
 
         monkeypatch.setattr(eng.runtime, "wake", wake)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         assert result.state == "running"
         assert manifest.nodes["a"].status == "in_progress"
@@ -9126,7 +9125,7 @@ class TestReviewerRejectBoundedFallback:
         ])
 
         with pytest.raises(PlatformError, match="projection|attachment"):
-            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
     def test_delivery_candidate_change_defers_without_stopping_runner(
         self, tmp_path, monkeypatch,
@@ -9169,7 +9168,7 @@ class TestReviewerRejectBoundedFallback:
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ])
 
-        first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        first = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         deferred = eng.store.get_work_item(item.id)
         assert first.state == "running"
@@ -9180,7 +9179,7 @@ class TestReviewerRejectBoundedFallback:
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ]) == reviewer_assignments
 
-        second = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        second = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert second.state == "running"
@@ -9195,6 +9194,7 @@ class TestReviewerRejectBoundedFallback:
         self, tmp_path, monkeypatch,
     ):
         """seal 后又 push commit 时，下一轮 Reviewer 派发必须失败关闭。"""
+        code_host = MockCodeHost()
         from omac.engines import create_engine
         from omac.core.workitem import AgentRunObservation, PullRequestReadiness
         from omac.errors import PlatformError
@@ -9214,9 +9214,7 @@ class TestReviewerRejectBoundedFallback:
                 agent_id=intent.target_agent_id,
             )
         ])
-        monkeypatch.setattr(
-            eng.store,
-            "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda _pr_url: PullRequestReadiness(
                 is_draft=False,
                 state="OPEN",
@@ -9224,7 +9222,7 @@ class TestReviewerRejectBoundedFallback:
             ),
         )
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, code_host, manifest, path, max_parallel=4)
 
         assert result.state == "needs_decision"
         assert manifest.nodes["a"].status == "blocked"
@@ -9237,6 +9235,7 @@ class TestReviewerRejectBoundedFallback:
         self, tmp_path, monkeypatch,
     ):
         """handoff seal 不是证据门；空命令 verification 仍必须被正常门阻断。"""
+        code_host = MockCodeHost()
         from omac.engines import create_engine
         from omac.core.workitem import AgentRunObservation, PullRequestReadiness
 
@@ -9271,13 +9270,11 @@ class TestReviewerRejectBoundedFallback:
                 agent_id=intent.target_agent_id,
             )
         ])
-        monkeypatch.setattr(
-            eng.store,
-            "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda _pr_url: PullRequestReadiness(
                 is_draft=False, state="OPEN", head_sha=head),
         )
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, code_host, manifest, path, max_parallel=4)
 
         assert result.state == "needs_decision"
         assert manifest.nodes["a"].status == "blocked"
@@ -9316,7 +9313,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(
             eng.store, "update_work_item_metadata", crash_after_identity)
         with pytest.raises(RuntimeError, match="controller seal"):
-            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         persisted = eng.store.get_work_item(item.id)
         assert persisted.delivery_identity is not None
@@ -9327,8 +9324,8 @@ class TestReviewerRejectBoundedFallback:
         reviewer_assignments_before = len([
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ])
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert recovered.worker_handoff is None
@@ -9372,7 +9369,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
         monkeypatch.setattr(eng.runtime, "wake", wake)
 
-        first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        first = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         assert first.state == "running"
         assert worker_wakes == 0
         assert eng.store.get_work_item(item.id).worker_handoff is None
@@ -9404,7 +9401,7 @@ class TestReviewerRejectBoundedFallback:
             )
         ])
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         assert result.state == "running"
         assert manifest.nodes["a"].status == "in_progress"
@@ -9414,6 +9411,7 @@ class TestReviewerRejectBoundedFallback:
         self, tmp_path, monkeypatch,
     ):
         """handoff 收敛后必须走正常 evidence/CI 路径，失败 CI 不得派 Reviewer。"""
+        code_host = MockCodeHost()
         from omac.engines import create_engine
         from omac.core.workitem import (
             AgentRunObservation,
@@ -9435,9 +9433,7 @@ class TestReviewerRejectBoundedFallback:
                 agent_id=intent.target_agent_id,
             )
         ])
-        monkeypatch.setattr(
-            eng.store,
-            "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda _pr_url: PullRequestReadiness(
                 is_draft=False,
                 state="OPEN",
@@ -9457,13 +9453,13 @@ class TestReviewerRejectBoundedFallback:
             if role == "reviewer":
                 reviewer_wakes += 1
 
-        monkeypatch.setattr(eng.store, "check_pull_request", check_pr)
+        monkeypatch.setattr(code_host, "check_pull_request", check_pr)
         monkeypatch.setattr(eng.runtime, "wake", wake)
 
         result = tick(
             eng.store,
             eng.runtime,
-            manifest,
+            code_host, manifest,
             path,
             max_parallel=4,
             retry_limits={"ci": 0},
@@ -9479,6 +9475,7 @@ class TestReviewerRejectBoundedFallback:
         self, tmp_path, monkeypatch,
     ):
         """submit 后 PR 推新 commit 时，metadata 里的旧 head 不能通过恢复。"""
+        code_host = MockCodeHost()
         from omac.engines import create_engine
         from omac.core.workitem import AgentRunObservation, PullRequestReadiness
         from omac.errors import PlatformError
@@ -9497,21 +9494,20 @@ class TestReviewerRejectBoundedFallback:
                 agent_id=intent.target_agent_id,
             )
         ])
-        monkeypatch.setattr(
-            eng.store,
-            "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda _pr_url: PullRequestReadiness(
                 is_draft=False, state="OPEN", head_sha="new-remote-head"),
         )
 
         with pytest.raises(PlatformError, match="head|HEAD"):
-            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+            tick(eng.store, eng.runtime, code_host, manifest, path, max_parallel=4)
 
     @pytest.mark.parametrize("gate", ["review", "review-nits"])
     def test_same_content_new_causal_submit_enters_review_after_terminal_run(
         self, tmp_path, monkeypatch, gate,
     ):
         """PR URL/verification 内容相同也可由新 generation/run 证明真实提交。"""
+        code_host = MockCodeHost()
         from omac.engines import create_engine
         from omac.core.workitem import AgentRunObservation
 
@@ -9552,9 +9548,7 @@ class TestReviewerRejectBoundedFallback:
             return original_wake(item_id, agent, role)
 
         monkeypatch.setattr(eng.runtime, "wake", wake)
-        monkeypatch.setattr(
-            eng.store,
-            "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda _pr_url: PullRequestReadiness(
                     is_draft=False,
                     state="OPEN",
@@ -9562,7 +9556,7 @@ class TestReviewerRejectBoundedFallback:
                 ),
         )
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, code_host, manifest, path, max_parallel=4)
 
         assert result.state == "running"
         assert manifest.nodes["a"].status == "in_review"
@@ -9628,7 +9622,7 @@ class TestReviewerRejectBoundedFallback:
             ] if wake_failed else []),
         )
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         assert result.state == "running"
         assert manifest.nodes["a"].status == "in_review"
@@ -9670,7 +9664,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(
             eng.store, "update_work_item_metadata", crash_after_bounce)
         with pytest.raises(RuntimeError, match="review_bounce"):
-            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         monkeypatch.setattr(
             eng.store, "update_work_item_metadata", original_update)
 
@@ -9698,7 +9692,7 @@ class TestReviewerRejectBoundedFallback:
         persisted = load_manifest(path)
 
         result = tick(
-            eng.store, eng.runtime, persisted, path, max_parallel=4)
+            eng.store, eng.runtime, eng.code_host, persisted, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert recovered.worker_handoff is not None
@@ -9758,7 +9752,7 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(eng.store, "assign_work_item", assign)
 
         with pytest.raises(PlatformError, match="causal|identity|predates"):
-            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert recovered.worker_handoff is not None
@@ -9816,7 +9810,7 @@ class TestReviewerRejectBoundedFallback:
 
         with pytest.raises(PlatformError, match="causal identity"):
             loop._dispatch_worker_handoff(
-                eng.store, eng.runtime, manifest, "a")
+                eng.store, eng.runtime, eng.code_host, manifest, "a")
 
     @pytest.mark.parametrize("intent_kind", ["malformed", "stale"])
     @pytest.mark.parametrize(
@@ -9886,7 +9880,7 @@ class TestReviewerRejectBoundedFallback:
             entry for entry in eng.store.assign_log if entry[2] == "reviewer"
         ])
         with pytest.raises(PlatformError, match="causal|identity|predates"):
-            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         recovered = eng.store.get_work_item(item.id)
         assert recovered.worker_handoff is not None
         assert len([
@@ -9958,7 +9952,7 @@ class TestReviewerRejectBoundedFallback:
 
         error_type = PlatformError if checkpoint == "reviewer_wake" else RuntimeError
         with pytest.raises(error_type, match="simulated"):
-            tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         interrupted = eng.store.get_work_item(item.id)
         if checkpoint == "intent_clear":
@@ -9974,8 +9968,8 @@ class TestReviewerRejectBoundedFallback:
         monkeypatch.setattr(eng.runtime, "wake", original_wake)
         persisted = load_manifest(path)
 
-        first = tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
-        second = tick(eng.store, eng.runtime, persisted, path, max_parallel=4)
+        first = tick(eng.store, eng.runtime, eng.code_host, persisted, path, max_parallel=4)
+        second = tick(eng.store, eng.runtime, eng.code_host, persisted, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert first.state == "running"
@@ -9999,6 +9993,7 @@ class TestReviewerRejectBoundedFallback:
         self, tmp_path, monkeypatch,
     ):
         """in_progress 新交付不能消费旧 subject 的任何 review verdict。"""
+        code_host = MockCodeHost()
         from omac.engines import create_engine
 
         eng = create_engine("mock", _config(MOCK_AUTO_COMPLETE="false"))
@@ -10017,14 +10012,12 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_work_item_metadata(item.id, delivery_identity={})
         manifest.nodes["a"].status = "in_progress"
         save_manifest(manifest, path)
-        monkeypatch.setattr(
-            eng.store,
-            "request_pull_request_merge",
+        monkeypatch.setattr(code_host, "request_pull_request_merge",
             lambda *_args, **_kwargs: pytest.fail(
                 "stale pass must not request merge"),
         )
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, code_host, manifest, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert result.state == "needs_decision"
@@ -10085,7 +10078,7 @@ class TestReviewerRejectBoundedFallback:
 
         monkeypatch.setattr(eng.store, "update_work_item_metadata", update)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert result.state == "running"
@@ -10157,7 +10150,7 @@ class TestReviewerRejectBoundedFallback:
         })
         eng.store.update_work_item_metadata(item.id, review_report=report)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         got = eng.store.get_work_item(item.id)
         assert result.state == "needs_decision"
@@ -10209,7 +10202,7 @@ class TestReviewerRejectBoundedFallback:
         )
         eng.store.update_work_item_metadata(item.id, review_report=report)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         got = eng.store.get_work_item(item.id)
         assert result.state == "running"
@@ -10236,7 +10229,7 @@ class TestReviewerRejectBoundedFallback:
             review_report_source=yaml.safe_dump(report),
         )
 
-        first = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        first = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         assert first.state == "needs_decision"
         assert manifest.nodes["a"].status == "blocked"
@@ -10271,7 +10264,7 @@ class TestReviewerRejectBoundedFallback:
             },
         )
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         got = eng.store.get_work_item(item.id)
         assert result.state == "running"
@@ -10298,7 +10291,7 @@ class TestReviewerRejectBoundedFallback:
         )
         save_manifest(manifest, path)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         got = eng.store.get_work_item(item.id)
         assert result.state == "converged"
@@ -10330,7 +10323,7 @@ class TestReviewerRejectBoundedFallback:
         )
         save_manifest(manifest, path)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         got = eng.store.get_work_item(item.id)
         assert result.state == "running"
@@ -10365,7 +10358,7 @@ class TestReviewerRejectBoundedFallback:
         )
 
         # reviewer reject → worker authoring；保留上一轮 report 作为返工上下文。
-        tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
         assert manifest.nodes["a"].status == "in_progress"
 
         # worker 合法重交，但旧 controller/manifest 留下 terminal 状态。
@@ -10373,7 +10366,7 @@ class TestReviewerRejectBoundedFallback:
         manifest.nodes["a"].status = stale_status
         save_manifest(manifest, path)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         got = eng.store.get_work_item(item.id)
         assert result.state == "running"
@@ -10391,7 +10384,7 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
         save_manifest(manifest, path)
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         got = eng.store.get_work_item(item.id)
         assert result.state == "running"
@@ -10408,7 +10401,7 @@ class TestReviewerRejectBoundedFallback:
         manifest, eng, item = self._setup_reject_node(eng, fpath)
 
         # 第 1 次 reject:回退 worker,review_bounce 0→1
-        tick(eng.store, eng.runtime, manifest, fpath,
+        tick(eng.store, eng.runtime, eng.code_host, manifest, fpath,
              max_parallel=4, retry_limits={"review": 1})
         got = eng.store.get_work_item(item.id)
         assert manifest.nodes["a"].status == "in_progress"
@@ -10419,14 +10412,14 @@ class TestReviewerRejectBoundedFallback:
         # 模拟 worker 修完重新提交(合规)→ 再次 in_review
         eng.store.set_node_contract(item.id, self._simple_contract())
         self._submit_revision(eng, item, revision=2)
-        tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, fpath, max_parallel=4)
         set_node(manifest, "a", status="in_review")
         save_manifest(manifest, fpath)
         eng.store.update_work_item_metadata(item.id, review_verdict="reject")
         eng.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
 
         # 第 2 次 reject:已耗尽 → blocked
-        tick(eng.store, eng.runtime, manifest, fpath,
+        tick(eng.store, eng.runtime, eng.code_host, manifest, fpath,
              max_parallel=4, retry_limits={"review": 1})
         got = eng.store.get_work_item(item.id)
         assert manifest.nodes["a"].status == "blocked"
@@ -10444,7 +10437,7 @@ class TestReviewerRejectBoundedFallback:
             eng.store.update_work_item_metadata(item.id, review_verdict="reject")
             eng.store.update_status(
                 item.id, WorkItemStatus.IN_REVIEW)
-            tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, fpath, max_parallel=4)
             got = eng.store.get_work_item(item.id)
             assert manifest.nodes["a"].status == "in_progress", f"第 {i+1} 次应回退 worker"
             if i == 2:
@@ -10454,7 +10447,7 @@ class TestReviewerRejectBoundedFallback:
             # 推进:worker 修完重新提交 → in_review
             eng.store.set_node_contract(item.id, self._simple_contract())
             self._submit_revision(eng, item, revision=i + 2)
-            tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
+            tick(eng.store, eng.runtime, eng.code_host, manifest, fpath, max_parallel=4)
             from omac.core.manifest import set_node
             set_node(manifest, "a", status="in_review")
             save_manifest(manifest, fpath)
@@ -10495,7 +10488,7 @@ class TestReviewerRejectBoundedFallback:
         eng.store.update_work_item_metadata(
             item.id, review_report=_review_report(item, "reject"))
 
-        result = tick(eng.store, eng.runtime, manifest, path, max_parallel=4)
+        result = tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
 
         got = eng.store.get_work_item(item.id)
         handoff = got.worker_handoff
@@ -10529,7 +10522,7 @@ class TestReviewerRejectFallbackRecovery:
         manifest = Manifest(meta={"workspace_id": "ws"}, nodes={node.id: node})
         save_manifest(manifest, fpath)
 
-        tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, fpath, max_parallel=4)
         item = eng.store.get_work_item(manifest.nodes[key].work_item_id)
         eng.store.set_node_contract(item.id, contract)
         verification = {
@@ -10553,7 +10546,7 @@ class TestReviewerRejectFallbackRecovery:
         )
         from omac.core.workitem import WorkItemStatus
         eng.store.update_status(item.id, WorkItemStatus.DONE)
-        tick(eng.store, eng.runtime, manifest, fpath, max_parallel=4)
+        tick(eng.store, eng.runtime, eng.code_host, manifest, fpath, max_parallel=4)
         set_node(manifest, key, status="in_review")
         save_manifest(manifest, fpath)
         eng.store.update_work_item_metadata(item.id, review_verdict="reject")
@@ -10582,7 +10575,7 @@ class TestReviewerRejectFallbackRecovery:
                 raise PlatformError("wake result unknown")
 
         monkeypatch.setattr(eng.runtime, "wake", wake_then_fail)
-        tick(eng.store, eng.runtime, manifest, fpath,
+        tick(eng.store, eng.runtime, eng.code_host, manifest, fpath,
              max_parallel=4, retry_limits={"review": 3})
 
         interrupted = eng.store.get_work_item(item.id)
@@ -10601,8 +10594,8 @@ class TestReviewerRejectFallbackRecovery:
         )
         persisted = load_manifest(fpath)
 
-        first = tick(eng.store, eng.runtime, persisted, fpath, max_parallel=4)
-        second = tick(eng.store, eng.runtime, persisted, fpath, max_parallel=4)
+        first = tick(eng.store, eng.runtime, eng.code_host, persisted, fpath, max_parallel=4)
+        second = tick(eng.store, eng.runtime, eng.code_host, persisted, fpath, max_parallel=4)
 
         recovered = eng.store.get_work_item(item.id)
         assert first.state == "running"
@@ -10719,7 +10712,7 @@ def test_capped_worker_handoff_treats_pre_cutoff_runs_as_baseline(
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
     monkeypatch.setattr(eng.runtime, "wake", wake)
 
-    assert loop.collect_results(eng.store, eng.runtime, manifest, path) == {}
+    assert loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path) == {}
 
     recovered = eng.store.get_work_item(item.id)
     assert wake_calls == 1
@@ -10747,4 +10740,4 @@ def test_capped_worker_handoff_still_fails_closed_for_post_cutoff_stranger(
     monkeypatch.setattr(eng.runtime, "list_runs", lambda _item_id: list(runs))
 
     with pytest.raises(PlatformError, match="non-causal"):
-        loop.collect_results(eng.store, eng.runtime, manifest, path)
+        loop.collect_results(eng.store, eng.runtime, eng.code_host, manifest, path)

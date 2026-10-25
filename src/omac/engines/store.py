@@ -24,11 +24,6 @@ from ..core.taskmeta import (
 from ..errors import PlatformError, WorkItemNotFoundError
 from .models import EngineConfig, ProjectInfo, WorkspaceInfo
 from ..core.workitem import (
-    MergeCommandResult,
-    PullRequestCheckResult,
-    PullRequestObservation,
-    PullRequestReadiness,
-    PullRequestReadinessFailure,
     VerificationAttachmentObservation,
     WorkItem,
     WorkItemControlProjection,
@@ -488,55 +483,14 @@ class WorkItemStore(ABC):
         raise PlatformError(
             "WorkItemStore does not support atomic confirmed-merge normalization")
 
-    # ==================== PR 合并闭环 ====================
-
-    @abstractmethod
-    def request_pull_request_merge(
-        self, pr_url: str, command: str, timeout_seconds: int,
-    ) -> MergeCommandResult:
-        """向远端发起一次合并请求。
-
-        返回的是本地命令结果，不能据此推导 PR 已合入；调用方必须随后调用
-        ``observe_pull_request``。命令执行属于引擎适配器，pipeline/CLI 不得直调平台 CLI。
-        """
-
-    @abstractmethod
-    def observe_pull_request(self, pr_url: str) -> PullRequestObservation:
-        """读取远端 PR 当前事实；不可确认时返回 ``UNKNOWN``，不得臆测已合入。"""
-
-    @abstractmethod
-    def check_pull_request(
-        self, pr_url: str, command: str, timeout_seconds: int,
-    ) -> PullRequestCheckResult:
-        """执行一次 PR 检查命令并返回本地结果。
-
-        配置的命令（包括默认平台 CLI）只允许由引擎适配器执行；pipeline 只依据
-        结果推进 CI 门，不直接调用平台 CLI。
-        """
-
-    @abstractmethod
-    def read_pull_request_readiness(
-        self, pr_url: str,
-    ) -> PullRequestReadiness | PullRequestReadinessFailure:
-        """读取 PR draft/open 事实，供 develop authoring 的交付前置门使用。"""
-
     @abstractmethod
     def observe_verification_attachment(
         self, item_id: str, ref: Dict[str, Any],
     ) -> VerificationAttachmentObservation:
         """独立读取 verification 附件平台归属，并对下载字节重新计算摘要。"""
 
-    def observe_release_assets(self, urls: List[str], *, download: bool = True):
-        """Read exact release/asset identities and optionally verify their bytes."""
-        raise PlatformError("This Store cannot observe pinned release assets")
 
-    def read_verification_reference(self, item_id: str, comment_id: str | None = None, *, attachment_id: str | None = None) -> Dict[str, Any]:
-        """Read the one original verification reference in a native comment."""
-        raise PlatformError("This Store cannot read the native verification index")
 
-    def observe_git_artifacts(self, urls: List[str], *, download: bool = True):
-        """Observe bounded native commit/tree/blob identities and optional bytes."""
-        raise PlatformError("This Store cannot observe native Git publications")
 
     # ==================== 便捷方法(基类实现) ====================
 

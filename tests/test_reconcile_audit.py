@@ -12,7 +12,7 @@ from omac.errors import PlatformError, ValidationError
 from omac.cli.commands import dag as dag_cmd
 from omac.pipeline import loop, reconcile_audit
 from omac.pipeline.loop import TickResult, tick
-from omac.engines.mock import MockRuntime, MockStore
+from omac.engines.mock import MockCodeHost, MockRuntime, MockStore
 from omac.engines.models import EngineConfig
 from omac.core.workitem import WorkItemStatus
 
@@ -127,10 +127,10 @@ def test_cli_schedule_persists_first_full_scan_and_skips_static_after_reload(
         "node": Node("node", "worker", work_item_id=item.id, status="blocked"),
     })
     save_manifest(manifest, path)
-    engine = SimpleNamespace(store=store, runtime=MockRuntime(store))
+    engine = SimpleNamespace(store=store, runtime=MockRuntime(store), code_host=MockCodeHost())
     scans = []
 
-    def fake_tick(store, runtime, manifest, manifest_path, *, full_scan,
+    def fake_tick(store, runtime, _code_host, manifest, manifest_path, *, full_scan,
                   after_successful_tick, **kwargs):
         scans.append(full_scan)
         after_successful_tick()
@@ -185,7 +185,7 @@ def test_failed_full_reconcile_does_not_advance_audit_state(tmp_path):
     store.observe_work_item_control = fail_read
     with pytest.raises(PlatformError, match="simulated reconcile failure"):
         tick(
-            store, MockRuntime(store), manifest, path, full_scan=True,
+            store, MockRuntime(store), MockCodeHost(), manifest, path, full_scan=True,
             after_successful_tick=record)
 
     assert recorded is False
@@ -215,7 +215,7 @@ def test_failed_full_tick_after_reconcile_does_not_advance_audit_state(
     monkeypatch.setattr(loop, "collect_results", fail_collect)
     with pytest.raises(PlatformError, match="simulated collect failure"):
         tick(
-            store, MockRuntime(store), manifest, path, full_scan=True,
+            store, MockRuntime(store), MockCodeHost(), manifest, path, full_scan=True,
             after_successful_tick=record)
 
     assert recorded is False
@@ -252,7 +252,7 @@ def test_incomplete_full_scan_does_not_advance_audit_state_or_schedule(tmp_path)
     store.observe_work_item_controls = fail_batch
     store.observe_work_item_control = fail_fallback
     result = tick(
-        store, MockRuntime(store), manifest, path, full_scan=True,
+        store, MockRuntime(store), MockCodeHost(), manifest, path, full_scan=True,
         after_successful_tick=record)
 
     assert result.audit_complete is False
@@ -276,7 +276,7 @@ def test_failed_audit_state_write_does_not_advance_audit_state(tmp_path):
 
     with pytest.raises(PlatformError, match="simulated audit"):
         tick(
-            store, MockRuntime(store), manifest, path, full_scan=True,
+            store, MockRuntime(store), MockCodeHost(), manifest, path, full_scan=True,
             after_successful_tick=fail_after_success)
 
     assert "reconcile_audit" not in load_manifest(path).meta
@@ -338,7 +338,7 @@ def test_successful_needs_decision_records_audit_after_report_before_save(
             manifest, full_scan=True, now=NOW)
 
     result = tick(
-        store, MockRuntime(store), manifest, path, full_scan=True,
+        store, MockRuntime(store), MockCodeHost(), manifest, path, full_scan=True,
         after_successful_tick=record)
 
     assert result.state == "needs_decision"

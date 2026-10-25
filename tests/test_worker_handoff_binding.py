@@ -3,6 +3,7 @@
 from dataclasses import replace
 from unittest.mock import Mock
 
+from omac.engines.mock import MockCodeHost
 import pytest
 
 from omac.core.manifest import Manifest, Node, _load_contract
@@ -62,7 +63,7 @@ def test_explicit_dispatch_binds_materialized_contract_not_null(monkeypatch):
         loop._dispatch_worker_handoff(
             store,
             runtime,
-            manifest,
+            MockCodeHost(), manifest,
             "worker",
             gate="explicit-dispatch",
             review_bounce=0,
@@ -96,7 +97,7 @@ def test_contract_hydration_failure_does_not_persist_null_intent(monkeypatch, fa
         loop._dispatch_worker_handoff(
             store,
             runtime,
-            manifest,
+            MockCodeHost(), manifest,
             "worker",
             gate="explicit-dispatch",
             review_bounce=0,
@@ -118,7 +119,7 @@ def test_materialized_handoff_can_block_but_null_binding_stays_rejected(
         loop._dispatch_worker_handoff(
             store,
             runtime,
-            manifest,
+            MockCodeHost(), manifest,
             "worker",
             gate="explicit-dispatch",
             review_bounce=0,

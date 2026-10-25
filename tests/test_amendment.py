@@ -1,4 +1,5 @@
 import copy
+from omac.engines.mock import MockCodeHost
 import json
 import os
 import subprocess
@@ -904,7 +905,6 @@ def test_done_merged_historical_responsibility_correction_preserves_facts_and_ne
     for method in (
         "set_node_contract", "reset_review", "prepare_review_cycle",
         "update_work_item_metadata", "update_status", "assign_work_item",
-        "request_pull_request_merge", "observe_pull_request",
     ):
         monkeypatch.setattr(engine.store, method, reject_store_write)
 
@@ -1540,7 +1540,7 @@ def test_presynced_pure_merging_retires_handoff_before_reached_and_tick(
         loop, "run_merge_delivery", lambda *_args, **_kwargs: "pass")
 
     tick_result = loop.tick(
-        engine.store, engine.runtime, applied, str(path), max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, applied, str(path), max_parallel=1)
 
     assert tick_result.state == "converged"
     assert applied.nodes["bootstrap"].status == "done"
@@ -1603,7 +1603,6 @@ def test_responsibility_merging_syncs_contract_without_replaying_delivery(tmp_pa
     old_contract_ref = before.contract_ref["sha256"]
     for method in (
         "reset_review", "prepare_review_cycle", "assign_work_item",
-        "observe_pull_request", "request_pull_request_merge",
     ):
         monkeypatch.setattr(
             engine.store, method,
@@ -2925,9 +2924,9 @@ def test_runner_restart_after_legacy_convergence_amendment_uses_fresh_worker_bud
     save_manifest(manifest, str(path))
 
     first = loop.tick(
-        engine.store, engine.runtime, manifest, str(path), max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, manifest, str(path), max_parallel=1)
     second = loop.tick(
-        engine.store, engine.runtime, manifest, str(path), max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, manifest, str(path), max_parallel=1)
 
     current = engine.store.get_work_item(item.id)
     assert first.state == "running"
@@ -3780,8 +3779,8 @@ def test_legacy_synced_repair_first_reconcile_dispatches_one_worker(
     save_manifest(manifest, str(path))
     before = list(engine.runtime.list_runs(target.id))
 
-    loop.tick(engine.store, engine.runtime, manifest, str(path), max_parallel=1)
-    loop.tick(engine.store, engine.runtime, manifest, str(path), max_parallel=1)
+    loop.tick(engine.store, engine.runtime, engine.code_host, manifest, str(path), max_parallel=1)
+    loop.tick(engine.store, engine.runtime, engine.code_host, manifest, str(path), max_parallel=1)
 
     after = list(engine.runtime.list_runs(target.id))
     new_formal = [run for run in after if run not in before and run.formal]
@@ -3820,7 +3819,7 @@ def test_recovery_normalizes_stale_in_progress_authoring_node_to_dispatchable(
     assert item.status == WorkItemStatus.TODO
     before = list(engine.runtime.list_runs(target.id))
 
-    loop.tick(engine.store, engine.runtime, manifest, str(path), max_parallel=1)
+    loop.tick(engine.store, engine.runtime, engine.code_host, manifest, str(path), max_parallel=1)
 
     after = list(engine.runtime.list_runs(target.id))
     new_formal = [run for run in after if run not in before and run.formal]
@@ -4196,7 +4195,7 @@ def test_review_recovery_uses_fresh_budget_without_erasing_absolute_history(
     monkeypatch.setattr(loop, "validate_review_evidence", lambda *_args: [])
 
     failures = loop.collect_results(
-        engine.store, engine.runtime, manifest, str(path),
+        engine.store, engine.runtime, engine.code_host, manifest, str(path),
         retry_limits={"worker": 3, "ci": 3, "review": 3, "merge": 3},
     )
 
@@ -4214,7 +4213,7 @@ def test_authoring_recovery_uses_fresh_worker_budget_without_erasing_history(tmp
     engine.store.get_work_item(item.id).agent_run_finished_without_submit = True
 
     failures = loop.collect_results(
-        engine.store, engine.runtime, manifest, str(path),
+        engine.store, engine.runtime, engine.code_host, manifest, str(path),
         retry_limits={"worker": 3, "ci": 3, "review": 3, "merge": 3},
     )
 
@@ -4226,9 +4225,10 @@ def test_authoring_recovery_uses_fresh_worker_budget_without_erasing_history(tmp
 
 
 def test_merging_recovery_uses_fresh_merge_budget_without_erasing_history(tmp_path):
+    code_host = MockCodeHost()
     path, engine, item = _apply_exhausted_stage_amendment(tmp_path, "merging")
     manifest = load_manifest(str(path))
-    engine.store.observe_pull_request = lambda _url: type("Observation", (), {
+    code_host.observe_pull_request = lambda _url: type("Observation", (), {
         "state": "closed_unmerged",
         "merged_at": None,
         "detail": "closed without merge",
@@ -4236,7 +4236,7 @@ def test_merging_recovery_uses_fresh_merge_budget_without_erasing_history(tmp_pa
 
     result = run_merge_delivery(
         {}, manifest, "bootstrap", engine.store, engine.runtime,
-        {"worker": 3, "ci": 3, "review": 3, "merge": 3}, str(path),
+        code_host, {"worker": 3, "ci": 3, "review": 3, "merge": 3}, str(path),
     )
 
     got = engine.store.get_work_item(item.id)
@@ -4338,6 +4338,7 @@ def test_apply_ledger_completes_after_contract_write_but_before_review_reset(tmp
 
 
 def test_merge_only_recovery_keeps_pass_verdict_and_enters_merging(tmp_path):
+    code_host = MockCodeHost()
     path = _manifest(tmp_path)
     engine = _engine()
     item = engine.store.create_work_item(
@@ -4353,9 +4354,9 @@ def test_merge_only_recovery_keeps_pass_verdict_and_enters_merging(tmp_path):
     reviewed = build_reviewed_amendment(
         load_manifest(str(path)), proposal, engine.store,
         issue_id="amendment-issue", reviewer_verdict="pass")
-    engine.store.observe_pull_request = lambda *_args, **_kwargs: pytest.fail(
+    code_host.observe_pull_request = lambda *_args, **_kwargs: pytest.fail(
         "amendment accept must delegate PR observation to dag run")
-    engine.store.request_pull_request_merge = lambda *_args, **_kwargs: pytest.fail(
+    code_host.request_pull_request_merge = lambda *_args, **_kwargs: pytest.fail(
         "amendment accept must delegate merge requests to dag run")
     engine.store.set_node_contract = lambda *_args, **_kwargs: pytest.fail(
         "pure merge resume must not republish the unchanged contract")
@@ -4418,7 +4419,7 @@ def test_implementation_scope_change_requires_authoring_and_explicit_migration(t
     assert engine.store.get_work_item("1").worker_handoff is None
 
     dispatched = loop.tick(
-        engine.store, engine.runtime, manifest, str(path), max_parallel=1)
+        engine.store, engine.runtime, engine.code_host, manifest, str(path), max_parallel=1)
 
     handoff = engine.store.get_work_item("1").worker_handoff
     assert dispatched.dispatched == ["bootstrap"]
@@ -4628,8 +4629,8 @@ def test_pending_apply_blocks_all_dag_progress_until_same_accept_resumes(
             "pending amendment gate must run before reading Store"),
     )
     for advance in (
-        lambda: loop.reconcile(engine.store, partial, str(path)),
-        lambda: loop.tick(engine.store, engine.runtime, partial, str(path)),
+        lambda: loop.reconcile(engine.store, engine.code_host, partial, str(path)),
+        lambda: loop.tick(engine.store, engine.runtime, engine.code_host, partial, str(path)),
     ):
         with pytest.raises(NeedsDecision) as exc_info:
             advance()
@@ -4665,7 +4666,7 @@ def test_pending_apply_blocks_all_dag_progress_until_same_accept_resumes(
         entry["state"] in {"synced", "observed_progress"}
         for entry in completed.meta["amendment_apply"]["nodes"].values()
     )
-    loop.reconcile(engine.store, completed, str(path))
+    loop.reconcile(engine.store, engine.code_host, completed, str(path))
 
 
 def test_topology_change_fails_closed_for_completed_downstream(tmp_path):
@@ -4744,7 +4745,7 @@ def test_work_submit_accepts_structured_amendment_delivery(tmp_path):
     amendment_file.write_text(yaml.safe_dump(_proposal(_contract_update())))
 
     result = submit(
-        engine.store, item.id, amendment_file=str(amendment_file),
+        engine.store, item.id, code_host=engine.code_host, amendment_file=str(amendment_file),
         agent_pool={"alice", "bob", "charlie"})
 
     got = engine.store.get_work_item(item.id)

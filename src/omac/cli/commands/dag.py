@@ -480,7 +480,7 @@ def status(args) -> int:
             f"  用 omac plan create --name <name> 生成,或检查路径"))
     engine, _ = _assemble_engine(args)
     manifest = load_manifest(args.manifest)
-    report = build_status_report(manifest, engine.store, args.manifest)
+    report = build_status_report(manifest, engine.store, engine.code_host, args.manifest)
 
     if args.output == "json":
         print_json(report)
@@ -708,7 +708,7 @@ def _scheduled_tick(
     reconcile_config = resolve_reconcile(config)
     full_scan = should_full_scan(manifest, reconcile_config)
     return tick(
-        engine.store, engine.runtime, manifest, manifest_path,
+        engine.store, engine.runtime, engine.code_host, manifest, manifest_path,
         max_parallel=max_parallel, retry_limits=retry_limits, config=config,
         full_scan=full_scan,
         after_successful_tick=lambda: record_successful_tick(

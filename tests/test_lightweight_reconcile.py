@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from omac.engines.mock import MockCodeHost
 import copy
 from dataclasses import replace
 import hashlib
@@ -236,7 +237,6 @@ def _store(remote: _RemoteFixture) -> MulticaStore:
     store = MulticaStore(EngineConfig(
         engine_type="multica", workspace_id="ws", project_id="project-1"))
     store._run_multica = remote.run
-    store.observe_pull_request = remote.observe_pull_request
     return store
 
 
@@ -457,7 +457,7 @@ def test_reconcile_hydrates_eight_work_items_with_bounded_parallelism():
 
     started = time.monotonic()
     observations, _ = loop._observe_reconcile_inputs(
-        store, manifest, max_parallel=4)
+        store, MockCodeHost(), manifest, max_parallel=4)
     elapsed = time.monotonic() - started
 
     assert elapsed < 0.55
@@ -501,7 +501,7 @@ def test_reconcile_observes_controls_with_bounded_parallelism():
 
     started = time.monotonic()
     observations, _ = loop._observe_reconcile_inputs(
-        store, manifest, max_parallel=4, full_scan=True)
+        store, MockCodeHost(), manifest, max_parallel=4, full_scan=True)
     elapsed = time.monotonic() - started
 
     assert elapsed < 0.55
@@ -523,7 +523,7 @@ def test_reconcile_hydration_completion_order_does_not_change_manifest_order():
     )
 
     observations, _ = loop._observe_reconcile_inputs(
-        store, _parallel_hydration_manifest(item_ids), max_parallel=4)
+        store, MockCodeHost(), _parallel_hydration_manifest(item_ids), max_parallel=4)
 
     assert store.hydration_finished != item_ids
     assert list(observations) == item_ids
@@ -538,7 +538,7 @@ def test_reconcile_respects_store_serial_hydration_capability():
     )
 
     loop._observe_reconcile_inputs(
-        store, _parallel_hydration_manifest(item_ids), max_parallel=8)
+        store, MockCodeHost(), _parallel_hydration_manifest(item_ids), max_parallel=8)
 
     assert store.max_active_hydrations == 1
 
@@ -567,7 +567,7 @@ def test_reconcile_hydration_failure_precedes_pr_reads_and_candidate_writes(
 
     with pytest.raises(PlatformError, match="hydrate failed: item-3"):
         loop.reconcile_with_observations(
-            store, manifest, path, max_parallel=4)
+            store, MockCodeHost(), manifest, path, max_parallel=4)
 
     assert store.pr_observations == 0
     assert candidate_calls == []
@@ -579,7 +579,7 @@ def test_reconcile_hydration_handles_zero_or_one_work_item(item_ids):
     store = _ParallelHydrationStore(item_ids)
 
     observations, pull_requests = loop._observe_reconcile_inputs(
-        store, _parallel_hydration_manifest(item_ids), max_parallel=8)
+        store, MockCodeHost(), _parallel_hydration_manifest(item_ids), max_parallel=8)
 
     assert list(observations) == item_ids
     assert pull_requests == {}
@@ -594,7 +594,7 @@ def test_reconcile_does_not_share_duplicate_attachment_refs_across_work_items():
     )
 
     observations, _ = loop._observe_reconcile_inputs(
-        store, _parallel_hydration_manifest(item_ids), max_parallel=2)
+        store, MockCodeHost(), _parallel_hydration_manifest(item_ids), max_parallel=2)
 
     assert set(store.hydration_plans) == set(item_ids)
     assert observations["item-a"].work_item.verification == {
@@ -614,11 +614,11 @@ def test_146_node_interval_reconcile_reads_only_active_issues_and_hydrates_neede
     for key, node in nodes.items():
         item = legacy_store.get_work_item(node.work_item_id)
         if loop._requires_pull_request_observation(node, item):
-            legacy_store.observe_pull_request(loop._pull_request_url(item))
+            legacy_remote.observe_pull_request(loop._pull_request_url(item))
 
     optimized_remote = _RemoteFixture(issues, attachments)
     optimized_store = _store(optimized_remote)
-    loop._observe_reconcile_inputs(optimized_store, manifest)
+    loop._observe_reconcile_inputs(optimized_store, optimized_remote, manifest)
 
     assert (
         legacy_remote.issue_gets,
@@ -645,7 +645,7 @@ def test_146_node_full_scan_batches_control_envelopes_without_payload_hydration(
     manifest, _path = _manifest_path(tmp_path, nodes)
 
     observations, _ = loop._observe_reconcile_inputs(
-        store, manifest, full_scan=True)
+        store, remote, manifest, full_scan=True)
 
     assert list(observations) == list(nodes)
     assert remote.issue_lists == 15
@@ -685,7 +685,7 @@ def test_146_node_full_scan_falls_back_to_issue_get_for_list_omission(tmp_path):
     manifest, _path = _manifest_path(tmp_path, nodes)
 
     observations, _ = loop._observe_reconcile_inputs(
-        store, manifest, full_scan=True)
+        store, remote, manifest, full_scan=True)
 
     assert observations[omitted_id].work_item.id == omitted_id
     assert remote.issue_gets == 9
@@ -708,7 +708,7 @@ def test_full_scan_active_control_failure_remains_an_observation_barrier(tmp_pat
     store._run_multica = fail_active
 
     with pytest.raises(PlatformError, match="active control timed out"):
-        loop.reconcile(store, manifest, path, full_scan=True)
+        loop.reconcile(store, remote, manifest, path, full_scan=True)
 
     assert Path(path).read_bytes() == before
 
@@ -735,7 +735,7 @@ def test_full_scan_no_project_multica_static_control_failure_fails_closed(
     store.observe_work_item_control = fail_control
 
     with pytest.raises(type(error), match=str(error)):
-        loop.reconcile(store, manifest, path, full_scan=True)
+        loop.reconcile(store, MockCodeHost(), manifest, path, full_scan=True)
 
 
 def test_full_scan_static_batch_failure_falls_back_and_isolates_unknown_error(
@@ -760,7 +760,7 @@ def test_full_scan_static_batch_failure_falls_back_and_isolates_unknown_error(
     store.observe_work_item_control = fallback
 
     result = loop.reconcile_with_observations(
-        store, manifest, path, full_scan=True)
+        store, remote, manifest, path, full_scan=True)
 
     assert result.audit_complete is False
     assert result.incomplete_static_keys == frozenset({"blocked-0"})
@@ -789,7 +789,7 @@ def test_full_scan_static_missing_fallback_is_authoritative_fact(tmp_path):
     store.observe_work_item_control = fallback
 
     result = loop.reconcile_with_observations(
-        store, manifest, path, full_scan=True)
+        store, remote, manifest, path, full_scan=True)
 
     assert result.audit_complete is True
     assert result.incomplete_static_keys == frozenset()
@@ -821,7 +821,7 @@ def test_single_not_found_recheck_preserves_work_item_identity_when_item_returns
     store.observe_work_item_control = observe
 
     result = loop.reconcile_with_observations(
-        store, manifest, path, full_scan=True)
+        store, remote, manifest, path, full_scan=True)
 
     assert result.audit_complete is True
     assert attempts == 2
@@ -854,7 +854,7 @@ def test_not_found_followed_by_unknown_error_preserves_manifest_identity(
     store.observe_work_item_control = observe
 
     result = loop.reconcile_with_observations(
-        store, manifest, path, full_scan=True)
+        store, remote, manifest, path, full_scan=True)
 
     assert result.audit_complete is False
     assert result.incomplete_static_keys == frozenset({"blocked-0"})
@@ -877,7 +877,7 @@ def test_not_found_without_identity_confirmation_fails_closed(
 
     with pytest.raises(PlatformError, match="identity was not confirmed"):
         loop.reconcile_with_observations(
-            store, manifest, path, full_scan=True)
+            store, remote, manifest, path, full_scan=True)
 
     assert Path(path).read_bytes() == before
     assert manifest.nodes["blocked-0"].work_item_id == item_id
@@ -907,7 +907,7 @@ def test_status_report_does_not_claim_converged_for_incomplete_full_scan(
         ),
     )
 
-    report = build_status_report(manifest, store, path)
+    report = build_status_report(manifest, store, MockCodeHost(), path)
 
     assert report["progress"]["converged"] is False
 
@@ -921,7 +921,7 @@ def test_confirmed_merge_stale_marker_is_cleared_after_authoritative_observation
     save_manifest(manifest, path)
 
     result = loop.reconcile_with_observations(
-        store, manifest, path, full_scan=True)
+        store, remote, manifest, path, full_scan=True)
 
     assert result.audit_complete is True
     assert manifest.nodes["done-0"].recovery_marker is False
@@ -950,7 +950,7 @@ def test_confirmed_merge_historical_done_review_baseline_is_cleared(tmp_path):
     save_manifest(manifest, path)
 
     result = loop.reconcile_with_observations(
-        store, manifest, path, full_scan=True)
+        store, remote, manifest, path, full_scan=True)
 
     assert result.audit_complete is True
     assert manifest.nodes["done-0"].recovery_marker is False
@@ -982,7 +982,7 @@ def test_project_full_scan_network_failure_on_static_issue_isolated_from_active_
     store._run_multica = fail_static
 
     result = loop.reconcile_with_observations(
-        store, manifest, path, full_scan=True)
+        store, remote, manifest, path, full_scan=True)
 
     assert result.audit_complete is False
     assert result.incomplete_static_keys == frozenset({"done-0"})
@@ -1013,7 +1013,7 @@ def test_confirmed_merge_marker_network_failure_remains_active_barrier(tmp_path)
 
     with pytest.raises(PlatformError, match="network_unreachable"):
         loop.reconcile_with_observations(
-            store, manifest, path, full_scan=True)
+            store, remote, manifest, path, full_scan=True)
 
     assert Path(path).read_bytes() == before
     assert load_manifest(path).nodes["done-0"].recovery_marker is True
@@ -1034,7 +1034,7 @@ def test_confirmed_merge_with_real_recovery_fact_fails_closed(tmp_path):
 
     with pytest.raises(PlatformError, match="recovery control facts"):
         loop.reconcile_with_observations(
-            store, manifest, path, full_scan=True)
+            store, remote, manifest, path, full_scan=True)
 
     assert load_manifest(path).nodes["done-0"].recovery_marker is True
 
@@ -1058,7 +1058,7 @@ def test_full_scan_list_failure_isolates_static_controls(tmp_path):
 
     store._run_multica = fail_lists_only
     result = loop.reconcile_with_observations(
-        store, manifest, path, full_scan=True)
+        store, remote, manifest, path, full_scan=True)
 
     assert result.audit_complete is True
     assert result.incomplete_static_keys == frozenset()
@@ -1078,9 +1078,9 @@ def test_146_node_reconcile_reuses_immutable_attachment_bodies_across_ticks(
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
 
-    loop._observe_reconcile_inputs(store, manifest)
+    loop._observe_reconcile_inputs(store, remote, manifest)
     first_tick_downloads = remote.attachment_downloads
-    loop._observe_reconcile_inputs(store, manifest)
+    loop._observe_reconcile_inputs(store, remote, manifest)
 
     assert first_tick_downloads == 18
     assert remote.attachment_downloads == first_tick_downloads
@@ -1094,7 +1094,7 @@ def test_146_node_status_reuses_reconcile_observation_budget(tmp_path):
     store = _store(remote)
     manifest, path = _manifest_path(tmp_path, nodes)
 
-    report = build_status_report(manifest, store, path)
+    report = build_status_report(manifest, store, remote, path)
 
     assert report["progress"]["total"] == 146
     assert (
@@ -1126,7 +1126,7 @@ def test_146_node_full_tick_reuses_reconcile_observations_for_collect(
     )
 
     result = loop.tick(
-        store, runtime, manifest, path, max_parallel=8, config={})
+        store, runtime, remote, manifest, path, max_parallel=8, config={})
 
     assert result.state == "running"
     assert wakes == []
@@ -1170,7 +1170,7 @@ def test_terminal_worker_handoff_observation_downloads_no_attachments(tmp_path):
 
     for _ in range(3):
         result = loop._observe_worker_handoff(
-            store, _terminal_runtime(), manifest, item_id, intent)
+            store, _terminal_runtime(), remote, manifest, item_id, intent)
         assert result.state == "pending-submit"
         assert result.intent == intent
 
@@ -1181,6 +1181,7 @@ def test_terminal_worker_handoff_observation_downloads_no_attachments(tmp_path):
 def test_terminal_worker_handoff_late_submit_hydrates_only_worker_evidence(
     tmp_path, monkeypatch,
 ):
+    code_host = MockCodeHost()
     item_id = "node-a"
     issue, attachments = _issue(item_id, status="done", phase="authoring")
     issue["metadata"]["worker_handoff"] = _worker_handoff(
@@ -1199,7 +1200,7 @@ def test_terminal_worker_handoff_late_submit_hydrates_only_worker_evidence(
             status="in_progress",
         ),
     })
-    store.read_pull_request_readiness = lambda _url: PullRequestReadiness(
+    code_host.read_pull_request_readiness = lambda _url: PullRequestReadiness(
         False, "OPEN", head_sha=issue["metadata"]["artifacts"]["head_sha"])
 
     def update_metadata(_item_id, **metadata):
@@ -1216,7 +1217,7 @@ def test_terminal_worker_handoff_late_submit_hydrates_only_worker_evidence(
     remote.calls.clear()
 
     result = loop._observe_worker_handoff(
-        store, _terminal_runtime(), manifest, item_id, intent)
+        store, _terminal_runtime(), code_host, manifest, item_id, intent)
 
     downloaded = [value for kind, value in remote.calls if kind == "attachment"]
     assert result.state == "complete"
@@ -1231,6 +1232,7 @@ def test_terminal_worker_handoff_late_submit_hydrates_only_worker_evidence(
 def test_late_submit_contract_hydration_failure_keeps_handoff_uncommitted(
     tmp_path, monkeypatch,
 ):
+    code_host = MockCodeHost()
     item_id = "node-a"
     issue, attachments = _issue(
         item_id, status="in_progress", phase="authoring")
@@ -1255,7 +1257,7 @@ def test_late_submit_contract_hydration_failure_keeps_handoff_uncommitted(
 
     remote.issue_get_hook = submit_after_reconcile
     store = _store(remote)
-    store.read_pull_request_readiness = lambda _url: PullRequestReadiness(
+    code_host.read_pull_request_readiness = lambda _url: PullRequestReadiness(
         False, "OPEN", head_sha=issue["metadata"]["artifacts"]["head_sha"])
     writes = []
 
@@ -1280,7 +1282,7 @@ def test_late_submit_contract_hydration_failure_keeps_handoff_uncommitted(
         loop.tick(
             store,
             _terminal_runtime(),
-            manifest,
+            code_host, manifest,
             path,
             max_parallel=1,
             config={},
@@ -1309,7 +1311,7 @@ def test_late_submit_contract_hydration_failure_keeps_handoff_uncommitted(
     loop.tick(
         store,
         _terminal_runtime(),
-        manifest,
+        code_host, manifest,
         path,
         max_parallel=1,
         config={},
@@ -1330,6 +1332,7 @@ def test_late_submit_contract_hydration_failure_keeps_handoff_uncommitted(
 def test_late_submit_commits_handoff_only_after_complete_worker_evidence(
     tmp_path, monkeypatch,
 ):
+    code_host = MockCodeHost()
     item_id = "node-a"
     issue, attachments = _issue(
         item_id, status="in_progress", phase="authoring")
@@ -1352,7 +1355,7 @@ def test_late_submit_commits_handoff_only_after_complete_worker_evidence(
 
     remote.issue_get_hook = submit_after_reconcile
     store = _store(remote)
-    store.read_pull_request_readiness = lambda _url: PullRequestReadiness(
+    code_host.read_pull_request_readiness = lambda _url: PullRequestReadiness(
         False, "OPEN", head_sha=issue["metadata"]["artifacts"]["head_sha"])
 
     def update_metadata(_item_id, **metadata):
@@ -1381,7 +1384,7 @@ def test_late_submit_commits_handoff_only_after_complete_worker_evidence(
     loop.tick(
         store,
         _terminal_runtime(),
-        manifest,
+        code_host, manifest,
         path,
         max_parallel=1,
         config={},
@@ -1427,7 +1430,7 @@ def test_eight_terminal_worker_handoffs_use_zero_attachment_reads(tmp_path):
     result = loop.tick(
         store,
         _terminal_runtime(),
-        manifest,
+        remote, manifest,
         path,
         max_parallel=8,
         config={},
@@ -1480,7 +1483,7 @@ def test_worker_handoff_required_hydration_failure_is_fail_closed(
         loop.tick(
             store,
             _terminal_runtime(),
-            manifest,
+            remote, manifest,
             path,
             max_parallel=1,
             config={},
@@ -1525,7 +1528,7 @@ def test_146_node_late_submit_after_reconcile_is_collected_next_tick_without_wak
     monkeypatch.setattr(
         loop,
         "_dispatch_reviewer_for_current_subject",
-        lambda _store, _runtime, _manifest, key: reviews.append(key) or True,
+        lambda _store, _runtime, _code_host, _manifest, key: reviews.append(key) or True,
     )
     monkeypatch.setattr(loop, "commit_manifest", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -1535,7 +1538,7 @@ def test_146_node_late_submit_after_reconcile_is_collected_next_tick_without_wak
     )
 
     first = loop.tick(
-        store, runtime, manifest, path, max_parallel=2, config={})
+        store, runtime, remote, manifest, path, max_parallel=2, config={})
 
     assert first.state == "running"
     assert issues["active-0"]["status"] == "done"
@@ -1546,7 +1549,7 @@ def test_146_node_late_submit_after_reconcile_is_collected_next_tick_without_wak
 
     remote.issue_get_hook = None
     second = loop.tick(
-        store, runtime, manifest, path, max_parallel=2, config={})
+        store, runtime, remote, manifest, path, max_parallel=2, config={})
 
     assert second.state == "running"
     assert manifest.nodes["active-0"].status == "in_review"
@@ -1563,7 +1566,7 @@ def test_reconcile_observations_cover_collect_required_evidence(tmp_path):
     store = _store(remote)
     manifest, path = _manifest_path(tmp_path, nodes)
 
-    result = loop.reconcile_with_observations(store, manifest, path)
+    result = loop.reconcile_with_observations(store, remote, manifest, path)
 
     for key, node in manifest.nodes.items():
         if node.status not in loop.RUNNING_STATUSES or not node.work_item_id:
@@ -1596,7 +1599,7 @@ def test_collect_results_without_observations_keeps_read_fallback_without_redisp
     )
 
     assert loop.collect_results(
-        store, runtime, manifest, path, config={}) == {}
+        store, runtime, remote, manifest, path, config={}) == {}
 
     assert remote.issue_gets == 1
     assert remote.attachment_downloads == 4
@@ -1641,7 +1644,6 @@ def test_tick_required_hydration_failure_precedes_lifecycle_side_effects(
         "add_comment",
         "reset_review",
         "clear_assignment",
-        "request_pull_request_merge",
     ):
         monkeypatch.setattr(
             store,
@@ -1650,11 +1652,15 @@ def test_tick_required_hydration_failure_precedes_lifecycle_side_effects(
                 (_method, args, kwargs)),
         )
     monkeypatch.setattr(
+        remote, "request_pull_request_merge",
+        lambda *args, **kwargs: effects.append(("request_pull_request_merge", args, kwargs)),
+        raising=False)
+    monkeypatch.setattr(
         loop, "commit_manifest", lambda *args, **kwargs: effects.append(
             ("commit_manifest", args, kwargs)))
 
     with pytest.raises(PlatformError, match="attachment read failed"):
-        loop.tick(store, runtime, manifest, path, max_parallel=2, config={})
+        loop.tick(store, runtime, remote, manifest, path, max_parallel=2, config={})
 
     assert effects == []
     assert manifest == before_manifest
@@ -1708,7 +1714,6 @@ def test_collect_results_fresh_read_failure_precedes_all_cross_node_side_effects
         "add_comment",
         "reset_review",
         "clear_assignment",
-        "request_pull_request_merge",
     ):
         monkeypatch.setattr(
             store,
@@ -1718,7 +1723,7 @@ def test_collect_results_fresh_read_failure_precedes_all_cross_node_side_effects
         )
 
     with pytest.raises(error_type, match=message):
-        loop.collect_results(store, runtime, manifest, path, config={})
+        loop.collect_results(store, runtime, remote, manifest, path, config={})
 
     assert effects == []
     assert remote.issue_gets == (1 if failed_item_id == "node-a" else 2)
@@ -1754,7 +1759,7 @@ def test_stale_manifest_hydrates_new_platform_delivery_and_reenters_gate(
             merge_request_state=merge_request_state),
     })
 
-    assert loop.reconcile(store, manifest, path, full_scan=True) is True
+    assert loop.reconcile(store, remote, manifest, path, full_scan=True) is True
 
     assert manifest.nodes["node-a"].status == "in_progress"
     assert remote.issue_lists == (0 if manifest_status == "done" else 1)
@@ -1779,6 +1784,7 @@ def test_control_projection_preserves_unknown_fields_without_hydrating_payloads(
 
 
 def test_running_delivery_hydration_preserves_digest_identity_and_subject_binding():
+    code_host = MockCodeHost()
     item_id = "node-a"
     issue, attachments = _issue(item_id, status="done", phase="review")
     verification_ref = issue["metadata"]["verification_ref"]
@@ -1813,7 +1819,7 @@ def test_running_delivery_hydration_preserves_digest_identity_and_subject_bindin
     issue["metadata"]["review_verdict"] = "pass"
     remote = _RemoteFixture({item_id: issue}, attachments)
     store = _store(remote)
-    store.read_pull_request_readiness = lambda _url: PullRequestReadiness(
+    code_host.read_pull_request_readiness = lambda _url: PullRequestReadiness(
         False, "OPEN", head_sha=issue["metadata"]["artifacts"]["head_sha"])
 
     projection = store.observe_work_item_control(item_id)
@@ -1832,10 +1838,11 @@ def test_running_delivery_hydration_preserves_digest_identity_and_subject_bindin
         item_id,
         observed,
     )
-    loop._validate_controller_sealed_delivery(store, observed)
+    loop._validate_controller_sealed_delivery(store, code_host, observed)
 
 
 def test_new_head_cannot_reuse_old_verification_or_verdict():
+    code_host = MockCodeHost()
     item_id = "node-a"
     old_verification = {"commands": [{"cmd": "pytest old", "exit_code": 0}]}
     old_item = WorkItem(
@@ -1852,7 +1859,7 @@ def test_new_head_cannot_reuse_old_verification_or_verdict():
         review_verdict="pass", review_subject=old_subject)
     remote = _RemoteFixture({item_id: issue}, attachments)
     store = _store(remote)
-    store.read_pull_request_readiness = lambda _url: PullRequestReadiness(
+    code_host.read_pull_request_readiness = lambda _url: PullRequestReadiness(
         False, "OPEN", head_sha=issue["metadata"]["artifacts"]["head_sha"])
     projection = store.observe_work_item_control(item_id)
     plan = loop._build_work_item_hydration_plan(
@@ -1895,7 +1902,7 @@ def test_confirmed_merge_ignores_platform_authoring_delivery_without_hydration(
     monkeypatch.setattr(loop, "commit_manifest", lambda *args, **kwargs: None)
 
     result = loop.tick(
-        _store(remote), runtime, manifest, path, max_parallel=1, config={})
+        _store(remote), runtime, remote, manifest, path, max_parallel=1, config={})
 
     assert result.state == "converged"
     assert load_manifest(path).nodes[item_id].status == "done"
@@ -1943,7 +1950,7 @@ def test_cli_status_recovers_confirmed_merge_from_one_control_read_without_hydra
     monkeypatch.setattr(
         dag,
         "_assemble_engine",
-        lambda _args: (SimpleNamespace(store=store), store.config),
+        lambda _args: (SimpleNamespace(store=store, code_host=MockCodeHost()), store.config),
     )
 
     assert main(["dag", "status", path, "--output", "json"]) == exit_codes.OK
@@ -1992,7 +1999,7 @@ def test_status_summary_preserves_deferred_verification_and_review_presence(
         ),
     })
 
-    report = build_status_report(manifest, _store(remote), path)
+    report = build_status_report(manifest, _store(remote), remote, path)
 
     summary = report["needs_decision"]["failed_nodes"][0][
         "evidence_summary"]
@@ -2043,7 +2050,7 @@ def test_status_required_hydration_failure_produces_no_report_or_partial_write(
     before_file = Path(path).read_bytes()
 
     with pytest.raises(PlatformError, match="attachment read failed"):
-        build_status_report(manifest, store, path)
+        build_status_report(manifest, store, remote, path)
 
     assert effects == []
     assert manifest == before_manifest
@@ -2099,7 +2106,7 @@ def test_incident_confirmed_merge_recovers_manifest_and_platform_idempotently(
     monkeypatch.setattr(
         store, "normalize_confirmed_merge", record_normalize, raising=False)
 
-    assert loop.reconcile(store, manifest, path) is True
+    assert loop.reconcile(store, MockCodeHost(), manifest, path) is True
 
     recovered = store.get_work_item(item.id)
     assert manifest.nodes["node-a"].status == "done"
@@ -2108,7 +2115,7 @@ def test_incident_confirmed_merge_recovers_manifest_and_platform_idempotently(
     assert runtime.list_runs(item.id) == runs_before
     assert normalizations == [item.id]
 
-    assert loop.reconcile(store, manifest, path) is False
+    assert loop.reconcile(store, MockCodeHost(), manifest, path) is False
     assert normalizations == [item.id]
     assert runtime.list_runs(item.id) == runs_before
 
@@ -2160,7 +2167,7 @@ def test_confirmed_merge_recovery_write_fails_closed_without_partial_platform_st
         store, "normalize_confirmed_merge", fail_normalize, raising=False)
 
     with pytest.raises(PlatformError, match="normalization outcome unknown"):
-        loop.reconcile(store, manifest, path)
+        loop.reconcile(store, MockCodeHost(), manifest, path)
 
     current = store.get_work_item(item.id)
     platform_state = (current.status, current.platform_assignee_id)
@@ -2243,7 +2250,7 @@ def test_required_attachment_failure_is_atomic_after_all_control_reads(tmp_path)
     before = Path(path).read_bytes()
 
     with pytest.raises(PlatformError, match="attachment read failed"):
-        loop.reconcile(store, manifest, path, full_scan=True)
+        loop.reconcile(store, remote, manifest, path, full_scan=True)
 
     assert remote.calls[0][0] == "issue-list"
     assert remote.issue_lists == 1
@@ -2484,11 +2491,12 @@ def test_full_get_work_item_still_hydrates_every_referenced_payload():
 
 
 def test_unknown_pr_state_never_preserves_unconfirmed_done(tmp_path):
+    code_host = MockCodeHost()
     issue, attachments = _issue(
         "node-a", status="done", phase="review", review_verdict="pass")
     remote = _RemoteFixture({"node-a": issue}, attachments)
     store = _store(remote)
-    store.observe_pull_request = lambda _url: PullRequestObservation(
+    code_host.observe_pull_request = lambda _url: PullRequestObservation(
         PullRequestState.UNKNOWN, detail="remote state unavailable")
     manifest, path = _manifest_path(tmp_path, {
         "node-a": Node(
@@ -2497,7 +2505,7 @@ def test_unknown_pr_state_never_preserves_unconfirmed_done(tmp_path):
             merge_request_state="requested"),
     })
 
-    loop.reconcile(store, manifest, path)
+    loop.reconcile(store, code_host, manifest, path)
 
     assert manifest.nodes["node-a"].status == "merging"
     assert manifest.nodes["node-a"].merged is False
@@ -2552,7 +2560,7 @@ def test_tick_collects_delivery_persisted_after_reconcile_control_snapshot(
     store.observe_work_item_control = observe_then_deliver
 
     result = loop.tick(
-        store, runtime, manifest, path, max_parallel=1, config={})
+        store, runtime, MockCodeHost(), manifest, path, max_parallel=1, config={})
 
     current = store.get_work_item(item.id)
     assert result.state == "running"

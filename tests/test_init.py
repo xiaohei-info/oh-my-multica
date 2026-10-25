@@ -9,6 +9,7 @@ from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.engines import create_engine
 from omac.engines.models import EngineConfig, WorkspaceInfo
+from omac.engines.codehost import CodeHost
 from omac.engines.store import WorkItemStore
 
 
@@ -18,9 +19,10 @@ def test_list_workspaces_is_part_of_store_interface():
     assert hasattr(WorkItemStore, "list_workspaces")
 
 
-def test_pr_operations_are_part_of_store_interface():
-    assert hasattr(WorkItemStore, "check_pull_request")
-    assert hasattr(WorkItemStore, "read_pull_request_readiness")
+def test_pr_operations_belong_to_the_code_host_port_not_the_store():
+    assert hasattr(CodeHost, "check_pull_request")
+    assert hasattr(CodeHost, "read_pull_request_readiness")
+    assert not hasattr(WorkItemStore, "check_pull_request")
 
 
 def test_mock_list_workspaces_returns_workspaceinfo():

@@ -20,6 +20,7 @@ config.retry.merge + reset_review)门,本模块补 reviewer pass 后的自动 me
 """
 from __future__ import annotations
 
+from omac.engines.mock import MockCodeHost
 import os
 import stat
 from types import SimpleNamespace
@@ -203,7 +204,7 @@ class TestRunMergeDeliveryUnit:
 
         path = _saved_manifest(tmp_path, manifest)
         assert run_merge_delivery({}, manifest, "a", store, _runtime(store),
-                                  dict(DEFAULT_RETRY), path) == "pass"
+                                  MockCodeHost(), dict(DEFAULT_RETRY), path) == "pass"
         assert seen["command"] == (
             "gh pr merge https://example.com/pr/1 --squash --delete-branch")
         assert seen["kwargs"]["shell"] is True
@@ -232,7 +233,7 @@ class TestRunMergeDeliveryUnit:
         path = _saved_manifest(tmp_path, manifest)
         assert run_merge_delivery(
             {"merge": {"timeout_minutes": 30}}, manifest, "a", store,
-            _runtime(store), dict(DEFAULT_RETRY), path) == "pass"
+            _runtime(store), MockCodeHost(), dict(DEFAULT_RETRY), path) == "pass"
         assert manifest.nodes["a"].merged is True
 
     def test_merge_passes_returns_pass_and_records_merge_info(self, tmp_path):
@@ -246,7 +247,7 @@ class TestRunMergeDeliveryUnit:
         limits = dict(DEFAULT_RETRY)
         path = _saved_manifest(tmp_path, manifest)
         assert run_merge_delivery(
-            cfg, manifest, "a", store, _runtime(store), limits, path) == "pass"
+            cfg, manifest, "a", store, _runtime(store), MockCodeHost(), limits, path) == "pass"
         assert manifest.nodes["a"].merged is True
         assert manifest.nodes["a"].merged_at is not None
         # 成功后节点语义回到 in_progress(即将 done),未落评论
@@ -263,7 +264,7 @@ class TestRunMergeDeliveryUnit:
         limits = dict(DEFAULT_RETRY)
         path = _saved_manifest(tmp_path, manifest)
         assert run_merge_delivery(
-            cfg, manifest, "a", store, _runtime(store), limits, path) == "bounce"
+            cfg, manifest, "a", store, _runtime(store), MockCodeHost(), limits, path) == "bounce"
         assert manifest.nodes["a"].status == "in_progress"
         assert store.get_work_item(item.id).bounces.merge == 1
         comments = store.get_comments(item.id)
@@ -298,7 +299,7 @@ class TestRunMergeDeliveryUnit:
                         {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
                     "blockers": []})
             result = run_merge_delivery(
-                cfg, manifest, "a", store, _runtime(store), limits, path)
+                cfg, manifest, "a", store, _runtime(store), MockCodeHost(), limits, path)
         assert result == "blocked"
         assert manifest.nodes["a"].status == "blocked"
         assert store.get_work_item(item.id).bounces.merge == DEFAULT_RETRY["merge"]
@@ -314,7 +315,7 @@ class TestRunMergeDeliveryUnit:
         path = _saved_manifest(tmp_path, manifest)
         assert run_merge_delivery(
             _merge_config(script), manifest, "a", store, _runtime(store),
-            resolve_retry({"retry": {"merge": 0}}), path) == "blocked"
+            MockCodeHost(), resolve_retry({"retry": {"merge": 0}}), path) == "blocked"
 
     def test_custom_retry_merge_limit(self, tmp_path):
         store = _store()
@@ -338,7 +339,7 @@ class TestRunMergeDeliveryUnit:
                         {"acceptance": "a works", "evidence": "ok", "status": "pass"}],
                     "blockers": []})
             res = run_merge_delivery(_merge_config(script), manifest, "a", store,
-                                     _runtime(store), limits, path)
+                                     _runtime(store), MockCodeHost(), limits, path)
             if i < 4:
                 assert res == "bounce"
             else:
@@ -356,7 +357,7 @@ class TestRunMergeDeliveryUnit:
         path = _saved_manifest(tmp_path, manifest)
         res = run_merge_delivery(
             _merge_config(script), manifest, "a", store, _runtime(store),
-            dict(DEFAULT_RETRY), path)
+            MockCodeHost(), dict(DEFAULT_RETRY), path)
         assert res == "blocked"
         assert manifest.nodes["a"].status == "blocked"
         comments = store.get_comments(item.id)
@@ -392,7 +393,7 @@ class TestCollectResultsMerge:
 
         monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
 
-        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+        loop.collect_results(store, rt, MockCodeHost(), manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config={})
         assert manifest.nodes["a"].status == "done"
         assert manifest.nodes["a"].merged is True
@@ -406,7 +407,7 @@ class TestCollectResultsMerge:
         import omac.core.manifest as mmod
         mmod.save_manifest(manifest, path)
         script = _merge_script(tmp_path, 'echo merged; exit 0')
-        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+        loop.collect_results(store, rt, MockCodeHost(), manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config=_merge_config(script))
         assert manifest.nodes["a"].status == "done"
         assert manifest.nodes["a"].merged is True
@@ -421,7 +422,7 @@ class TestCollectResultsMerge:
         import omac.core.manifest as mmod
         mmod.save_manifest(manifest, path)
         script = _merge_script(tmp_path, 'echo boom; exit 1')
-        fails = loop.collect_results(store, rt, manifest, path,
+        fails = loop.collect_results(store, rt, MockCodeHost(), manifest, path,
                                     retry_limits=dict(DEFAULT_RETRY),
                                     config=_merge_config(script))
         assert store.get_work_item(item.id).bounces.merge == 1
@@ -439,7 +440,7 @@ class TestCollectResultsMerge:
         fail_script = _merge_script(tmp_path, "exit 1", name="fail.sh")
         pass_script = _merge_script(tmp_path, "exit 0", name="pass.sh")
         # 第 1 次:reviewer pass → merge 冲突 → bounce
-        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+        loop.collect_results(store, rt, MockCodeHost(), manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config=_merge_config(fail_script))
         assert manifest.nodes["a"].status == "in_progress"
         assert store.get_work_item(item.id).review_verdict is None  # reset_review
@@ -451,7 +452,7 @@ class TestCollectResultsMerge:
         manifest.nodes["a"].status = "in_progress"
         mmod.save_manifest(manifest, path)
         # 经 ci(未配置)→ in_review 后,tick 必须停在 in_review、不自动 merge
-        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+        loop.collect_results(store, rt, MockCodeHost(), manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config=_merge_config(pass_script))
         assert manifest.nodes["a"].status == "in_review"
         assert manifest.nodes["a"].merged is False
@@ -460,7 +461,7 @@ class TestCollectResultsMerge:
             item.id, review_verdict="pass",
             review_report=_current_pass_report(store, item.id, "re-review"))
         store.update_status(item.id, WorkItemStatus.DONE)
-        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+        loop.collect_results(store, rt, MockCodeHost(), manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config=_merge_config(pass_script))
         assert manifest.nodes["a"].status == "done"
         assert manifest.nodes["a"].merged is True
@@ -492,7 +493,7 @@ class TestCollectResultsMerge:
         import omac.core.manifest as mmod
         mmod.save_manifest(manifest, path)
         # tick 1:ci 绿 → in_review
-        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+        loop.collect_results(store, rt, MockCodeHost(), manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config=cfg)
         assert manifest.nodes["a"].status == "in_review"
         # reviewer pass
@@ -501,7 +502,7 @@ class TestCollectResultsMerge:
             review_report=_current_pass_report(store, item.id, "x"))
         store.update_status(item.id, WorkItemStatus.DONE)
         # tick 2:merge 冲突 → bounce
-        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+        loop.collect_results(store, rt, MockCodeHost(), manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config=cfg)
         assert manifest.nodes["a"].status == "in_progress"
         assert store.get_work_item(item.id).bounces.merge == 1
@@ -515,7 +516,7 @@ class TestCollectResultsMerge:
         manifest.nodes["a"].status = "in_progress"
         mmod.save_manifest(manifest, path)
         # tick 3:ci(未变)→ in_review(停在 in_review,不自动 merge)
-        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+        loop.collect_results(store, rt, MockCodeHost(), manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config=cfg)
         assert manifest.nodes["a"].status == "in_review"
         assert manifest.nodes["a"].merged is False
@@ -525,7 +526,7 @@ class TestCollectResultsMerge:
             review_report=_current_pass_report(store, item.id, "x2"))
         store.update_status(item.id, WorkItemStatus.DONE)
         # tick 4:merge 成功 → done
-        loop.collect_results(store, rt, manifest, path, retry_limits=dict(DEFAULT_RETRY),
+        loop.collect_results(store, rt, MockCodeHost(), manifest, path, retry_limits=dict(DEFAULT_RETRY),
                             config=cfg)
         assert manifest.nodes["a"].status == "done"
         assert manifest.nodes["a"].merged is True
@@ -560,7 +561,7 @@ class TestCollectResultsMerge:
             store.update_status(item.id, WorkItemStatus.DONE)
             manifest.nodes["a"].status = "in_review"
             mmod.save_manifest(manifest, path)
-            loop.collect_results(store, rt, manifest, path,
+            loop.collect_results(store, rt, MockCodeHost(), manifest, path,
                                 retry_limits=dict(DEFAULT_RETRY), config=cfg)
         assert manifest.nodes["a"].status == "blocked"
         assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
@@ -599,7 +600,7 @@ class TestCollectResultsMerge:
         )
 
         failures = loop.collect_results(
-            store, runtime, manifest, path,
+            store, runtime, MockCodeHost(), manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={},
         )
 
@@ -638,7 +639,7 @@ class TestCollectResultsMerge:
         )
 
         failures = loop.collect_results(
-            store, runtime, manifest, path,
+            store, runtime, MockCodeHost(), manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={},
         )
 
@@ -655,6 +656,7 @@ class TestCollectResultsMerge:
     def test_bounce_pending_with_empty_projection_resumes_worker_handoff(
         self, tmp_path,
     ):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -669,11 +671,11 @@ class TestCollectResultsMerge:
             ),
         })
         path = _saved_manifest(tmp_path, manifest)
-        store.request_pull_request_merge = lambda *_args: pytest.fail(
+        code_host.request_pull_request_merge = lambda *_args: pytest.fail(
             "bounce recovery must not issue another merge request")
 
         failures = loop.collect_results(
-            store, runtime, manifest, path,
+            store, runtime, code_host, manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={},
         )
 
@@ -701,7 +703,7 @@ class TestManifestPersistence:
         manifest.nodes["a"].status = "in_review"
         path = _saved_manifest(tmp_path, manifest)
         run_merge_delivery(_merge_config(script), manifest, "a", store,
-                           _runtime(store), dict(DEFAULT_RETRY), path)
+                           _runtime(store), MockCodeHost(), dict(DEFAULT_RETRY), path)
         assert manifest.nodes["a"].merged is True
         assert manifest.nodes["a"].merged_at is not None
         import omac.core.manifest as mmod
@@ -727,6 +729,7 @@ class TestMergeClosureRegression:
         monkeypatch.setattr("omac.engines.mock.subprocess.run", fake_run)
 
     def test_no_reviewer_node_cannot_be_done_without_confirmed_merge(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store, reviewer=None)
@@ -735,11 +738,11 @@ class TestMergeClosureRegression:
                       work_item_id=item.id, status="in_progress"),
         })
         path = str(tmp_path / "m.yaml")
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="open", merged_at=None)
 
         loop.collect_results(
-            store, runtime, manifest, path,
+            store, runtime, code_host, manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert manifest.nodes["a"].status != "done"
@@ -748,6 +751,7 @@ class TestMergeClosureRegression:
     def test_successful_command_with_open_pr_cannot_unlock_downstream(
         self, tmp_path, monkeypatch,
     ):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -760,13 +764,13 @@ class TestMergeClosureRegression:
         path = str(tmp_path / "m.yaml")
         self._successful_merge_command(monkeypatch)
         observed = []
-        store.observe_pull_request = lambda pr_url: (
+        code_host.observe_pull_request = lambda pr_url: (
             observed.append(pr_url)
             or SimpleNamespace(state="open", merged_at=None)
         )
 
         result = loop.tick(
-            store, runtime, manifest, path, retry_limits=dict(DEFAULT_RETRY), config={})
+            store, runtime, code_host, manifest, path, retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert observed == ["https://example.com/pr/1"] * 2
         assert manifest.nodes["a"].status != "done"
@@ -776,6 +780,7 @@ class TestMergeClosureRegression:
     def test_confirmed_merge_uses_authoritative_remote_timestamp(
         self, tmp_path, monkeypatch,
     ):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -786,11 +791,11 @@ class TestMergeClosureRegression:
         path = str(tmp_path / "m.yaml")
         self._successful_merge_command(monkeypatch)
         merged_at = "2026-07-26T08:15:00Z"
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="merged", merged_at=merged_at)
 
         loop.collect_results(
-            store, runtime, manifest, path,
+            store, runtime, code_host, manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert manifest.nodes["a"].status == "done"
@@ -798,6 +803,7 @@ class TestMergeClosureRegression:
         assert manifest.nodes["a"].merged_at == merged_at
 
     def test_historical_done_backfills_confirmed_remote_merge(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         item = _review_passed_item(store)
         merged_at = "2026-07-26T08:30:00Z"
@@ -805,10 +811,10 @@ class TestMergeClosureRegression:
             "a": Node(id="a", worker="alice", reviewer="bob",
                       work_item_id=item.id, status="done"),
         })
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="merged", merged_at=merged_at)
 
-        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+        assert loop.reconcile(store, code_host, manifest, str(tmp_path / "m.yaml")) is True
 
         assert manifest.nodes["a"].status == "done"
         assert manifest.nodes["a"].merged is True
@@ -817,6 +823,7 @@ class TestMergeClosureRegression:
     def test_historical_done_with_open_pr_reenters_merge_closure_without_cancelling(
         self, tmp_path,
     ):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -824,15 +831,15 @@ class TestMergeClosureRegression:
             "a": Node(id="a", worker="alice", reviewer="bob",
                       work_item_id=item.id, status="done"),
         })
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="open", merged_at=None)
-        store.request_pull_request_merge = lambda *args: SimpleNamespace(
+        code_host.request_pull_request_merge = lambda *args: SimpleNamespace(
             succeeded=True, timed_out=False, exit_code=0, output="")
         runtime.cancel = lambda item_id: pytest.fail("merge reconciliation must not cancel runs")
 
-        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+        assert loop.reconcile(store, code_host, manifest, str(tmp_path / "m.yaml")) is True
         result = loop.tick(
-            store, runtime, manifest, str(tmp_path / "m.yaml"),
+            store, runtime, code_host, manifest, str(tmp_path / "m.yaml"),
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert manifest.nodes["a"].status == "merging"
@@ -841,31 +848,33 @@ class TestMergeClosureRegression:
 
     @pytest.mark.parametrize("state", ["closed_unmerged"])
     def test_historical_done_with_confirmed_unmerged_pr_fails_closed(self, tmp_path, state):
+        code_host = MockCodeHost()
         store = _store()
         item = _review_passed_item(store)
         manifest = Manifest(meta={}, nodes={
             "a": Node(id="a", worker="alice", reviewer="bob",
                       work_item_id=item.id, status="done"),
         })
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state=state, merged_at=None, detail="remote unavailable")
 
-        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+        assert loop.reconcile(store, code_host, manifest, str(tmp_path / "m.yaml")) is True
 
         assert manifest.nodes["a"].status == "blocked"
         assert store.get_work_item(item.id).status is WorkItemStatus.BLOCKED
 
     def test_historical_done_with_unknown_pr_reopens_merge_observation(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         item = _review_passed_item(store)
         manifest = Manifest(meta={}, nodes={
             "a": Node(id="a", worker="alice", reviewer="bob",
                       work_item_id=item.id, status="done"),
         })
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="unknown", merged_at=None, detail="remote unavailable")
 
-        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+        assert loop.reconcile(store, code_host, manifest, str(tmp_path / "m.yaml")) is True
 
         assert manifest.nodes["a"].status == "merging"
         assert store.get_work_item(item.id).status is WorkItemStatus.IN_REVIEW
@@ -881,7 +890,7 @@ class TestMergeClosureRegression:
             PlatformError("platform timeout"))
 
         with pytest.raises(PlatformError, match="platform timeout"):
-            loop.reconcile(store, manifest, str(tmp_path / "m.yaml"))
+            loop.reconcile(store, MockCodeHost(), manifest, str(tmp_path / "m.yaml"))
 
         assert manifest.nodes["a"].status == "done"
         assert manifest.nodes["a"].work_item_id == item.id
@@ -901,7 +910,7 @@ class TestMergeClosureRegression:
 
         with pytest.raises(PlatformError, match="platform timeout"):
             loop.reconcile(
-                store, manifest, str(tmp_path / "m.yaml"), full_scan=True)
+                store, MockCodeHost(), manifest, str(tmp_path / "m.yaml"), full_scan=True)
 
         assert manifest.nodes["a"].status == "done"
         assert manifest.nodes["a"].merged is True
@@ -916,7 +925,7 @@ class TestMergeClosureRegression:
                       work_item_id=item.id, status="done"),
         })
 
-        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+        assert loop.reconcile(store, MockCodeHost(), manifest, str(tmp_path / "m.yaml")) is True
 
         assert manifest.nodes["a"].status == "blocked"
 
@@ -928,11 +937,12 @@ class TestMergeClosureRegression:
                       work_item_id=item.id, status="done", merged=True),
         })
 
-        assert loop.reconcile(store, manifest, str(tmp_path / "m.yaml")) is True
+        assert loop.reconcile(store, MockCodeHost(), manifest, str(tmp_path / "m.yaml")) is True
 
         assert manifest.nodes["a"].status == "merging"
 
     def test_historical_open_pr_observes_then_requests_merge(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -941,15 +951,15 @@ class TestMergeClosureRegression:
                       work_item_id=item.id, status="done"),
         })
         path = str(tmp_path / "m.yaml")
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="open", merged_at=None)
         requested = []
-        store.request_pull_request_merge = lambda *args: requested.append(args) or SimpleNamespace(
+        code_host.request_pull_request_merge = lambda *args: requested.append(args) or SimpleNamespace(
             succeeded=True, exit_code=0, output="")
 
-        loop.reconcile(store, manifest, path)
+        loop.reconcile(store, code_host, manifest, path)
         loop.collect_results(
-            store, runtime, manifest, path,
+            store, runtime, code_host, manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert requested
@@ -957,6 +967,7 @@ class TestMergeClosureRegression:
     def test_merge_request_intent_is_persisted_before_external_command(
         self, tmp_path,
     ):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -966,7 +977,7 @@ class TestMergeClosureRegression:
         })
         path = str(tmp_path / "m.yaml")
         save_manifest(manifest, path)
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="open", merged_at=None)
         persisted_states = []
 
@@ -975,15 +986,16 @@ class TestMergeClosureRegression:
                 load_manifest(path).nodes["a"], "merge_request_state", None))
             return SimpleNamespace(succeeded=True, exit_code=0, output="")
 
-        store.request_pull_request_merge = request
+        code_host.request_pull_request_merge = request
 
         loop.collect_results(
-            store, runtime, manifest, path,
+            store, runtime, code_host, manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert persisted_states == ["intent"]
 
     def test_requested_merge_is_not_reissued_after_reload(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -993,18 +1005,18 @@ class TestMergeClosureRegression:
         })
         path = str(tmp_path / "m.yaml")
         save_manifest(manifest, path)
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="open", merged_at=None)
         requests = []
-        store.request_pull_request_merge = lambda *args: requests.append(args) or SimpleNamespace(
+        code_host.request_pull_request_merge = lambda *args: requests.append(args) or SimpleNamespace(
             succeeded=True, exit_code=0, output="")
 
         loop.collect_results(
-            store, runtime, manifest, path,
+            store, runtime, code_host, manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
         reloaded = load_manifest(path)
         loop.collect_results(
-            store, runtime, reloaded, path,
+            store, runtime, code_host, reloaded, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert len(requests) == 1
@@ -1012,6 +1024,7 @@ class TestMergeClosureRegression:
         assert reloaded.nodes["a"].merge_request_state == "requested"
 
     def test_unproven_merge_intent_does_not_retry_after_restart(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1020,19 +1033,20 @@ class TestMergeClosureRegression:
                       work_item_id=item.id, status="merging",
                       merge_request_state="intent"),
         })
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="open", merged_at=None)
         requests = []
-        store.request_pull_request_merge = lambda *args: requests.append(args)
+        code_host.request_pull_request_merge = lambda *args: requests.append(args)
 
         loop.collect_results(
-            store, runtime, manifest, str(tmp_path / "m.yaml"),
+            store, runtime, code_host, manifest, str(tmp_path / "m.yaml"),
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert requests == []
         assert manifest.nodes["a"].status == "blocked"
 
     def test_malformed_merge_request_state_fails_closed_without_request(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1041,13 +1055,13 @@ class TestMergeClosureRegression:
                       work_item_id=item.id, status="merging",
                       merge_request_state="definitely-not-a-state"),
         })
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="open", merged_at=None)
         requests = []
-        store.request_pull_request_merge = lambda *args: requests.append(args)
+        code_host.request_pull_request_merge = lambda *args: requests.append(args)
 
         loop.collect_results(
-            store, runtime, manifest, str(tmp_path / "m.yaml"),
+            store, runtime, code_host, manifest, str(tmp_path / "m.yaml"),
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert requests == []
@@ -1071,6 +1085,7 @@ class TestMergeClosureRegression:
     def test_historical_done_preserves_merge_marker_closure(
         self, tmp_path, marker, remote_state, expected_status, expected_marker,
     ):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1080,24 +1095,25 @@ class TestMergeClosureRegression:
                       merge_request_state=marker),
         })
         merged_at = "2026-07-26T09:00:00Z" if remote_state == "merged" else None
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state=remote_state, merged_at=merged_at)
         requests = []
-        store.request_pull_request_merge = lambda *args: requests.append(args)
+        code_host.request_pull_request_merge = lambda *args: requests.append(args)
         path = str(tmp_path / "m.yaml")
 
-        loop.reconcile(store, manifest, path)
+        loop.reconcile(store, code_host, manifest, path)
 
         assert manifest.nodes["a"].status == expected_status
         assert manifest.nodes["a"].merge_request_state == expected_marker
         if remote_state == "open" and marker in {"intent", "requested"}:
             loop.collect_results(
-                store, runtime, manifest, path,
+                store, runtime, code_host, manifest, path,
                 retry_limits=dict(DEFAULT_RETRY), config={})
             assert manifest.nodes["a"].merge_request_state == expected_marker
         assert requests == []
 
     def test_timeout_with_open_pr_preserves_intent_across_restart(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1107,18 +1123,18 @@ class TestMergeClosureRegression:
         })
         path = str(tmp_path / "m.yaml")
         save_manifest(manifest, path)
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="open", merged_at=None)
         requests = []
-        store.request_pull_request_merge = lambda *args: requests.append(args) or SimpleNamespace(
+        code_host.request_pull_request_merge = lambda *args: requests.append(args) or SimpleNamespace(
             succeeded=False, timed_out=True, exit_code=None, output="timeout")
 
         loop.collect_results(
-            store, runtime, manifest, path,
+            store, runtime, code_host, manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
         reloaded = load_manifest(path)
         loop.collect_results(
-            store, runtime, reloaded, path,
+            store, runtime, code_host, reloaded, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert len(requests) == 1
@@ -1131,6 +1147,7 @@ class TestMergeClosureRegression:
     def test_merge_bounce_pending_recovers_after_each_platform_effect(
         self, tmp_path, failure_point,
     ):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1164,8 +1181,8 @@ class TestMergeClosureRegression:
                 return SimpleNamespace(state="merged", merged_at=merged_at)
             return SimpleNamespace(state="open", merged_at=None)
 
-        store.request_pull_request_merge = request
-        store.observe_pull_request = observe
+        code_host.request_pull_request_merge = request
+        code_host.observe_pull_request = observe
         original_add_comment = store.add_comment
         original_update_metadata = store.update_work_item_metadata
         completed_update_status = store.update_status
@@ -1219,7 +1236,7 @@ class TestMergeClosureRegression:
 
         with pytest.raises(RuntimeError, match=f"simulated crash after {failure_point}"):
             loop.collect_results(
-                store, runtime, manifest, path,
+                store, runtime, code_host, manifest, path,
                 retry_limits=dict(DEFAULT_RETRY), config={})
 
         persisted = load_manifest(path)
@@ -1236,7 +1253,7 @@ class TestMergeClosureRegression:
 
         resumed_runtime = _runtime(store)
         running = loop.tick(
-            store, resumed_runtime, persisted, path,
+            store, resumed_runtime, code_host, persisted, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
         assert running.state == "running"
         assert persisted.nodes["a"].status == "in_progress"
@@ -1251,7 +1268,7 @@ class TestMergeClosureRegression:
         assert worker_assignments in {1, 2}
 
         loop.tick(
-            store, resumed_runtime, persisted, path,
+            store, resumed_runtime, code_host, persisted, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
         assert len([entry for entry in store.assign_log if entry[2] == "worker"]) == worker_assignments
         assert requests == [old_pr]
@@ -1261,7 +1278,7 @@ class TestMergeClosureRegression:
             store.get_work_item(item.id).verification)
         store.update_status(item.id, WorkItemStatus.DONE)
         reviewing = loop.tick(
-            store, resumed_runtime, persisted, path,
+            store, resumed_runtime, code_host, persisted, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
         assert reviewing.state == "running"
         assert persisted.nodes["a"].status == "in_review"
@@ -1274,7 +1291,7 @@ class TestMergeClosureRegression:
         )
         store.update_status(item.id, WorkItemStatus.DONE)
         converged = loop.tick(
-            store, resumed_runtime, persisted, path,
+            store, resumed_runtime, code_host, persisted, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         final_disk = load_manifest(path)
@@ -1291,6 +1308,7 @@ class TestMergeClosureRegression:
         assert 1 <= len(bounce_comments) <= 2
 
     def test_merge_intent_is_saved_before_platform_status_write(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1300,9 +1318,9 @@ class TestMergeClosureRegression:
         })
         path = _saved_manifest(tmp_path, manifest)
         observations = iter(("open", "pending"))
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state=next(observations), merged_at=None)
-        store.request_pull_request_merge = lambda *args: SimpleNamespace(
+        code_host.request_pull_request_merge = lambda *args: SimpleNamespace(
             succeeded=True, timed_out=False, exit_code=0, output="requested")
         original_update_status = store.update_status
         persisted_at_write = []
@@ -1316,7 +1334,7 @@ class TestMergeClosureRegression:
         store.update_status = update_status
 
         result = run_merge_delivery(
-            {}, manifest, "a", store, runtime, dict(DEFAULT_RETRY), path)
+            {}, manifest, "a", store, runtime, code_host, dict(DEFAULT_RETRY), path)
 
         assert result == "pending"
         assert persisted_at_write == [("merging", "intent")]
@@ -1325,6 +1343,7 @@ class TestMergeClosureRegression:
         assert reloaded.merge_request_state == "requested"
 
     def test_merge_delivery_without_manifest_path_has_no_external_effects(self):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1333,12 +1352,12 @@ class TestMergeClosureRegression:
                       work_item_id=item.id, status="in_review"),
         })
         effects = []
-        store.observe_pull_request = lambda *args: effects.append("observe")
-        store.request_pull_request_merge = lambda *args: effects.append("merge")
+        code_host.observe_pull_request = lambda *args: effects.append("observe")
+        code_host.request_pull_request_merge = lambda *args: effects.append("merge")
 
         with pytest.raises(ValueError, match="manifest_path"):
             run_merge_delivery(
-                {}, manifest, "a", store, runtime, dict(DEFAULT_RETRY))
+                {}, manifest, "a", store, runtime, code_host, dict(DEFAULT_RETRY))
 
         assert effects == []
         assert manifest.nodes["a"].status == "in_review"
@@ -1348,6 +1367,7 @@ class TestMergeClosureRegression:
         assert store.assign_log == []
 
     def test_merge_bounce_cap_is_saved_before_platform_writes(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1356,9 +1376,9 @@ class TestMergeClosureRegression:
                       work_item_id=item.id, status="in_review"),
         })
         path = _saved_manifest(tmp_path, manifest)
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="open", merged_at=None)
-        store.request_pull_request_merge = lambda *args: SimpleNamespace(
+        code_host.request_pull_request_merge = lambda *args: SimpleNamespace(
             succeeded=False, timed_out=False, exit_code=1, output="conflict")
         effects = []
         original_add_comment = store.add_comment
@@ -1391,7 +1411,7 @@ class TestMergeClosureRegression:
 
         result = run_merge_delivery(
             {}, manifest, "a", store, runtime,
-            resolve_retry({"retry": {"merge": 0}}), path)
+            code_host, resolve_retry({"retry": {"merge": 0}}), path)
 
         assert result == "blocked"
         assert load_manifest(path).nodes["a"].status == "blocked"
@@ -1399,6 +1419,7 @@ class TestMergeClosureRegression:
         assert store.assign_log == []
 
     def test_merge_bounce_cap_survives_crash_before_platform_block(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1407,10 +1428,10 @@ class TestMergeClosureRegression:
                       work_item_id=item.id, status="in_review"),
         })
         path = _saved_manifest(tmp_path, manifest)
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="open", merged_at=None)
         requests = []
-        store.request_pull_request_merge = lambda *args: requests.append(args) or SimpleNamespace(
+        code_host.request_pull_request_merge = lambda *args: requests.append(args) or SimpleNamespace(
             succeeded=False, timed_out=False, exit_code=1, output="conflict")
         original_add_comment = store.add_comment
 
@@ -1425,13 +1446,13 @@ class TestMergeClosureRegression:
         with pytest.raises(RuntimeError, match="simulated crash"):
             run_merge_delivery(
                 {}, manifest, "a", store, runtime,
-                resolve_retry({"retry": {"merge": 0}}), path)
+                code_host, resolve_retry({"retry": {"merge": 0}}), path)
 
         assert store.get_work_item(item.id).status is WorkItemStatus.IN_REVIEW
         reloaded = load_manifest(path)
         store.add_comment = original_add_comment
         result = loop.tick(
-            store, _runtime(store), reloaded, path,
+            store, _runtime(store), code_host, reloaded, path,
             retry_limits=resolve_retry({"retry": {"merge": 0}}), config={})
 
         assert result.state == "needs_decision"
@@ -1440,6 +1461,7 @@ class TestMergeClosureRegression:
         assert requests[0][0] == "https://example.com/pr/1"
 
     def test_closed_unmerged_is_saved_before_worker_side_effects(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1449,10 +1471,10 @@ class TestMergeClosureRegression:
                       merge_request_state="requested"),
         })
         path = _saved_manifest(tmp_path, manifest)
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state="closed_unmerged", merged_at=None)
         requests = []
-        store.request_pull_request_merge = lambda *args: requests.append(args)
+        code_host.request_pull_request_merge = lambda *args: requests.append(args)
         effects = []
         original_update_status = store.update_status
         original_reset_review = store.reset_review
@@ -1487,7 +1509,7 @@ class TestMergeClosureRegression:
         runtime.wake = wake
 
         result = run_merge_delivery(
-            {}, manifest, "a", store, runtime, dict(DEFAULT_RETRY), path)
+            {}, manifest, "a", store, runtime, code_host, dict(DEFAULT_RETRY), path)
 
         assert result == "bounce"
         assert requests == []
@@ -1499,6 +1521,7 @@ class TestMergeClosureRegression:
     def test_timeout_with_pending_pr_stays_merging_without_worker_bounce(
         self, tmp_path,
     ):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1506,14 +1529,14 @@ class TestMergeClosureRegression:
             "a": Node(id="a", worker="alice", reviewer="bob",
                       work_item_id=item.id, status="in_review"),
         })
-        store.request_pull_request_merge = lambda *args: SimpleNamespace(
+        code_host.request_pull_request_merge = lambda *args: SimpleNamespace(
             succeeded=False, timed_out=True, exit_code=None, output="timeout")
         observations = iter(("open", "pending"))
-        store.observe_pull_request = lambda pr_url: SimpleNamespace(
+        code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
             state=next(observations), merged_at=None)
 
         loop.collect_results(
-            store, runtime, manifest, str(tmp_path / "m.yaml"),
+            store, runtime, code_host, manifest, str(tmp_path / "m.yaml"),
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert manifest.nodes["a"].status == "merging"
@@ -1524,6 +1547,7 @@ class TestMergeClosureRegression:
         self, tmp_path,
     ):
         """bootstrap-e2e 型暂态读失败只留在 merge，重启后继续观察。"""
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1538,12 +1562,12 @@ class TestMergeClosureRegression:
                             detail="temporary GitHub read failure"),
             SimpleNamespace(state="merged", merged_at="2026-07-27T00:00:00Z"),
         ))
-        store.observe_pull_request = lambda pr_url: next(observations)
+        code_host.observe_pull_request = lambda pr_url: next(observations)
         requests = []
-        store.request_pull_request_merge = lambda *args: requests.append(args)
+        code_host.request_pull_request_merge = lambda *args: requests.append(args)
 
         first = loop.tick(
-            store, runtime, manifest, path,
+            store, runtime, code_host, manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         persisted = load_manifest(path).nodes["a"]
@@ -1556,7 +1580,7 @@ class TestMergeClosureRegression:
 
         resumed = load_manifest(path)
         second = loop.tick(
-            store, runtime, resumed, path,
+            store, runtime, code_host, resumed, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert second.state == "converged"
@@ -1567,6 +1591,7 @@ class TestMergeClosureRegression:
     def test_temporary_merge_observation_error_stays_in_merge_without_bounce(
         self, tmp_path,
     ):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1576,13 +1601,13 @@ class TestMergeClosureRegression:
                       merge_request_state="requested"),
         })
         path = _saved_manifest(tmp_path, manifest)
-        store.observe_pull_request = lambda pr_url: (_ for _ in ()).throw(
+        code_host.observe_pull_request = lambda pr_url: (_ for _ in ()).throw(
             PlatformError("GitHub API timeout"))
         requests = []
-        store.request_pull_request_merge = lambda *args: requests.append(args)
+        code_host.request_pull_request_merge = lambda *args: requests.append(args)
 
         result = loop.tick(
-            store, runtime, manifest, path,
+            store, runtime, code_host, manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert result.state == "running"
@@ -1595,6 +1620,7 @@ class TestMergeClosureRegression:
         self, tmp_path,
     ):
         """认证结果未知时向上传播，保持业务事实且不得重放 merge。"""
+        code_host = MockCodeHost()
         store = _store()
         item = _review_passed_item(store)
         manifest = Manifest(meta={}, nodes={
@@ -1603,13 +1629,13 @@ class TestMergeClosureRegression:
                       merge_request_state="requested"),
         })
         path = _saved_manifest(tmp_path, manifest)
-        store.observe_pull_request = lambda pr_url: (_ for _ in ()).throw(
+        code_host.observe_pull_request = lambda pr_url: (_ for _ in ()).throw(
             AuthError("GitHub token is expired"))
         requests = []
-        store.request_pull_request_merge = lambda *args: requests.append(args)
+        code_host.request_pull_request_merge = lambda *args: requests.append(args)
 
         with pytest.raises(AuthError, match="GitHub token is expired"):
-            loop.reconcile(store, manifest, path)
+            loop.reconcile(store, code_host, manifest, path)
 
         persisted = load_manifest(path).nodes["a"]
         comments = "\n".join(store.get_comments(item.id))
@@ -1621,6 +1647,7 @@ class TestMergeClosureRegression:
         assert comments == ""
 
     def test_auth_error_while_merging_blocks_without_reissuing_merge(self, tmp_path):
+        code_host = MockCodeHost()
         store = _store()
         runtime = _runtime(store)
         item = _review_passed_item(store)
@@ -1630,13 +1657,13 @@ class TestMergeClosureRegression:
                       merge_request_state="requested"),
         })
         path = _saved_manifest(tmp_path, manifest)
-        store.observe_pull_request = lambda pr_url: (_ for _ in ()).throw(
+        code_host.observe_pull_request = lambda pr_url: (_ for _ in ()).throw(
             AuthError("GitHub token is expired"))
         requests = []
-        store.request_pull_request_merge = lambda *args: requests.append(args)
+        code_host.request_pull_request_merge = lambda *args: requests.append(args)
 
         result = loop.tick(
-            store, runtime, manifest, path,
+            store, runtime, code_host, manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         assert result.state == "needs_decision"
@@ -1669,7 +1696,7 @@ class TestMergeClosureRegression:
         verification_before = dict(failed_review.verification)
 
         result = loop.collect_results(
-            store, runtime, manifest, path,
+            store, runtime, MockCodeHost(), manifest, path,
             retry_limits=dict(DEFAULT_RETRY), config={})
 
         recovered = store.get_work_item(item.id)

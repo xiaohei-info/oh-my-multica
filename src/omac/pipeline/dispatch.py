@@ -45,6 +45,7 @@ from omac.core.workitem import (
 from omac.engines.store import WorkItemStore, reviewer_dispatch_stopped
 from omac.errors import AuthError, NeedsDecision, PlatformError, ValidationError
 from omac.i18n import CN, EN, t, ui
+from ..engines.codehost import CodeHost
 from .convergence import ConvergenceResolution, ResolutionState, resolve_convergence
 
 
@@ -853,10 +854,10 @@ def _validate_amendment_authoring(amendment_file: str) -> str:
 
 
 def _validate_develop_authoring(
-    store: WorkItemStore, pr_url: str, verification_file: str, item: WorkItem
+    code_host: CodeHost | None, pr_url: str, verification_file: str, item: WorkItem
 ) -> tuple[Dict[str, Any], Optional[PullRequestReadiness]]:
     """develop × authoring 左移校验:复用 P2.2 validate_worker_evidence。"""
-    readiness = _validate_pr_ready_for_handoff(store, pr_url)
+    readiness = _validate_pr_ready_for_handoff(code_host, pr_url)
     verification = _parse_structured(verification_file)
     node = _Node(_contract_from_item(item))
     probe = _Item(artifacts={"pr_url": pr_url}, verification=verification)
@@ -873,12 +874,16 @@ def _is_github_pr_url(pr_url: str) -> bool:
 
 
 def _validate_pr_ready_for_handoff(
-    store: WorkItemStore, pr_url: str,
+    code_host: CodeHost | None, pr_url: str,
 ) -> Optional[PullRequestReadiness]:
     """worker 交付前置门:GitHub PR 必须不是 draft,否则不进入 CI/review/merge。"""
     if not _is_github_pr_url(pr_url):
         return None
-    readiness = store.read_pull_request_readiness(pr_url)
+    if code_host is None:
+        raise ValidationError(ui(
+            "A develop delivery needs a code host to check its pull request, but none was provided.",
+            "develop 交付需要代码托管适配器来检查 PR，但未提供。"))
+    readiness = code_host.read_pull_request_readiness(pr_url)
     if isinstance(readiness, PullRequestReadinessFailure):
         if readiness.category == PullRequestReadinessFailureKind.MISSING_CLI:
             raise ValidationError(ui(
@@ -1121,6 +1126,7 @@ def submit(
     store: WorkItemStore,
     issue_id: str,
     *,
+    code_host: CodeHost | None = None,
     plan_file: Optional[str] = None,
     project_rules_file: Optional[str] = None,
     acceptance_file: Optional[str] = None,
@@ -1194,7 +1200,7 @@ def submit(
                 or current.contract_ref != item.contract_ref or current.review_generation != item.review_generation):
                 raise ValidationError('Worker control changed; re-read work show before submitting')
             verification, readiness = _validate_develop_authoring(
-                store, pr_url, verification_file, item)
+                code_host, pr_url, verification_file, item)
             verification_source = _read_text(verification_file)
             pr_head_sha = readiness.head_sha if readiness is not None else None
             artifacts = {"pr_url": pr_url}

@@ -421,7 +421,7 @@ def _run_inner_loop(
 
     for _ in range(max_ticks):
         result = loop_mod.tick(
-            engine.store, engine.runtime, manifest, manifest_path,
+            engine.store, engine.runtime, engine.code_host, manifest, manifest_path,
             max_parallel=max_parallel, retry_limits=retry_limits, config=config)
         if result.state == "converged":
             return

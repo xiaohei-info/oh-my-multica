@@ -7,7 +7,7 @@ import pytest
 from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
-from omac.engines.mock import MockRuntime, MockStore
+from omac.engines.mock import MockCodeHost, MockRuntime, MockStore
 from omac.engines.models import EngineConfig
 from omac.core.workitem import WorkItemStatus
 from omac.errors import AuthError, PlatformError
@@ -59,7 +59,7 @@ def test_unknown_work_item_read_preserves_every_manifest_business_state(
     store.get_work_item = lambda _item_id: (_ for _ in ()).throw(error)
 
     with pytest.raises(type(error), match=str(error)):
-        loop.reconcile(store, manifest, path, full_scan=True)
+        loop.reconcile(store, MockCodeHost(), manifest, path, full_scan=True)
 
     assert manifest.nodes["a"].status == status
     assert manifest.nodes["a"].work_item_id == item_id
@@ -102,7 +102,7 @@ def test_nth_work_item_read_failure_discards_partial_reconcile_results(tmp_path)
     store.get_work_item = fail_on_fourth
 
     with pytest.raises(PlatformError, match="fourth read timed out"):
-        loop.reconcile(store, manifest, path, full_scan=True)
+        loop.reconcile(store, MockCodeHost(), manifest, path, full_scan=True)
 
     assert [node.status for node in manifest.nodes.values()] == [
         "done", "in_review", "todo", "blocked",
@@ -136,7 +136,7 @@ def test_later_read_failure_prevents_earlier_platform_writes(tmp_path):
     store.get_work_item = fail_after_first_node
 
     with pytest.raises(PlatformError, match="second read timed out"):
-        loop.reconcile(store, manifest, path)
+        loop.reconcile(store, MockCodeHost(), manifest, path)
 
     first = original_get(first_id)
     assert first.status is WorkItemStatus.DONE
@@ -150,6 +150,7 @@ def test_later_read_failure_prevents_earlier_platform_writes(tmp_path):
     AuthError("pull request authentication expired"),
 ])
 def test_unknown_pull_request_observation_preserves_manifest(tmp_path, error):
+    code_host = MockCodeHost()
     store = _store()
     item_id = _create_item(store, "a", WorkItemStatus.DONE)
     manifest = Manifest(meta={}, nodes={
@@ -160,10 +161,10 @@ def test_unknown_pull_request_observation_preserves_manifest(tmp_path, error):
     path = str(tmp_path / "manifest.yaml")
     save_manifest(manifest, path)
     before = (tmp_path / "manifest.yaml").read_bytes()
-    store.observe_pull_request = lambda _url: (_ for _ in ()).throw(error)
+    code_host.observe_pull_request = lambda _url: (_ for _ in ()).throw(error)
 
     with pytest.raises(type(error), match=str(error)):
-        loop.reconcile(store, manifest, path)
+        loop.reconcile(store, code_host, manifest, path)
 
     assert manifest.nodes["a"].status == "done"
     assert manifest.nodes["a"].merge_request_state == "requested"
@@ -181,7 +182,7 @@ def test_work_item_not_found_keeps_existing_recovery_semantics(tmp_path):
     path = str(tmp_path / "manifest.yaml")
     save_manifest(manifest, path)
 
-    assert loop.reconcile(store, manifest, path) is True
+    assert loop.reconcile(store, MockCodeHost(), manifest, path) is True
 
     assert manifest.nodes["a"].status == "todo"
     assert manifest.nodes["a"].work_item_id is None
@@ -208,7 +209,7 @@ def test_online_dag_commands_map_reconcile_error_without_manifest_sync_commit(
     save_manifest(manifest, path)
     before = (tmp_path / "manifest.yaml").read_bytes()
     store.get_work_item = lambda _item_id: (_ for _ in ()).throw(error)
-    engine = SimpleNamespace(store=store, runtime=MockRuntime(store))
+    engine = SimpleNamespace(store=store, runtime=MockRuntime(store), code_host=MockCodeHost())
 
     from omac.cli.commands import dag
 

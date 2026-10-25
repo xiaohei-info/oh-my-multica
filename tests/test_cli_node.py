@@ -1,3 +1,4 @@
+from omac.engines.mock import MockCodeHost
 """cli.node: show / retry / abandon —— exit 20 后的显式决策工具(§7.5)。"""
 from copy import deepcopy
 import hashlib
@@ -637,7 +638,7 @@ def test_retry_review_recovers_delayed_visible_dispatch_and_preserves_reject(
     monkeypatch.setattr(engine.store, "assign_work_item", original_assign)
     monkeypatch.setattr(engine.runtime, "wake", original_wake)
     manifest = load_manifest(path)
-    tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    tick(engine.store, engine.runtime, engine.code_host, manifest, path, max_parallel=1)
     consumed = engine.store.get_work_item(item_id)
     assert manifest.nodes["b"].status == "in_progress"
     assert consumed.bounces.review == 1
@@ -1287,7 +1288,7 @@ def test_retry_reassignment_survives_reconcile_and_dispatches_new_worker(
     assert retried.review_verdict is None
 
     manifest = load_manifest(path)
-    result = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    result = tick(engine.store, engine.runtime, engine.code_host, manifest, path, max_parallel=1)
 
     assert result.dispatched == ["b"]
     assert manifest.nodes["b"].status == "in_progress"
@@ -1346,7 +1347,7 @@ def test_retry_retires_old_handoff_and_waits_for_new_worker_submit(
     assert retried.status is WorkItemStatus.TODO
 
     manifest = load_manifest(path)
-    first = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    first = tick(engine.store, engine.runtime, engine.code_host, manifest, path, max_parallel=1)
     assert first.dispatched == ["b"]
     assert engine.store.get_work_item(item.id).worker == expected_worker
     first_handoff = engine.store.get_work_item(item.id).worker_handoff
@@ -1357,7 +1358,7 @@ def test_retry_retires_old_handoff_and_waits_for_new_worker_submit(
         entry for entry in engine.store.assign_log if entry[2] == "reviewer"
     ])
 
-    second = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    second = tick(engine.store, engine.runtime, engine.code_host, manifest, path, max_parallel=1)
     assert second.state == "running"
     assert manifest.nodes["b"].status == "in_progress"
     assert len([
@@ -1376,11 +1377,11 @@ def test_retry_retires_old_handoff_and_waits_for_new_worker_submit(
     submit(
         engine.store,
         item.id,
-        pr_url="https://github.com/acme/repo/pull/25",
+        code_host=engine.code_host, pr_url="https://github.com/acme/repo/pull/25",
         verification_file=str(verification_file),
     )
 
-    third = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    third = tick(engine.store, engine.runtime, engine.code_host, manifest, path, max_parallel=1)
     reviewed = engine.store.get_work_item(item.id)
     assert third.state == "running"
     assert manifest.nodes["b"].status == "in_review"
@@ -1395,6 +1396,7 @@ def test_retry_legacy_delivery_isolates_old_evidence_until_fresh_submit(
     tmp_path, capsys, monkeypatch,
 ):
     """显式 retry 复用同一 PR，但旧附件不能满足新的 Worker generation。"""
+    code_host = MockCodeHost()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OMAC_ENGINE", "mock")
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
@@ -1529,7 +1531,7 @@ def test_retry_legacy_delivery_isolates_old_evidence_until_fresh_submit(
     manifest = load_manifest(path)
     retry_generation = retried.worker_handoff.generation
     assignments_before = len(engine.store.assign_log)
-    first = tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
+    first = tick(engine.store, engine.runtime, code_host, manifest, path, max_parallel=1)
     assert first.dispatched == ["b"]
     dispatched_handoff = engine.store.get_work_item(item.id).worker_handoff
     assert dispatched_handoff is not None
@@ -1540,7 +1542,7 @@ def test_retry_legacy_delivery_isolates_old_evidence_until_fresh_submit(
     ] == ["worker"]
 
     waiting = tick(
-        engine.store, engine.runtime, manifest, path, max_parallel=1)
+        engine.store, engine.runtime, code_host, manifest, path, max_parallel=1)
     assert waiting.state == "running"
     assert not [
         entry for entry in engine.store.assign_log[assignments_before:]
@@ -1565,7 +1567,7 @@ def test_retry_legacy_delivery_isolates_old_evidence_until_fresh_submit(
     submit(
         engine.store,
         item.id,
-        pr_url=old_pr,
+        code_host=code_host, pr_url=old_pr,
         verification_file=str(verification_file),
     )
     ci_calls = 0
@@ -1575,11 +1577,11 @@ def test_retry_legacy_delivery_isolates_old_evidence_until_fresh_submit(
         ci_calls += 1
         return PullRequestCheckResult(True, 0, "green")
 
-    monkeypatch.setattr(engine.store, "check_pull_request", pass_ci)
+    monkeypatch.setattr(code_host, "check_pull_request", pass_ci)
     reviewed = tick(
         engine.store,
         engine.runtime,
-        manifest,
+        code_host, manifest,
         path,
         max_parallel=1,
         config={"ci": {"check_command": "gh pr checks {pr_url}"}},
@@ -2191,6 +2193,7 @@ def test_accept_marks_done_and_updates_platform_status(tmp_path, capsys, monkeyp
 
 
 def test_accept_rejects_develop_pr_without_confirmed_merge(tmp_path, monkeypatch):
+    code_host = MockCodeHost()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OMAC_ENGINE", "mock")
     monkeypatch.setenv("OMAC_WORKSPACE_ID", "ws-1")
@@ -2205,7 +2208,7 @@ def test_accept_rejects_develop_pr_without_confirmed_merge(tmp_path, monkeypatch
     engine.store.update_work_item_metadata(
         item.id, artifacts={"pr_url": "https://example.com/pr/1"})
     engine.store.update_status(item.id, WorkItemStatus.BLOCKED)
-    engine.store.observe_pull_request = lambda pr_url: SimpleNamespace(
+    code_host.observe_pull_request = lambda pr_url: SimpleNamespace(
         state="open", merged_at=None)
 
     import omac.cli.commands.node as node_mod

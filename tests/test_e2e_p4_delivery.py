@@ -89,7 +89,7 @@ def _env(tmp_path: Path, *, log_file: str | None = None,
 
 def _run(args: list[str], cwd: Path, env: dict) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["omac", *args], cwd=str(cwd), capture_output=True, text=True, env=env)
+        [sys.executable, "-m", "omac", *args], cwd=str(cwd), capture_output=True, text=True, env=env)
 
 
 def _parse_json(stdout: str) -> dict:

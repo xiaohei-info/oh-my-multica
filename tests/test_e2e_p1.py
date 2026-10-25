@@ -59,7 +59,7 @@ def _env(**extra) -> dict:
 def _run(args: list[str], cwd: Path, env: Optional[dict] = None) -> subprocess.CompletedProcess:
     """运行 omac 子进程,返回 CompletedProcess。"""
     return subprocess.run(
-        ["omac", *args],
+        [sys.executable, "-m", "omac", *args],
         cwd=str(cwd),
         capture_output=True,
         text=True,

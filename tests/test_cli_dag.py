@@ -5,6 +5,7 @@
 2. build_status_report 内容断言:mixed 状态节点、reconcile 同步、needs_decision
 3. CLI dag status:退出码恒 0、table/json 输出、--output json 可解析
 """
+from omac.engines.mock import MockCodeHost
 import json
 import os
 from types import SimpleNamespace
@@ -183,7 +184,7 @@ class TestSchemaLock:
         manifest = load_manifest(path)
         store = _mock_store()
         _populate_store(store)
-        report = build_status_report(manifest, store, path)
+        report = build_status_report(manifest, store, MockCodeHost(), path)
         assert set(report.keys()) == set(STATUS_REPORT_KEYS)
 
     def test_progress_has_exactly_locked_keys(self, tmp_path):
@@ -191,7 +192,7 @@ class TestSchemaLock:
         manifest = load_manifest(path)
         store = _mock_store()
         _populate_store(store)
-        report = build_status_report(manifest, store, path)
+        report = build_status_report(manifest, store, MockCodeHost(), path)
         assert set(report["progress"].keys()) == set(PROGRESS_KEYS)
 
     def test_node_has_exactly_locked_keys(self, tmp_path):
@@ -199,7 +200,7 @@ class TestSchemaLock:
         manifest = load_manifest(path)
         store = _mock_store()
         _populate_store(store)
-        report = build_status_report(manifest, store, path)
+        report = build_status_report(manifest, store, MockCodeHost(), path)
         for node in report["nodes"]:
             assert set(node.keys()) == set(NODE_KEYS)
 
@@ -208,7 +209,7 @@ class TestSchemaLock:
         manifest = load_manifest(path)
         store = _mock_store()
         _populate_store(store)
-        report = build_status_report(manifest, store, path)
+        report = build_status_report(manifest, store, MockCodeHost(), path)
         nd = report["needs_decision"]
         assert nd is not None
         assert set(nd.keys()) == set(NEEDS_DECISION_KEYS)
@@ -230,7 +231,7 @@ class TestBuildStatusReport:
         store.update_status("1", WorkItemStatus.DONE)
         store.update_work_item_metadata("1", artifacts={"pr_url": "https://pr/1"})
 
-        build_status_report(manifest, store, path)
+        build_status_report(manifest, store, MockCodeHost(), path)
 
         reloaded = load_manifest(path)
         assert reloaded.nodes["a"].status == "done"
@@ -243,7 +244,7 @@ class TestBuildStatusReport:
         manifest = load_manifest(path)
         store = _mock_store()
 
-        build_status_report(manifest, store, path)
+        build_status_report(manifest, store, MockCodeHost(), path)
 
         reloaded = load_manifest(path)
         assert reloaded.nodes["a"].work_item_id is None
@@ -254,7 +255,7 @@ class TestBuildStatusReport:
         manifest = load_manifest(path)
         store = _mock_store()
         _populate_store(store)
-        report = build_status_report(manifest, store, path)
+        report = build_status_report(manifest, store, MockCodeHost(), path)
 
         p = report["progress"]
         assert p["total"] == 6
@@ -272,7 +273,7 @@ class TestBuildStatusReport:
         ])
         manifest = load_manifest(path)
 
-        report = build_status_report(manifest, _mock_store(), path)
+        report = build_status_report(manifest, _mock_store(), MockCodeHost(), path)
 
         assert report["progress"]["running"] == 1
         assert report["progress"]["todo"] == 0
@@ -284,7 +285,7 @@ class TestBuildStatusReport:
         ])
         manifest = load_manifest(path)
         store = _mock_store()
-        report = build_status_report(manifest, store, path)
+        report = build_status_report(manifest, store, MockCodeHost(), path)
         assert report["progress"]["converged"] is False
         assert {node["key"] for node in report["needs_decision"]["failed_nodes"]} == {"a", "b"}
 
@@ -293,7 +294,7 @@ class TestBuildStatusReport:
         manifest = load_manifest(path)
         store = _mock_store()
         _populate_store(store)
-        report = build_status_report(manifest, store, path)
+        report = build_status_report(manifest, store, MockCodeHost(), path)
 
         nodes = {n["key"]: n for n in report["nodes"]}
         # done node with pr_url from platform
@@ -313,7 +314,7 @@ class TestBuildStatusReport:
         manifest = load_manifest(path)
         store = _mock_store()
         _populate_store(store)
-        report = build_status_report(manifest, store, path)
+        report = build_status_report(manifest, store, MockCodeHost(), path)
 
         nd = report["needs_decision"]
         assert nd is not None
@@ -339,7 +340,7 @@ class TestBuildStatusReport:
         store.create_work_item("ws", "A", "d", dag_key="a", worker="alice")
         store.update_status("1", WorkItemStatus.FAILED)
 
-        report = build_status_report(manifest, store, path)
+        report = build_status_report(manifest, store, MockCodeHost(), path)
         nd = report["needs_decision"]
         assert nd is not None
         assert "b" in nd["blocked_downstream"]
@@ -359,7 +360,7 @@ class TestBuildStatusReport:
         store.create_work_item("ws", "B", "d", dag_key="b", worker="bob")
         store.update_status("2", WorkItemStatus.IN_PROGRESS)
 
-        report = build_status_report(manifest, store, path)
+        report = build_status_report(manifest, store, MockCodeHost(), path)
         assert report["needs_decision"] is None
 
 
@@ -371,7 +372,7 @@ class TestRenderTable:
         manifest = load_manifest(path)
         store = _mock_store()
         _populate_store(store)
-        report = build_status_report(manifest, store, path)
+        report = build_status_report(manifest, store, MockCodeHost(), path)
         table = render_table(report)
 
         for key in ("KEY", "STATUS", "WORKER"):
@@ -384,7 +385,7 @@ class TestRenderTable:
         manifest = load_manifest(path)
         store = _mock_store()
         _populate_store(store)
-        report = build_status_report(manifest, store, path)
+        report = build_status_report(manifest, store, MockCodeHost(), path)
         table = render_table(report)
         assert "done" in table.lower() or "/" in table  # progress x/y
 
@@ -565,7 +566,7 @@ class TestNeedsDecisionContract:
         store.create_work_item("ws", "A", "d", dag_key="a", worker="alice")
         store.update_status("1", WorkItemStatus.FAILED)
 
-        result = tick(store, MockRuntime(store), manifest, path)
+        result = tick(store, MockRuntime(store), MockCodeHost(), manifest, path)
 
         assert result.state == "needs_decision"
         assert set(result.report.keys()) == set(NEEDS_DECISION_KEYS)
@@ -596,7 +597,7 @@ class TestNeedsDecisionContract:
         store = _mock_store()
         store.create_work_item("ws", "A", "d", dag_key="a", worker="alice")
         store.update_status("1", WorkItemStatus.FAILED)
-        result = tick(store, MockRuntime(store), manifest, path)
+        result = tick(store, MockRuntime(store), MockCodeHost(), manifest, path)
         assert result.state == "needs_decision"
         failed_keys = sorted(n["key"] for n in result.report["failed_nodes"])
 
@@ -605,7 +606,7 @@ class TestNeedsDecisionContract:
         store_obs = _mock_store()
         store_obs.create_work_item("ws", "A", "d", dag_key="a", worker="alice")
         store_obs.update_status("1", WorkItemStatus.FAILED)
-        report_b = build_status_report(manifest_after, store_obs, path)
+        report_b = build_status_report(manifest_after, store_obs, MockCodeHost(), path)
         nd_b = report_b["needs_decision"]
         assert nd_b is not None
 
@@ -656,7 +657,7 @@ class TestNeedsDecisionReportReusesObservations:
 
         store.get_work_item = recording_get
 
-        result = tick(store, MockRuntime(store), manifest, path)
+        result = tick(store, MockRuntime(store), MockCodeHost(), manifest, path)
 
         assert result.state == "needs_decision"
         assert read_stacks  # reconcile / collect 仍会读取平台

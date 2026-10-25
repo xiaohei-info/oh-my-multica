@@ -2,6 +2,7 @@
 node_failed / cascade_blocked / needs_decision。capture_logs 断言,不看渲染。"""
 from __future__ import annotations
 
+from omac.engines.mock import MockCodeHost
 import os
 import tempfile
 
@@ -41,7 +42,7 @@ def _path(manifest):
 
 def _settle(store, runtime, manifest, path):
     for _ in range(50):
-        r = tick(store, runtime, manifest, path, config={"engine": "mock"})
+        r = tick(store, runtime, MockCodeHost(), manifest, path, config={"engine": "mock"})
         if r.state != "running":
             return r
     raise AssertionError("did not settle")

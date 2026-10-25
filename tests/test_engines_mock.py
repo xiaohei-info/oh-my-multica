@@ -215,7 +215,7 @@ def test_list_members_and_comments():
 
 
 def test_failed_merge_or_check_is_not_synthesized_as_success(monkeypatch):
-    store = _engine(MOCK_AUTO_MERGE_ON_SUCCESS="false").store
+    store = _engine(MOCK_AUTO_MERGE_ON_SUCCESS="false").code_host
 
     class Proc:
         returncode = 1
@@ -242,10 +242,10 @@ def test_mock_merge_requires_explicit_auto_merge_configuration(monkeypatch):
 
     monkeypatch.setattr("omac.engines.mock.subprocess.run", lambda *args, **kwargs: Proc())
     pr_url = "https://mock.example.com/pr/1"
-    plain = _engine(MOCK_AUTO_MERGE_ON_SUCCESS="false").store
+    plain = _engine(MOCK_AUTO_MERGE_ON_SUCCESS="false").code_host
 
     assert plain.request_pull_request_merge(pr_url, "true", 30).succeeded is True
     assert plain.observe_pull_request(pr_url).state is PullRequestState.OPEN
-    configured = _engine(MOCK_AUTO_MERGE_ON_SUCCESS="true").store
+    configured = _engine(MOCK_AUTO_MERGE_ON_SUCCESS="true").code_host
     assert configured.request_pull_request_merge(pr_url, "true", 30).succeeded is True
     assert configured.observe_pull_request(pr_url).state is PullRequestState.MERGED

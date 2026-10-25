@@ -1,7 +1,6 @@
 import hashlib
+from omac.engines.mock import MockCodeHost
 import json
-import shutil
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2378,7 +2377,7 @@ def test_submit_fails_closed_when_deferred_multica_contract_body_is_missing(
         call = lambda: dispatch_mod.submit(
             store,
             "issue-1",
-            pr_url="https://example.test/pr/42",
+            code_host=MockCodeHost(), pr_url="https://example.test/pr/42",
             verification_file=str(verification),
         )
     else:
@@ -2387,7 +2386,7 @@ def test_submit_fails_closed_when_deferred_multica_contract_body_is_missing(
         call = lambda: dispatch_mod.submit(
             store,
             "issue-1",
-            verdict="pass",
+            code_host=MockCodeHost(), verdict="pass",
             report_file=str(report),
         )
 
@@ -3906,134 +3905,6 @@ def test_multica_runtime_lists_actual_runtime_shape(monkeypatch):
 
     assert len(targets) == 1
     assert targets[0].type == "codex"
-
-
-@pytest.mark.parametrize(
-    ("payload", "expected_state", "expected_merged_at"),
-    [
-        ({"state": "MERGED", "mergedAt": "2026-07-26T08:45:00Z"},
-         PullRequestState.MERGED, "2026-07-26T08:45:00Z"),
-        ({"state": "OPEN", "mergedAt": None, "mergeStateStatus": "CLEAN"},
-         PullRequestState.OPEN, None),
-        ({"state": "OPEN", "mergedAt": None,
-          "autoMergeRequest": {"enabledAt": "2026-07-26T08:40:00Z"},
-          "mergeStateStatus": "CLEAN"},
-         getattr(PullRequestState, "PENDING", "pending"), None),
-        ({"state": "OPEN", "mergedAt": None,
-          "autoMergeRequest": None, "mergeStateStatus": "QUEUED"},
-         getattr(PullRequestState, "PENDING", "pending"), None),
-        ({"state": "CLOSED", "mergedAt": None},
-         PullRequestState.CLOSED_UNMERGED, None),
-    ],
-)
-def test_multica_observe_pull_request_classifies_remote_states(
-    monkeypatch, payload, expected_state, expected_merged_at,
-):
-    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    calls = []
-
-    def run(args, **kwargs):
-        calls.append((args, kwargs))
-        return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
-
-    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
-
-    observation = store.observe_pull_request("https://example.com/pr/1")
-
-    assert observation.state is expected_state
-    assert observation.merged_at == expected_merged_at
-    assert "autoMergeRequest" in calls[0][0][-1]
-    assert "mergeStateStatus" in calls[0][0][-1]
-    assert "isInMergeQueue" not in calls[0][0][-1]
-
-
-def test_multica_pr_view_fields_are_supported_by_local_gh():
-    if shutil.which("gh") is None:
-        pytest.skip("gh is not installed")
-
-    result = subprocess.run(
-        ["gh", "pr", "view", "--help"], capture_output=True, text=True,
-        check=False,
-    )
-    assert result.returncode == 0
-    module = __import__("omac.engines.multica", fromlist=["x"])
-    fields = module.MULTICA_PR_VIEW_FIELDS
-    for field in fields.split(","):
-        assert field in result.stdout
-
-
-@pytest.mark.parametrize(
-    "run_result",
-    [
-        SimpleNamespace(returncode=1, stdout="", stderr="authentication failed"),
-        subprocess.TimeoutExpired(cmd="gh", timeout=30),
-        SimpleNamespace(returncode=0, stdout="not-json", stderr=""),
-    ],
-)
-def test_multica_observe_pull_request_fails_closed_for_unreadable_remote(
-    monkeypatch, run_result,
-):
-    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-
-    def run(*args, **kwargs):
-        if isinstance(run_result, BaseException):
-            raise run_result
-        return run_result
-
-    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
-
-    observation = store.observe_pull_request("https://example.com/pr/1")
-
-    assert observation.state is PullRequestState.UNKNOWN
-
-
-def test_multica_pr_check_and_readiness_stay_in_adapter(monkeypatch):
-    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    calls = []
-    responses = iter([
-        SimpleNamespace(returncode=0, stdout="checks ok", stderr=""),
-        SimpleNamespace(returncode=0, stdout=json.dumps({
-            "isDraft": False, "state": "OPEN", "headRefOid": "head-1"}),
-            stderr=""),
-    ])
-
-    def run(args, **kwargs):
-        calls.append((args, kwargs))
-        return next(responses)
-
-    monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
-
-    check = store.check_pull_request(
-        "https://github.com/acme/repo/pull/1", "gh pr checks {pr_url}", 30)
-    readiness = store.read_pull_request_readiness(
-        "https://github.com/acme/repo/pull/1")
-
-    assert check.succeeded is True
-    assert readiness.is_draft is False
-    assert readiness.state == "OPEN"
-    assert readiness.head_sha == "head-1"
-    assert calls[0][0] == "gh pr checks https://github.com/acme/repo/pull/1"
-    assert calls[1][0][-1] == "isDraft,state,headRefOid"
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [None, {}, {"isDraft": None, "state": "OPEN", "headRefOid": "head"},
-     {"isDraft": False},
-     {"isDraft": "false", "state": "OPEN", "headRefOid": "head"},
-     {"isDraft": False, "state": "OPEN"}],
-)
-def test_multica_readiness_malformed_payload_fails_closed(monkeypatch, payload):
-    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    monkeypatch.setattr(
-        "omac.engines.multica.subprocess.run",
-        lambda *args, **kwargs: SimpleNamespace(
-            returncode=0, stdout=json.dumps(payload), stderr=""),
-    )
-
-    result = store.read_pull_request_readiness("https://github.com/acme/repo/pull/1")
-
-    assert isinstance(result, PullRequestReadinessFailure)
 
 
 def _rejected_ledger_and_report():

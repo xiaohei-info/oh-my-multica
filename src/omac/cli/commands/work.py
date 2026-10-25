@@ -6,7 +6,7 @@ import sys
 
 from ._stub import not_implemented
 from ...core import config as config_mod
-from ...engines import engine_from_config
+from ...engines import code_host_for, engine_from_config
 from ...core.workitem import WorkItemStatus
 from ...errors import NeedsDecision, OmacError, ValidationError
 from ...i18n import resolve_language, t, ui
@@ -234,6 +234,7 @@ def _submit(args) -> int:
         result = submit(
             store,
             args.issue_id,
+            code_host=code_host_for(store.config.engine_type),
             plan_file=args.plan_file,
             project_rules_file=args.project_rules_file,
             acceptance_file=args.acceptance_file,

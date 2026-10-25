@@ -644,7 +644,7 @@ def test_reviewed_manifest_is_execution_equivalent_after_plan_canonicalization(
         key: execution_node(node) for key, node in final.nodes.items()
     }
 
-    tick(engine.store, engine.runtime, final, str(manifest_path), max_parallel=4)
+    tick(engine.store, engine.runtime, engine.code_host, final, str(manifest_path), max_parallel=4)
     develop_items = {
         item.dag_key: item
         for item in engine.store.list_work_items("mock-workspace")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from omac.engines.mock import MockCodeHost
 import json
 
 import pytest
@@ -755,7 +756,7 @@ def test_review_submit_does_not_advance_raw_ledger_from_previous_generation(
     monkeypatch.setattr(dispatch_mod, "advance_review_ledger", advance)
 
     dispatch_mod.submit(
-        store, item.id, verdict="pass", report_file=str(report_file))
+        store, item.id, code_host=MockCodeHost(), verdict="pass", report_file=str(report_file))
 
     assert observed == [None]
     current = store.get_work_item(item.id)
@@ -839,7 +840,7 @@ def test_first_review_in_new_generation_starts_a_fresh_ledger(tmp_path):
         rejected_report("new generation evidence"), sort_keys=False))
 
     dispatch_mod.submit(
-        store, item.id, verdict="reject", report_file=str(report_file))
+        store, item.id, code_host=MockCodeHost(), verdict="reject", report_file=str(report_file))
 
     current = store.get_work_item(item.id)
     assert current.review_ledger_generation == "amendment-new"
@@ -1454,7 +1455,7 @@ def test_develop_authoring_submit_ignores_unrelated_historical_attachments(
     result = dispatch_mod.submit(
         store,
         item.id,
-        pr_url="https://example.test/pr/42",
+        code_host=MockCodeHost(), pr_url="https://example.test/pr/42",
         verification_file=str(verification_file),
     )
 
@@ -1549,7 +1550,7 @@ def test_review_submit_fails_closed_when_required_target_is_unavailable(
         dispatch_mod.submit(
             store,
             item.id,
-            verdict="pass",
+            code_host=MockCodeHost(), verdict="pass",
             report_file=str(report_file),
         )
 
@@ -1644,7 +1645,7 @@ class TestSubmitPerKindPhase:
         with pytest.raises(ValidationError, match="missing business test for acceptance"):
             dispatch_mod.submit(
                 eng.store, item.id,
-                pr_url="https://x/pr/1", verification_file=str(vfile),
+                code_host=eng.code_host, pr_url="https://x/pr/1", verification_file=str(vfile),
             )
 
         got = eng.store.get_work_item(item.id)
@@ -1667,7 +1668,7 @@ class TestSubmitPerKindPhase:
 
         with pytest.raises(ValidationError, match="full_review_completed"):
             dispatch_mod.submit(
-                eng.store, item.id, verdict="pass", report_file=str(rfile),
+                eng.store, item.id, code_host=eng.code_host, verdict="pass", report_file=str(rfile),
             )
 
         got = eng.store.get_work_item(item.id)
@@ -1688,7 +1689,7 @@ class TestSubmitPerKindPhase:
 
         result = dispatch_mod.submit(
             eng.store, item.id,
-            pr_url="https://x/pr/1", verification_file=str(vfile),
+            code_host=eng.code_host, pr_url="https://x/pr/1", verification_file=str(vfile),
         )
         assert result.kind == dispatch_mod.TaskKind.DEVELOP
         assert result.phase == dispatch_mod.TaskPhase.AUTHORING
@@ -1703,6 +1704,7 @@ class TestSubmitPerKindPhase:
         self, tmp_path, monkeypatch,
     ):
         """Agent submit 只写候选交付，因果 identity 由 controller 封装。"""
+        code_host = MockCodeHost()
         from omac.core.taskmeta import WorkerHandoffIntent
 
         eng = _engine()
@@ -1732,9 +1734,7 @@ class TestSubmitPerKindPhase:
         vfile = tmp_path / "verification.yaml"
         verification_source = yaml.safe_dump(_make_verification())
         vfile.write_text(verification_source)
-        monkeypatch.setattr(
-            eng.store,
-            "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda _pr_url: PullRequestReadiness(
                 is_draft=False, state="OPEN", head_sha="head-new"),
         )
@@ -1742,7 +1742,7 @@ class TestSubmitPerKindPhase:
         dispatch_mod.submit(
             eng.store,
             item.id,
-            pr_url="https://github.com/acme/snake/pull/1",
+            code_host=code_host, pr_url="https://github.com/acme/snake/pull/1",
             verification_file=str(vfile),
         )
 
@@ -1754,6 +1754,7 @@ class TestSubmitPerKindPhase:
         self, tmp_path, monkeypatch,
     ):
         """Agent 可覆盖的环境变量不会被封装为 delivery identity。"""
+        code_host = MockCodeHost()
         from omac.core.taskmeta import WorkerHandoffIntent
 
         eng = _engine()
@@ -1779,9 +1780,7 @@ class TestSubmitPerKindPhase:
             item.id, worker_handoff=intent, phase=TaskPhase.AUTHORING)
         vfile = tmp_path / "verification.yaml"
         vfile.write_text(yaml.safe_dump(_make_verification()))
-        monkeypatch.setattr(
-            eng.store,
-            "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda _pr_url: PullRequestReadiness(
                 is_draft=False, state="OPEN", head_sha="head-new"),
         )
@@ -1792,7 +1791,7 @@ class TestSubmitPerKindPhase:
         dispatch_mod.submit(
             eng.store,
             item.id,
-            pr_url="https://github.com/acme/snake/pull/1",
+            code_host=code_host, pr_url="https://github.com/acme/snake/pull/1",
             verification_file=str(vfile),
         )
 
@@ -1813,7 +1812,7 @@ class TestSubmitPerKindPhase:
         with pytest.raises(ValidationError) as exc:
             dispatch_mod.submit(
                 eng.store, item.id,
-                pr_url="https://x/pr/1", verification_file=str(vfile),
+                code_host=eng.code_host, pr_url="https://x/pr/1", verification_file=str(vfile),
             )
         assert "gate" in str(exc.value).lower() or "coverage" in str(exc.value).lower()
         got = eng.store.get_work_item(item.id)
@@ -1822,6 +1821,7 @@ class TestSubmitPerKindPhase:
         assert got.status == WorkItemStatus.TODO
 
     def test_develop_authoring_rejects_github_draft_pr_atomic(self, tmp_path, monkeypatch):
+        code_host = MockCodeHost()
         eng = _engine()
         item = eng.store.create_work_item(
             "mock-workspace", "t", "d", dag_key="a", worker="alice",
@@ -1832,15 +1832,14 @@ class TestSubmitPerKindPhase:
         vfile.write_text(yaml.safe_dump(_make_verification()))
 
         store = eng.store
-        monkeypatch.setattr(
-            store, "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda pr_url: PullRequestReadiness(is_draft=True, state="OPEN"),
         )
 
         with pytest.raises(ValidationError) as exc:
             dispatch_mod.submit(
                 eng.store, item.id,
-                pr_url="https://github.com/acme/snake/pull/1",
+                code_host=code_host, pr_url="https://github.com/acme/snake/pull/1",
                 verification_file=str(vfile),
             )
 
@@ -1851,6 +1850,7 @@ class TestSubmitPerKindPhase:
         assert got.status == WorkItemStatus.TODO
 
     def test_develop_authoring_rejects_unknown_readiness_result(self, tmp_path, monkeypatch):
+        code_host = MockCodeHost()
         eng = _engine()
         item = eng.store.create_work_item(
             "mock-workspace", "t", "d", dag_key="a", worker="alice",
@@ -1859,19 +1859,19 @@ class TestSubmitPerKindPhase:
         eng.store.set_node_contract(item.id, CONTRACT)
         vfile = tmp_path / "verification.yaml"
         vfile.write_text(yaml.safe_dump(_make_verification()))
-        monkeypatch.setattr(
-            eng.store, "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda pr_url: PullRequestReadinessFailure("unknown", "bad"),
         )
 
         with pytest.raises(ValidationError, match="readiness"):
             dispatch_mod.submit(
                 eng.store, item.id,
-                pr_url="https://github.com/acme/snake/pull/1",
+                code_host=code_host, pr_url="https://github.com/acme/snake/pull/1",
                 verification_file=str(vfile),
             )
 
     def test_develop_authoring_accepts_ready_pr_without_multica_issue_key(self, tmp_path, monkeypatch):
+        code_host = MockCodeHost()
         eng = _engine()
         item = eng.store.create_work_item(
             "mock-workspace", "t", "d", dag_key="a", worker="alice",
@@ -1882,20 +1882,20 @@ class TestSubmitPerKindPhase:
         vfile = tmp_path / "verification.yaml"
         vfile.write_text(yaml.safe_dump(_make_verification()))
 
-        monkeypatch.setattr(
-            eng.store, "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda pr_url: PullRequestReadiness(is_draft=False, state="OPEN"),
         )
 
         result = dispatch_mod.submit(
             eng.store, item.id,
-            pr_url="https://github.com/acme/snake/pull/1",
+            code_host=code_host, pr_url="https://github.com/acme/snake/pull/1",
             verification_file=str(vfile),
         )
 
         assert result.advanced_to == WorkItemStatus.DONE
 
     def test_develop_authoring_accepts_github_ready_pr(self, tmp_path, monkeypatch):
+        code_host = MockCodeHost()
         eng = _engine()
         item = eng.store.create_work_item(
             "mock-workspace", "t", "d", dag_key="a", worker="alice",
@@ -1905,14 +1905,13 @@ class TestSubmitPerKindPhase:
         vfile = tmp_path / "verification.yaml"
         vfile.write_text(yaml.safe_dump(_make_verification()))
 
-        monkeypatch.setattr(
-            eng.store, "read_pull_request_readiness",
+        monkeypatch.setattr(code_host, "read_pull_request_readiness",
             lambda pr_url: PullRequestReadiness(is_draft=False, state="OPEN"),
         )
 
         result = dispatch_mod.submit(
             eng.store, item.id,
-            pr_url="https://github.com/acme/snake/pull/1",
+            code_host=code_host, pr_url="https://github.com/acme/snake/pull/1",
             verification_file=str(vfile),
         )
 
@@ -1933,7 +1932,7 @@ class TestSubmitPerKindPhase:
         rfile.write_text(yaml.safe_dump(_make_review_report()))
 
         dispatch_mod.submit(
-            eng.store, item.id, verdict="pass", report_file=str(rfile),
+            eng.store, item.id, code_host=eng.code_host, verdict="pass", report_file=str(rfile),
         )
         got = eng.store.get_work_item(item.id)
         assert got.review_verdict == "pass"
@@ -1998,7 +1997,7 @@ class TestSubmitPerKindPhase:
         rfile.write_text(yaml.safe_dump(report))
 
         result = dispatch_mod.submit(
-            eng.store, item.id, verdict="reject", report_file=str(rfile),
+            eng.store, item.id, code_host=eng.code_host, verdict="reject", report_file=str(rfile),
         )
 
         got = eng.store.get_work_item(item.id)
@@ -2021,7 +2020,7 @@ class TestSubmitPerKindPhase:
 
         with pytest.raises(ValidationError) as exc:
             dispatch_mod.submit(
-                eng.store, item.id, verdict="pass", report_file=str(rfile),
+                eng.store, item.id, code_host=eng.code_host, verdict="pass", report_file=str(rfile),
             )
         assert "Review target is missing" in str(exc.value)
 
@@ -2042,7 +2041,7 @@ class TestSubmitPerKindPhase:
 
         with pytest.raises(ValidationError, match="project rules"):
             dispatch_mod.submit(
-                eng.store, item.id, verdict="pass", report_file=str(rfile),
+                eng.store, item.id, code_host=eng.code_host, verdict="pass", report_file=str(rfile),
             )
 
     # ---------- plan ----------
@@ -2060,7 +2059,7 @@ class TestSubmitPerKindPhase:
         result = dispatch_mod.submit(
             eng.store,
             item.id,
-            plan_file=str(pfile),
+            code_host=eng.code_host, plan_file=str(pfile),
             project_rules_file=str(rules_file),
         )
         got = eng.store.get_work_item(item.id)
@@ -2080,7 +2079,7 @@ class TestSubmitPerKindPhase:
         pfile.write_text("# Plan\n")
 
         with pytest.raises(ValidationError, match="project-rules"):
-            dispatch_mod.submit(eng.store, item.id, plan_file=str(pfile))
+            dispatch_mod.submit(eng.store, item.id, code_host=eng.code_host, plan_file=str(pfile))
 
         got = eng.store.get_work_item(item.id)
         assert got.deliverable is None
@@ -2105,7 +2104,7 @@ class TestSubmitPerKindPhase:
             dispatch_mod.submit(
                 eng.store,
                 item.id,
-                plan_file=str(pfile),
+                code_host=eng.code_host, plan_file=str(pfile),
                 project_rules_file=str(rules_file),
             )
 
@@ -2160,7 +2159,7 @@ class TestSubmitPerKindPhase:
         with pytest.raises(ValidationError):
             dispatch_mod.submit(
                 eng.store, item.id,
-                plan_file=str(pfile),
+                code_host=eng.code_host, plan_file=str(pfile),
                 project_rules_file=str(rules_file),
             )
         assert eng.store.get_work_item(item.id).deliverable is None
@@ -2192,7 +2191,7 @@ class TestSubmitPerKindPhase:
             ]}],
         }))
         result = dispatch_mod.submit(
-            eng.store, item.id, acceptance_file=str(afile))
+            eng.store, item.id, code_host=eng.code_host, acceptance_file=str(afile))
         got = eng.store.get_work_item(item.id)
         assert result.phase == TaskPhase.AUTHORING
         assert result.next_phase == TaskPhase.REVIEW
@@ -2213,7 +2212,7 @@ class TestSubmitPerKindPhase:
         afile = tmp_path / "acceptance.yaml"
         afile.write_text(yaml.safe_dump({"flows": [{"id": "x"}]}), )  # 缺 name/actions
         with pytest.raises(ValidationError):
-            dispatch_mod.submit(eng.store, item.id, acceptance_file=str(afile))
+            dispatch_mod.submit(eng.store, item.id, code_host=eng.code_host, acceptance_file=str(afile))
 
     # ---------- decompose ----------
 
@@ -2242,7 +2241,7 @@ class TestSubmitPerKindPhase:
                        }}],
         }))
         result = dispatch_mod.submit(
-            eng.store, item.id, manifest_file=str(mfile), agent_pool=members)
+            eng.store, item.id, code_host=eng.code_host, manifest_file=str(mfile), agent_pool=members)
         got = eng.store.get_work_item(item.id)
         assert result.phase == TaskPhase.AUTHORING
         assert result.next_phase == TaskPhase.REVIEW
@@ -2275,7 +2274,7 @@ class TestSubmitPerKindPhase:
                        }}],
         }))
         with pytest.raises(ValidationError) as exc:
-            dispatch_mod.submit(eng.store, item.id, manifest_file=str(mfile),
+            dispatch_mod.submit(eng.store, item.id, code_host=eng.code_host, manifest_file=str(mfile),
                                 agent_pool=members)
         assert "lint" in str(exc.value) or "reviewer" in str(exc.value)
 
@@ -2306,7 +2305,7 @@ class TestSubmitPerKindPhase:
         rfile = tmp_path / "results.yaml"
         rfile.write_text(yaml.safe_dump([{"id": "login", "status": "pass"}]))
         result = dispatch_mod.submit(eng.store, item.id,
-                                     acceptance_results_file=str(rfile))
+                                     code_host=eng.code_host, acceptance_results_file=str(rfile))
         assert result.advanced_to == WorkItemStatus.DONE
 
     def test_final_acceptance_authoring_missing_flow_rejected(self, tmp_path):
@@ -2329,7 +2328,7 @@ class TestSubmitPerKindPhase:
         rfile.write_text(yaml.safe_dump([]))  # 漏项 login
         with pytest.raises(ValidationError) as exc:
             dispatch_mod.submit(eng.store, item.id,
-                                acceptance_results_file=str(rfile))
+                                code_host=eng.code_host, acceptance_results_file=str(rfile))
         assert "login" in str(exc.value)
 
 
@@ -2463,13 +2462,13 @@ class TestSubmitLoopE2E:
         vfile.write_text(yaml.safe_dump(_make_verification()))
         result = dispatch_mod.submit(
             store, it_a.id,
-            pr_url="https://x/pr/1", verification_file=str(vfile),
+            code_host=MockCodeHost(), pr_url="https://x/pr/1", verification_file=str(vfile),
         )
         assert result.advanced_to == WorkItemStatus.DONE
         assert store.get_work_item(it_a.id).status == WorkItemStatus.DONE
 
         # 4. loop tick 收割:证据门必过 → 节点 done
-        result = tick(store, eng.runtime, manifest, mpath, max_parallel=4)
+        result = tick(store, eng.runtime, MockCodeHost(), manifest, mpath, max_parallel=4)
         assert manifest.nodes["a"].status == "done"
         assert "a" in result.done
         # schema 同源断言:权威的 validate_worker_evidence 对同一 verification 必须过
@@ -2500,7 +2499,7 @@ class TestPhaseResolution:
         rules_file.write_text("## Project rules\n")
         r1 = dispatch_mod.submit(
             eng.store, item.id,
-            plan_file=str(pfile),
+            code_host=eng.code_host, plan_file=str(pfile),
             project_rules_file=str(rules_file),
         )
         assert r1.phase == dispatch_mod.TaskPhase.AUTHORING
@@ -2513,7 +2512,7 @@ class TestPhaseResolution:
         # reviewer submit 即便 phase metadata = AUTHORING,也应路由为 review
         rfile = tmp_path / "report.yaml"
         rfile.write_text(yaml.safe_dump(_make_review_report()))
-        r2 = dispatch_mod.submit(eng.store, item.id, verdict="pass", report_file=str(rfile))
+        r2 = dispatch_mod.submit(eng.store, item.id, code_host=eng.code_host, verdict="pass", report_file=str(rfile))
         assert r2.phase == dispatch_mod.TaskPhase.REVIEW
         got = eng.store.get_work_item(item.id)
         assert got.review_verdict == "pass"
@@ -2531,7 +2530,7 @@ class TestPhaseResolution:
         with pytest.raises(ValidationError):
             dispatch_mod.submit(
                 eng.store, item.id,
-                plan_file=str(pfile),
+                code_host=eng.code_host, plan_file=str(pfile),
                 project_rules_file=str(rules_file),
             )
         got = eng.store.get_work_item(item.id)

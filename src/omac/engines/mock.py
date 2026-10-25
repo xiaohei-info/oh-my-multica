@@ -27,6 +27,7 @@ from ..core.taskmeta import (
 )
 from ..errors import PlatformError, ValidationError, WorkItemNotFoundError
 from ..i18n import ui
+from .codehost import CodeHost
 from .models import (
     AgentInfo,
     AgentProvisionSpec,
@@ -1221,6 +1222,41 @@ class MockStore(WorkItemStore):
         _shared_active_assignments.pop(item_id, None)
         _shared_assignment_wake_pending.discard(item_id)
 
+
+
+
+
+    def observe_verification_attachment(
+        self, item_id: str, ref: Dict[str, Any],
+    ) -> VerificationAttachmentObservation:
+        self.get_work_item(item_id)
+        attachment_id = str(ref.get("attachment_id") or "")
+        comment_id = str(ref.get("comment_id") or "")
+        body = _shared_attachment_bodies.get(attachment_id)
+        if not attachment_id or not comment_id or body is None:
+            raise PlatformError("verification attachment observation is unavailable")
+        actual_sha = hashlib.sha256(body).hexdigest()
+        if ref.get("sha256") and ref.get("sha256") != actual_sha:
+            raise PlatformError("verification attachment digest mismatch")
+        return VerificationAttachmentObservation(
+            attachment_id=attachment_id,
+            comment_id=comment_id,
+            sha256=actual_sha,
+            content=body,
+            uploader_id=ref.get("uploader_id"),
+            uploader_type=ref.get("uploader_type"),
+            task_id=ref.get("task_id"),
+            created_at=ref.get("created_at"),
+        )
+
+    @property
+    def assign_log(self):
+        return _shared_assign_log
+
+
+class MockCodeHost(CodeHost):
+    """In-memory pull requests; merge and check commands still run as provided by the test."""
+
     def request_pull_request_merge(
         self, pr_url: str, command: str, timeout_seconds: int,
     ) -> MergeCommandResult:
@@ -1275,33 +1311,6 @@ class MockStore(WorkItemStore):
             state="OPEN",
             head_sha=hashlib.sha256(pr_url.encode("utf-8")).hexdigest(),
         )
-
-    def observe_verification_attachment(
-        self, item_id: str, ref: Dict[str, Any],
-    ) -> VerificationAttachmentObservation:
-        self.get_work_item(item_id)
-        attachment_id = str(ref.get("attachment_id") or "")
-        comment_id = str(ref.get("comment_id") or "")
-        body = _shared_attachment_bodies.get(attachment_id)
-        if not attachment_id or not comment_id or body is None:
-            raise PlatformError("verification attachment observation is unavailable")
-        actual_sha = hashlib.sha256(body).hexdigest()
-        if ref.get("sha256") and ref.get("sha256") != actual_sha:
-            raise PlatformError("verification attachment digest mismatch")
-        return VerificationAttachmentObservation(
-            attachment_id=attachment_id,
-            comment_id=comment_id,
-            sha256=actual_sha,
-            content=body,
-            uploader_id=ref.get("uploader_id"),
-            uploader_type=ref.get("uploader_type"),
-            task_id=ref.get("task_id"),
-            created_at=ref.get("created_at"),
-        )
-
-    @property
-    def assign_log(self):
-        return _shared_assign_log
 
 
 class MockRuntime(AgentRuntime):

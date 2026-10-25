@@ -285,7 +285,7 @@ def test_recovery_intent_blocks_dispatch(tmp_path, monkeypatch):
         _dispatch_worker_handoff_locked(
             engine.store,
             engine.runtime,
-            load_manifest(path),
+            engine.code_host, load_manifest(path),
             "b",
             projection=WorkItemControlProjection(item),
         )

@@ -799,7 +799,7 @@ def _cmd_accept(args) -> int:
                 "Use `omac node abandon` for an explicit abandonment.",
                 "该 develop 节点没有 PR，不能 accept 为 done；如需放弃请显式使用 "
                 "`omac node abandon`。"))
-        observation = engine.store.observe_pull_request(pr_url)
+        observation = engine.code_host.observe_pull_request(pr_url)
         state = observation.state
         if not isinstance(state, PullRequestState):
             try:

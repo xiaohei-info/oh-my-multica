@@ -5,6 +5,7 @@ from dataclasses import replace
 from unittest.mock import Mock
 from contextlib import nullcontext
 
+from omac.engines.mock import MockCodeHost
 import pytest
 import yaml
 
@@ -215,7 +216,7 @@ def test_retry_rereads_decision_before_replacing_generation(setup_request):
             )
         },
     )
-    result = _retry_worker_handoff(store, runtime, manifest, "node", stale)
+    result = _retry_worker_handoff(store, runtime, MockCodeHost(), manifest, "node", stale)
     assert result.state == "needs-decision"
     store.clear_assignment.assert_not_called()
     store.update_work_item_metadata.assert_not_called()
@@ -244,7 +245,7 @@ def test_dispatch_ignores_stale_projection_when_decision_arrived(setup_request):
         },
     )
     result = _dispatch_worker_handoff(
-        store, runtime, manifest, "node", projection=stale
+        store, runtime, MockCodeHost(), manifest, "node", projection=stale
     )
     assert result.state == "needs-decision"
     store.update_work_item_metadata.assert_not_called()
@@ -335,7 +336,7 @@ def test_submit_cannot_override_persisted_worker_decision(setup_request, monkeyp
         dispatch.submit(
             store,
             item.id,
-            pr_url="https://example/pr/1",
+            code_host=MockCodeHost(), pr_url="https://example/pr/1",
             verification_file="absent.yaml",
         )
 
@@ -376,7 +377,7 @@ def test_blocked_node_does_not_run_or_consume_budget_on_repeated_collection(
     )
     for _ in range(2):
         manifest.nodes["node"].status = "in_progress"  # Restart with stale local state.
-        collect_results(store, runtime, manifest, str(tmp_path / "manifest.yaml"))
+        collect_results(store, runtime, MockCodeHost(), manifest, str(tmp_path / "manifest.yaml"))
     assert manifest.nodes["node"].status == "blocked"
     assert item.bounces == before.bounces
     assert item.worker_handoff == before.worker_handoff
@@ -417,7 +418,7 @@ def test_decision_arriving_during_runtime_read_prevents_retry_writes(setup_reque
     manifest = Manifest(
         meta={}, nodes={"node": Node(id="node", worker="worker", work_item_id="issue")}
     )
-    result = _retry_worker_handoff(store, runtime, manifest, "node", stale)
+    result = _retry_worker_handoff(store, runtime, MockCodeHost(), manifest, "node", stale)
     assert result.state == "needs-decision"
     store.clear_assignment.assert_not_called()
     store.update_work_item_metadata.assert_not_called()

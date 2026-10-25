@@ -46,6 +46,7 @@ from ..core.workitem import (
     PullRequestState,
     WorkItemStatus,
 )
+from ..engines.codehost import CodeHost
 from ..engines.runtime import AgentRuntime
 from ..core.manifest import Manifest, save_manifest
 from ..errors import AuthError, PlatformError
@@ -189,6 +190,7 @@ def advance_delivery(
     node_key: str,
     store: object,
     runtime: AgentRuntime,
+    code_host: CodeHost,
     retry_limits: dict,
     project_root: str = ".",
 ) -> str:
@@ -234,7 +236,7 @@ def advance_delivery(
     node.status = "ci_check"
     store.update_status(item_id, to_platform_status("ci_check"))
 
-    result = _ci_result(store.check_pull_request(
+    result = _ci_result(code_host.check_pull_request(
         pr_url, ci["check_command"],
         max(1, int(ci.get("timeout_minutes", 30))) * 60,
     ))
@@ -278,6 +280,7 @@ def run_merge_delivery(
     node_key: str,
     store: object,
     runtime: AgentRuntime,
+    code_host: CodeHost,
     retry_limits: dict,
     manifest_path: str | None = None,
 ) -> str:
@@ -322,7 +325,7 @@ def run_merge_delivery(
             f"Merge request state {node.merge_request_state!r} is invalid.")
 
     try:
-        observation = _observe_pull_request(store, pr_url)
+        observation = _observe_pull_request(code_host, pr_url)
     except AuthError:
         return block_merge_auth_error(
             node, item, store, manifest, manifest_path, node_key)
@@ -359,13 +362,13 @@ def run_merge_delivery(
     save_manifest(manifest, manifest_path)
     store.update_status(item_id, to_platform_status("merging"))
 
-    result = store.request_pull_request_merge(
+    result = code_host.request_pull_request_merge(
         pr_url, merge["command"], max(1, int(merge.get("timeout_minutes", 30))) * 60)
     if not getattr(result, "timed_out", False):
         node.merge_request_state = "requested"
         save_manifest(manifest, manifest_path)
     try:
-        observation = _observe_pull_request(store, pr_url)
+        observation = _observe_pull_request(code_host, pr_url)
     except AuthError:
         return block_merge_auth_error(
             node, item, store, manifest, manifest_path, node_key)
@@ -408,10 +411,10 @@ def _observation_state(observation) -> PullRequestState:
         return PullRequestState.UNKNOWN
 
 
-def _observe_pull_request(store, pr_url: str) -> PullRequestObservation:
+def _observe_pull_request(code_host, pr_url: str) -> PullRequestObservation:
     """把临时远端读失败建模为 UNKNOWN，而不是业务 merge 失败。"""
     try:
-        return store.observe_pull_request(pr_url)
+        return code_host.observe_pull_request(pr_url)
     except PlatformError as exc:
         return PullRequestObservation(
             PullRequestState.UNKNOWN,

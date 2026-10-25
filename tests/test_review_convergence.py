@@ -1,4 +1,5 @@
 from copy import deepcopy
+from omac.engines.mock import MockCodeHost
 import json
 from types import SimpleNamespace
 
@@ -2058,7 +2059,7 @@ def test_review_submit_rejects_empty_pass_with_nits_without_state_change(
         submit_work(
             store,
             item.id,
-            verdict="pass-with-nits",
+            code_host=MockCodeHost(), verdict="pass-with-nits",
             report_file=str(report_path),
         )
 
@@ -2096,7 +2097,7 @@ def test_review_submit_updates_ledger_before_exposing_verdict(tmp_path):
     path.write_text(yaml.safe_dump(report))
 
     dispatch.submit(
-        store, item.id, verdict="reject", report_file=str(path))
+        store, item.id, code_host=MockCodeHost(), verdict="reject", report_file=str(path))
 
     current = store.get_work_item(item.id)
     assert current.review_verdict == "reject"
@@ -2174,7 +2175,7 @@ def test_legacy_two_cycle_ledger_requires_stable_decision_before_third_submit(
             dispatch.submit(
                 store,
                 item.id,
-                verdict="reject",
+                code_host=MockCodeHost(), verdict="reject",
                 report_file=str(report_path),
             )
         decisions.append(exc.value.report)
@@ -2244,7 +2245,7 @@ def test_v2_review_submit_rejects_legacy_report_before_metadata_write(tmp_path):
 
     with pytest.raises(ValidationError, match="review_protocol"):
         dispatch.submit(
-            store, item.id, verdict="pass", report_file=str(path))
+            store, item.id, code_host=MockCodeHost(), verdict="pass", report_file=str(path))
 
     current = store.get_work_item(item.id)
     assert current.review_verdict is None
@@ -2265,7 +2266,7 @@ def test_legacy_review_report_remains_accepted_without_v2_obligations(tmp_path):
     path = tmp_path / "legacy.yaml"
     path.write_text(yaml.safe_dump(report))
 
-    dispatch.submit(store, item.id, verdict="pass", report_file=str(path))
+    dispatch.submit(store, item.id, code_host=MockCodeHost(), verdict="pass", report_file=str(path))
 
     assert store.get_work_item(item.id).review_verdict == "pass"
     assert store.get_work_item(item.id).review_ledger is None

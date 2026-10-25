@@ -1,11 +1,9 @@
-"""engines — WorkItemStore(数据面)+ AgentRuntime(执行面)双接口。
+"""engines — three ports: WorkItemStore (work items), CodeHost (pull requests, checks, merge)
+and AgentRuntime (agent runs).
 
-设计文档 §12.3:接口 P1 即按最终形状落地;一期实现 multica + mock,
-两者各自同时实现两个接口。接入新平台 = 新增 Store 实现 + 选定 Runtime 方案,
-不动接口与 pipeline。
-
-纪律(§12.4 红线):pipeline 代码只调 Store/Runtime 接口,
-绝不直接 shell out 平台 CLI。
+An engine combines one adapter per port; the pipeline calls only the port interfaces and never
+shells out to platform CLIs. Adding a work-item platform or a code host means adding an adapter,
+not changing the pipeline.
 """
 from __future__ import annotations
 
@@ -25,6 +23,7 @@ from .models import (
     SkillPackage,
     WorkspaceInfo,
 )
+from .codehost import CodeHost
 from .runtime import AgentRuntime
 from .store import WorkItemStore
 
@@ -33,9 +32,23 @@ ENGINE_TYPES = ("multica", "mock")
 
 @dataclass
 class Engine:
-    """一个协作引擎 = 数据面 + 执行面。"""
+    """One engine = one adapter per port."""
     store: WorkItemStore
     runtime: AgentRuntime
+    code_host: CodeHost
+
+
+def code_host_for(engine_type: str) -> CodeHost:
+    """The code-host adapter that belongs with a work-item engine type."""
+    if engine_type == "mock":
+        from .mock import MockCodeHost
+        return MockCodeHost()
+    if engine_type == "multica":
+        from .github import GitHubCodeHost
+        return GitHubCodeHost()
+    raise ValidationError(ui(
+        f"Unknown engine type '{engine_type}'. Available: {', '.join(ENGINE_TYPES)}",
+        f"未知引擎类型 '{engine_type}',可选: {', '.join(ENGINE_TYPES)}"))
 
 
 def create_engine(engine_type: str, config: EngineConfig) -> Engine:
@@ -43,11 +56,11 @@ def create_engine(engine_type: str, config: EngineConfig) -> Engine:
     if engine_type == "mock":
         from .mock import MockRuntime, MockStore
         store = MockStore(config)
-        return Engine(store=store, runtime=MockRuntime(store))
+        return Engine(store=store, runtime=MockRuntime(store), code_host=code_host_for(engine_type))
     if engine_type == "multica":
         from .multica import MulticaRuntime, MulticaStore
         store = MulticaStore(config)
-        return Engine(store=store, runtime=MulticaRuntime(store))
+        return Engine(store=store, runtime=MulticaRuntime(store), code_host=code_host_for(engine_type))
     raise ValidationError(ui(
         f"Unknown engine type '{engine_type}'. Available: {', '.join(ENGINE_TYPES)}",
         f"未知引擎类型 '{engine_type}',可选: {', '.join(ENGINE_TYPES)}"))
@@ -90,8 +103,8 @@ def engine_from_config(
 
 
 __all__ = [
-    "Engine", "create_engine", "engine_from_config", "ENGINE_TYPES",
-    "WorkItemStore", "AgentRuntime",
+    "Engine", "create_engine", "code_host_for", "engine_from_config", "ENGINE_TYPES",
+    "WorkItemStore", "AgentRuntime", "CodeHost",
     "AgentInfo", "AgentProvisionSpec", "RuntimeTarget", "SkillPackage",
     "EngineConfig", "RuntimeCapabilities", "WorkspaceInfo",
 ]

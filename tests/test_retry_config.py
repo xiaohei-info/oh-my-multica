@@ -196,7 +196,7 @@ def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
 
     seen = {}
 
-    def fake_tick(store, runtime, manifest_obj, manifest_path, *,
+    def fake_tick(store, runtime, code_host, manifest_obj, manifest_path, *,
                   max_parallel=4, retry_limits=None, config=None,
                   full_scan=False, after_successful_tick=None):
         seen["retry_limits"] = retry_limits
