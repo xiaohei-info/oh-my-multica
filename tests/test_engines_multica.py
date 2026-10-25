@@ -38,7 +38,7 @@ def test_multica_classifies_known_transient_transport_errors(message):
 
 def test_multica_list_runs_preserves_platform_retry_parent(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     monkeypatch.setattr(runtime, "_issue_runs", lambda _item_id: [{
         "id": "run-2",
         "kind": "direct",
@@ -2464,7 +2464,7 @@ def test_multica_runtime_wake_does_not_rerun_active_direct_run(monkeypatch):
 
     monkeypatch.setattr(store, "_run_multica", fake_run)
 
-    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+    MulticaRuntime(store, active_observation_interval=0).wake("issue-1", "alice", "worker")
 
     assert calls == [["issue", "runs", "issue-1", "--output", "json"]]
 
@@ -2512,7 +2512,7 @@ def test_multica_runtime_reruns_existing_cancelled_assignment(monkeypatch):
     monkeypatch.setattr(store, "_run_multica", fake_run)
 
     from omac.engines.multica import MulticaRuntime
-    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+    MulticaRuntime(store, active_observation_interval=0).wake("issue-1", "alice", "worker")
 
     assert ["issue", "rerun", "issue-1", "--output", "json"] in calls
 
@@ -2534,7 +2534,7 @@ def test_multica_runtime_reruns_failed_direct_run_once(monkeypatch):
 
     monkeypatch.setattr(store, "_run_multica", fake_run)
 
-    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+    MulticaRuntime(store, active_observation_interval=0).wake("issue-1", "alice", "worker")
 
     assert calls.count([
         "issue", "rerun", "issue-1", "--output", "json",
@@ -2979,7 +2979,7 @@ def test_multica_runtime_preserves_rerun_error_when_observation_fails(monkeypatc
 
 def test_multica_runtime_cancel_interrupts_active_direct_run(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     calls = []
 
     def fake_run(args):
@@ -3002,7 +3002,7 @@ def test_multica_runtime_cancel_interrupts_active_direct_run(monkeypatch):
 
 def test_multica_runtime_reports_active_direct_run_without_cancelling(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     calls = []
 
     def fake_run(args):
@@ -3019,7 +3019,7 @@ def test_multica_runtime_reports_active_direct_run_without_cancelling(monkeypatc
 
 def test_multica_runtime_active_checks_every_run_not_latest_direct(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     monkeypatch.setattr(store, "_run_multica", lambda _args: [
         {
             "id": "old-active-direct", "kind": "direct", "status": "running",
@@ -3036,7 +3036,7 @@ def test_multica_runtime_active_checks_every_run_not_latest_direct(monkeypatch):
 
 def test_multica_runtime_active_includes_comment_and_indirect_runs(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     monkeypatch.setattr(store, "_run_multica", lambda _args: [
         {"id": "comment-active", "kind": "comment", "status": "pending"},
         {"id": "indirect-active", "kind": "indirect", "status": "dispatching"},
@@ -3059,7 +3059,7 @@ def test_multica_runtime_wake_does_not_rerun_active_comment_run(monkeypatch):
         raise AssertionError(args)
 
     monkeypatch.setattr(store, "_run_multica", fake_run)
-    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+    MulticaRuntime(store, active_observation_interval=0).wake("issue-1", "alice", "worker")
 
     assert not any(args[:2] == ["issue", "rerun"] for args in calls)
 
@@ -3073,7 +3073,7 @@ def test_multica_runtime_does_not_rerun_completed_comment(monkeypatch):
         }]
     ))
 
-    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+    MulticaRuntime(store, active_observation_interval=0).wake("issue-1", "alice", "worker")
 
     assert calls == [["issue", "runs", "issue-1", "--output", "json"]]
 
@@ -3315,12 +3315,12 @@ def test_multica_runtime_assignment_fast_path_does_not_observe_runs(monkeypatch)
         lambda *_args: pytest.fail("assignment-triggered wake must stay a fast path"),
     )
 
-    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+    MulticaRuntime(store, active_observation_interval=0).wake("issue-1", "alice", "worker")
 
 
 def test_multica_runtime_lists_typed_run_identity(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     monkeypatch.setattr(store, "_run_multica", lambda _args: [
         {"id": "run-1", "kind": "direct", "status": "failed",
          "agent_id": "agent-1", "attempt": 1, "max_attempts": 2,
@@ -3367,7 +3367,7 @@ def test_multica_runtime_treats_current_nonterminal_statuses_as_active(
         "completed_at": None,
     }]
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     monkeypatch.setattr(store, "_run_multica", lambda _args: payload)
 
     assert runtime.is_active("issue-1") is True
@@ -3381,7 +3381,7 @@ def test_multica_runtime_treats_current_nonterminal_statuses_as_active(
 @pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
 def test_multica_runtime_preserves_terminal_status_semantics(monkeypatch, status):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     monkeypatch.setattr(store, "_run_multica", lambda _args: [{
         "id": f"run-{status}", "kind": "direct", "status": status,
     }])
@@ -3394,7 +3394,7 @@ def test_multica_runtime_preserves_terminal_status_semantics(monkeypatch, status
 
 def test_multica_runtime_unknown_status_reports_raw_value(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     monkeypatch.setattr(store, "_run_multica", lambda _args: [{
         "id": "run-future", "kind": "direct", "status": "future_transition",
     }])
@@ -3415,7 +3415,7 @@ def test_multica_runtime_unknown_status_reports_raw_value(monkeypatch):
 ])
 def test_multica_runtime_rejects_malformed_run_payload(monkeypatch, payload):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     monkeypatch.setattr(store, "_run_multica", lambda _args: payload)
 
     with pytest.raises(PlatformError, match="run payload"):
@@ -3424,7 +3424,7 @@ def test_multica_runtime_rejects_malformed_run_payload(monkeypatch, payload):
 
 def test_multica_runtime_cancel_clears_stale_assignment_without_active_run(monkeypatch):
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     calls = []
 
     def fake_run(args):
@@ -3482,7 +3482,7 @@ def test_multica_runtime_reruns_cancelled_direct_even_when_comment_is_newer(monk
     monkeypatch.setattr(store, "_run_multica", fake_run)
 
     from omac.engines.multica import MulticaRuntime
-    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+    MulticaRuntime(store, active_observation_interval=0).wake("issue-1", "alice", "worker")
 
     assert ["issue", "rerun", "issue-1", "--output", "json"] in calls
 
@@ -3506,7 +3506,7 @@ def test_multica_runtime_reruns_completed_direct_without_submit(monkeypatch):
     monkeypatch.setattr(store, "_run_multica", fake_run)
 
     from omac.engines.multica import MulticaRuntime
-    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+    MulticaRuntime(store, active_observation_interval=0).wake("issue-1", "alice", "worker")
 
     assert ["issue", "rerun", "issue-1", "--output", "json"] in calls
 
@@ -3558,7 +3558,7 @@ def test_multica_runtime_does_not_rerun_fresh_failed_assignment(monkeypatch):
 
     from omac.engines.multica import MulticaRuntime
     store.assign_work_item("issue-1", "alice", "reviewer")
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     runtime.wake("issue-1", "alice", "reviewer")
 
     assert ["issue", "rerun", "issue-1", "--output", "json"] not in calls
@@ -3649,7 +3649,7 @@ def test_multica_silent_reviewer_assignment_then_wake_avoids_active_duplicate(
 
     store.assign_work_item(
         item_id, "hermes-reviewer", "reviewer", start_run=False)
-    MulticaRuntime(store).wake(item_id, "hermes-reviewer", "reviewer")
+    MulticaRuntime(store, active_observation_interval=0).wake(item_id, "hermes-reviewer", "reviewer")
 
     assert not any(args[:2] == ["issue", "rerun"] for args in calls)
 
@@ -3821,7 +3821,7 @@ def test_multica_runtime_reruns_completed_same_assignee_assignment(monkeypatch):
     from omac.engines.multica import MulticaRuntime
 
     store.assign_work_item("issue-1", "alice", "worker")
-    MulticaRuntime(store).wake("issue-1", "alice", "worker")
+    MulticaRuntime(store, active_observation_interval=0).wake("issue-1", "alice", "worker")
 
     assert calls.count(["issue", "rerun", "issue-1", "--output", "json"]) == 1
 
@@ -3845,7 +3845,7 @@ def test_multica_runtime_provisions_missing_skill_then_creates_agent(tmp_path, m
         files=tuple(sorted(p for p in skill_root.rglob("*") if p.is_file())),
     )
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    runtime = MulticaRuntime(store)
+    runtime = MulticaRuntime(store, active_observation_interval=0)
     calls = []
     imported = False
 
@@ -3901,7 +3901,7 @@ def test_multica_runtime_lists_actual_runtime_shape(monkeypatch):
         "status": "online",
     }])
 
-    targets = MulticaRuntime(store).list_targets()
+    targets = MulticaRuntime(store, active_observation_interval=0).list_targets()
 
     assert len(targets) == 1
     assert targets[0].type == "codex"

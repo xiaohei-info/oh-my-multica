@@ -793,6 +793,7 @@ def test_doc_directory_builds_generic_design_source_set(tmp_path, monkeypatch):
     assert "README.md 是权威" not in source_set
 
 
+@pytest.mark.integration  # starts a Python subprocess / runs real git
 def test_doc_directory_uses_only_git_tracked_files_for_revision_source_set(
         tmp_path, monkeypatch):
     """Git revision 输入不得把本地未跟踪噪声纳入远端不可复现的文档集合。"""

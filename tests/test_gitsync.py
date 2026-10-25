@@ -19,6 +19,8 @@ from omac.core.gitsync import (
 from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
 from omac.errors import NeedsDecision, ValidationError
 
+pytestmark = pytest.mark.integration  # real local HTTP server / real git: budget class `integration`
+
 
 # ==================== sync_enabled 判定矩阵 ====================
 

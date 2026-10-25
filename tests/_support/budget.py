@@ -11,37 +11,29 @@ from pathlib import Path
 MB = 1024 * 1024
 UNIT_SECONDS = 0.2
 UNIT_TIMING_SLACK = 2.0  # scheduler noise on loaded CI runners; the target stays 200 ms, the gate trips at 400 ms
+INTEGRATION_SECONDS = 5.0  # real git / local HTTP servers / subprocesses (marker `integration`)
 DOCKER_SECONDS = 30.0
 UNIT_RSS = 300 * MB
 DOCKER_RSS = 500 * MB
 TMP_PER_TEST = 10 * MB
 TMP_PER_SESSION = 200 * MB
 
-# Test files that predate the budget; Phases 1, 5 and 8 shrink this set, Phase 8 empties it.
-# Overages per file: ~/code/omac-clean/evidence/phase1-budget-exempt.txt (not part of the repository).
-EXEMPT_FILES: set[str] = {
-    "test_amendment.py",
-    "test_cli_node.py",
-    "test_delivery_merge.py",
-    "test_e2e_p1.py",
-    "test_e2e_p4_delivery.py",
-    "test_engines_multica.py",
-    "test_gitsync.py",
-    "test_lightweight_reconcile.py",
-    "test_loop.py",
-    "test_taskmeta.py",
-    "test_tasks.py",
-    "test_web_api.py",
-    "test_web_static.py",
-}
+# Files exempt from the per-test budgets. Empty since Phase 8; adding a file here needs a reason in the PR.
+EXEMPT_FILES: set[str] = set()
 
 
-def seconds_limit(is_docker: bool) -> float:
-    return DOCKER_SECONDS if is_docker else UNIT_SECONDS * UNIT_TIMING_SLACK
+def kind_of(markers) -> str:
+    """The budget class of a test from its marker names: docker > integration > unit."""
+    names = set(markers)
+    return "docker" if "docker" in names else "integration" if "integration" in names else "unit"
 
 
-def rss_limit(is_docker: bool) -> int:
-    return DOCKER_RSS if is_docker else UNIT_RSS
+def seconds_limit(kind: str) -> float:
+    return {"docker": DOCKER_SECONDS, "integration": INTEGRATION_SECONDS}.get(kind, UNIT_SECONDS * UNIT_TIMING_SLACK)
+
+
+def rss_limit(kind: str) -> int:
+    return DOCKER_RSS if kind == "docker" else UNIT_RSS
 
 
 def peak_rss_bytes() -> int:
@@ -54,16 +46,16 @@ def tree_bytes(path: Path) -> int:
 
 
 def check_call(*, seconds: float, tmp_bytes: int, session_tmp_bytes: int, rss_before: int, rss_after: int,
-               is_docker: bool) -> list[str]:
+               kind: str = "unit") -> list[str]:
     """Return budget violations for one finished test call."""
     out = []
-    if seconds > seconds_limit(is_docker):
-        out.append(f"took {seconds:.2f}s, budget {seconds_limit(is_docker):.2f}s")
+    if seconds > seconds_limit(kind):
+        out.append(f"took {seconds:.2f}s, budget {seconds_limit(kind):.2f}s")
     if tmp_bytes > TMP_PER_TEST:
         out.append(f"wrote {tmp_bytes / MB:.1f}MB to tmp_path, budget {TMP_PER_TEST // MB}MB")
     if session_tmp_bytes > TMP_PER_SESSION:
         out.append(f"session temp files reached {session_tmp_bytes / MB:.0f}MB, budget {TMP_PER_SESSION // MB}MB")
-    limit = rss_limit(is_docker)
+    limit = rss_limit(kind)
     if rss_before <= limit < rss_after:  # blame only the test that pushes the process peak over the limit
         out.append(f"process peak RSS grew to {rss_after / MB:.0f}MB, budget {limit // MB}MB")
     return out

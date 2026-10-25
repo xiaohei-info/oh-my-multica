@@ -601,8 +601,7 @@ class _FakeMulticaProc:
 
 def _multica_store():
     cfg = EngineConfig(engine_type="multica", workspace_id="ws", extra={})
-    store = MulticaStore(cfg)
-    return store
+    return MulticaStore(cfg, sleeper=lambda _seconds: None)
 
 
 def test_multica_create_and_get_kind_roundtrip():

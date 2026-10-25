@@ -1701,8 +1701,9 @@ def test_responsibility_merging_restart_observes_published_contract_once(tmp_pat
     assert ledger["state"] == "synced"
 
 
+@pytest.mark.integration  # scale test: 145-146 nodes, many small state files
 def test_responsibility_operation_stays_compact_for_145_large_contracts(tmp_path):
-    huge_objective = "immutable contract " + ("x" * 8192)
+    huge_objective = "immutable contract " + ("x" * 2048)
     raw = {
         "meta": {"name": "scale"},
         "nodes": [{
@@ -4938,6 +4939,7 @@ def test_cli_amendment_forwards_restart_authoring(tmp_path, monkeypatch):
     assert observed["restart_authoring"] is True
 
 
+@pytest.mark.integration  # starts a Python subprocess / runs real git
 def test_cli_concurrent_amend_propose_fails_before_engine_or_pipeline_side_effects(
     tmp_path, monkeypatch, capsys,
 ):

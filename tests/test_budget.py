@@ -1,6 +1,6 @@
 from _support import budget
 
-OK = dict(seconds=0.01, tmp_bytes=0, session_tmp_bytes=0, rss_before=0, rss_after=0, is_docker=False)
+OK = dict(seconds=0.01, tmp_bytes=0, session_tmp_bytes=0, rss_before=0, rss_after=0, kind="unit")
 
 
 def test_within_budget_passes():
@@ -9,9 +9,20 @@ def test_within_budget_passes():
 
 def test_slow_unit_test_fails_but_docker_test_gets_more_time():
     assert budget.check_call(**{**OK, "seconds": 0.5})
-    assert budget.check_call(**{**OK, "seconds": 0.3}) == []  # inside the slack band
-    assert budget.check_call(**{**OK, "seconds": 0.5, "is_docker": True}) == []
-    assert budget.check_call(**{**OK, "seconds": 31, "is_docker": True})
+    assert budget.check_call(**{**OK, "seconds": 0.3}) == []  # inside the 2x gate band (target stays 200 ms)
+    assert budget.check_call(**{**OK, "seconds": 0.5, "kind": "docker"}) == []
+    assert budget.check_call(**{**OK, "seconds": 31, "kind": "docker"})
+
+
+def test_integration_tests_get_seconds_not_minutes():
+    assert budget.check_call(**{**OK, "seconds": 3, "kind": "integration"}) == []
+    assert budget.check_call(**{**OK, "seconds": 6, "kind": "integration"})
+
+
+def test_budget_class_comes_from_markers():
+    assert budget.kind_of([]) == "unit"
+    assert budget.kind_of(["integration"]) == "integration"
+    assert budget.kind_of(["integration", "docker"]) == "docker"
 
 
 def test_twenty_megabytes_in_tmp_path_fails():
