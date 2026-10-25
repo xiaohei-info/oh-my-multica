@@ -5,7 +5,7 @@
   omac init --check    体检:本地 + 引擎可达时校验 workspace 存在、各角色 agent 在池内
 
 兼容路径(全参数直出):
-  omac init --engine mock --workspace ws --planner a --orchestrator b \\
+  omac init --engine multica --workspace ws --planner a --orchestrator b \\
             --workers c,d --reviewers e,f [--acceptor g] [--max-parallel 4]
             [--retry-ci 3 --retry-review 3 --retry-merge 3]
 
@@ -42,7 +42,7 @@ agent/脚本入口:
   裸 omac init 是人类交互式向导,非 TTY 下会直接报错并给出 config set 示例。
 
 兼容路径(全参数零交互直出):
-  omac init --engine mock --workspace ws \\
+  omac init --engine multica --workspace ws \\
             --planner alice --orchestrator bob \\
             --workers carol,dave --reviewers eve,frank [--acceptor grace] [--max-parallel 4]
             [--retry-ci 3 --retry-review 3 --retry-merge 3]
@@ -195,7 +195,7 @@ def _select_engine(args, *, language: str) -> str:
     if args.engine:
         return args.engine
     print(f"\n{t('init.engine.options', language=language, engines=', '.join(ENGINE_TYPES))}")
-    return _prompt(t("init.engine.prompt", language=language), "mock") or "mock"
+    return _prompt(t("init.engine.prompt", language=language), "multica") or "multica"
 
 
 def _select_language(interactive: bool) -> str:
@@ -553,8 +553,8 @@ def _run_setup(args) -> int:
             "omac init is an interactive setup wizard, but stdin is not interactive.\n"
             "Agents and CI should write declarative configuration with `omac config set`, "
             "then run `omac init --check`.\nMinimum example:\n"
-            "  omac config set engine mock\n"
-            "  omac config set workspace mock-workspace\n"
+            "  omac config set engine multica\n"
+            "  omac config set workspace <workspace-id>   # see: multica workspace list\n"
             "  omac config set roles.planner alice\n"
             "  omac config set roles.orchestrator bob\n"
             "  omac config set roles.workers '[\"alice\"]'\n"
@@ -563,8 +563,8 @@ def _run_setup(args) -> int:
             "omac init 是人类交互式向导,当前 stdin 非交互。\n"
             "agent/CI 请使用 `omac config set` 写入声明式配置,然后运行 `omac init --check`。\n"
             "最小示例:\n"
-            "  omac config set engine mock\n"
-            "  omac config set workspace mock-workspace\n"
+            "  omac config set engine multica\n"
+            "  omac config set workspace <workspace-id>   # see: multica workspace list\n"
             "  omac config set roles.planner alice\n"
             "  omac config set roles.orchestrator bob\n"
             "  omac config set roles.workers '[\"alice\"]'\n"
@@ -648,8 +648,8 @@ def _check() -> int:
             "For initial human setup, run the interactive `omac init` wizard.\n"
             "Agents and CI should use `omac config set`, then run `omac init --check`.\n"
             "Minimum example:\n"
-            "  omac config set engine mock\n"
-            "  omac config set workspace mock-workspace\n"
+            "  omac config set engine multica\n"
+            "  omac config set workspace <workspace-id>   # see: multica workspace list\n"
             "  omac config set roles.planner alice\n"
             "  omac config set roles.orchestrator bob\n"
             "  omac config set roles.workers '[\"alice\"]'\n"
@@ -659,8 +659,8 @@ def _check() -> int:
             "人类首次配置请运行 `omac init` 交互式向导。\n"
             "agent/CI 请使用 `omac config set` 写入声明式配置,然后运行 `omac init --check`。\n"
             "最小示例:\n"
-            "  omac config set engine mock\n"
-            "  omac config set workspace mock-workspace\n"
+            "  omac config set engine multica\n"
+            "  omac config set workspace <workspace-id>   # see: multica workspace list\n"
             "  omac config set roles.planner alice\n"
             "  omac config set roles.orchestrator bob\n"
             "  omac config set roles.workers '[\"alice\"]'\n"

@@ -398,17 +398,3 @@ def test_smoke_live_manifest_loads():
     assert node.contract.objective
     assert node.contract.verification_commands
     assert node.contract.pr_base == "feature/live-smoke"
-
-
-# ==================== 5. pipeline 永不 shell out CLI(§12.4 红线) ====================
-
-def test_pipeline_does_not_subprocess_multica():
-    import inspect
-    import omac.pipeline.loop as loop_mod
-    import omac.pipeline.dispatch as dispatch_mod
-    for mod in (loop_mod, dispatch_mod):
-        src = inspect.getsource(mod)
-        assert "shell out" not in src
-        assert "subprocess" not in src, (
-            f"{mod.__name__} 直接依赖 subprocess —— 违反 §12.4 红线"
-        )

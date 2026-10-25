@@ -3,78 +3,181 @@
 This file contains implementation guardrails specific to the `oh-my-multica`
 (`omac` CLI) repository. Cross-project engineering practices are intentionally
 omitted; only repository-specific, non-negotiable constraints belong here.
+Items marked `[enforced from Phase N]` are review requirements today and become
+CI-enforced when that phase of the remediation plan lands.
+
+## Repository Map
+
+| Path | Role |
+|---|---|
+| `src/omac/web/` | Read-only web surface. |
+| `src/omac/cli/` | CLI surface and composition root (argument parsing, engine assembly, exit codes). |
+| `src/omac/pipeline/` | Deterministic Loop: reconcile, result collection, gates, dispatch, delivery, acceptance. |
+| `src/omac/engines/` | Ports (`store.py`, `runtime.py`, `models.py`) and adapters (`multica.py`, `mock.py`); `create_engine` is the only factory. |
+| `src/omac/core/` | Domain model, manifest I/O, validation, Git state sync. |
+| `src/omac/guide/`, `src/omac/agents/` | Packaged, machine-consumed guides and Agent templates. |
+| `scripts/check_release.py` | Release metadata check used by `release.yml`. |
+| `tests/` | pytest suite; markers `integration`, `live`, `e2e` (see `pyproject.toml`). |
 
 ## Hard Rules
 
-**The pipeline and CLI layers may call only the engines' `WorkItemStore` and
-`AgentRuntime` interfaces. They must never shell out to platform CLIs directly.**
-Platform CLI calls (such as `multica` and `gh`) are encapsulated in engine
-adapters. This rule allows future Linear or Jira integrations to add adapters
-without changing the pipeline, and it is a code-review hard stop.
+### 1. Platform boundary
+
+`multica`, `gh`, and any other platform CLI are executed only inside engine
+adapters (`src/omac/engines/multica.py`, `mock.py`). Code in `pipeline`, `core`,
+`cli`, and `web` must not execute them, and must not depend on their command
+syntax or on Agent runtime transcript formats (for example, by matching
+`["multica", "issue", ...]` in session logs). If a fact is needed, add a semantic
+method to the port and let the adapter produce structured data.
+
+Local tooling is allowed only where it already exists: `git` (Git state sync and
+repository reads), `bash -n` (syntax preflight), and `lsof`. Do not add new
+subprocess call sites outside adapters without updating the allowlist in
+`tests/test_architecture.py`. `[enforced from Phase 0]`
+
+This is a code-review hard stop.
+
+### 2. Layering
+
+Dependency direction is strictly downward:
+
+`web → cli → pipeline → engines → core → i18n → errors`
+
+- Function-level (lazy) imports count. A lazy import is never a way around a
+  layering problem; move the code to the right layer instead.
+- Concrete adapters (`engines.multica`, `engines.mock`) are imported only by
+  `engines.create_engine`. The CLI assembles engines through one helper; do not
+  add another assembly path.
+- The only permanent exception is the `omac web` command starting
+  `omac.web.server`.
+- Enforced by `lint-imports` (contracts in `pyproject.toml`). The baseline
+  exception list may only shrink. `[enforced from Phase 0]`
+
+### 3. Web surface
 
 The web routing layer may only parse parameters, call command functions, and
-return JSON unchanged. It must not read manifests, call engines, or transform
-data. Humans, agents, and the web interface must always see the same facts.
+return JSON unchanged. It must not read manifests, call engines, transform data,
+or swallow exceptions. Humans, agents, and the web interface must always see the
+same facts. When the web needs data that no command returns, add a CLI command
+with `--output json` first.
 
-## Exit-Code Contract (§5.1 — Stable and Safe for Script Branching)
+### 4. No incident-specific code in the product
+
+`src/omac` must not contain captured identifiers (work item, workspace, or run
+UUIDs; commit or file SHA digests; specific node names; URLs) used as admission
+conditions or special cases. One-off recovery for a single incident is written
+as separate operator tooling outside the package, reviewed, run, and deleted.
+Generic mechanisms (unknown results are never replayed, drift fails closed) stay
+in the product without incident constants. `[enforced from Phase 0, allowlist
+cleared by Phase 3]`
+
+Retirement status (update as phases land):
+
+| Modules | Status |
+|---|---|
+| `pipeline/publication_review.py`, `sdk_publication_review.py`, `sdk_checkpoint_review.py` | Retiring in Phase 1 — do not extend or depend on. |
+| `core/owner_amendment.py`, `core/current_owner_source.py`, `core/prospective_owner.py`, `core/credential_prospective.py`, `core/historical_review_source.py`, `pipeline/owner_amendment.py`, `pipeline/portable_owner.py`, `pipeline/historical_review_source.py` | Retiring in Phase 2. |
+| `pipeline/evidence_handoff.py`, `operator_review_recovery.py`, `evidence_review.py`, `contract_repair.py`, `core/literal_correction.py`, `core/state_sync_recovery.py` | Retiring in Phase 3. |
+
+### 5. Manifest state
+
+- One writer per manifest, guarded by the manifest write lock
+  (`core/manifest.py`). The Multica engine synchronizes manifest and config
+  through `origin/main`.
+- `meta` keys that the current code does not know are preserved unchanged on
+  load and save.
+- Do not store unbounded or large payloads (captured sources, transcripts,
+  archives) in the manifest. Store an attachment reference and a digest instead.
+
+## Exit-Code Contract (Stable and Safe for Script Branching)
 
 | Code | Meaning |
 |---|---|
-| `0` | Success; every node in the DAG has converged to `done`. |
+| `0` | The DAG converged (no running, blocked, or failed nodes; `done`, `abandoned`, and `cancelled` count as converged) and, when acceptance is required, final acceptance passed. |
 | `1` | General error. |
-| `2` | Platform or network error. |
+| `2` | Platform or network error (including a missing work item). |
 | `3` | Authentication error, such as a platform CLI that is not signed in. |
 | `5` | Validation failure, such as lint or the evidence schema. |
-| `10` | Still advancing; used only by single-round tick mode. |
+| `10` | Still advancing: returned by `dag tick`, and by `dag run` when `--max-rounds` or `--max-minutes` is reached. Rerun the same command to continue. |
 | `20` | Caller decision required; includes a structured report. |
 
-Business-layer `OmacError` subclasses map to their corresponding exit codes.
-Do not scatter `sys.exit` calls. The exit-code contract must remain backward
-compatible.
+Codes are defined in `src/omac/cli/exit_codes.py`. Business-layer `OmacError`
+subclasses (`src/omac/errors.py`) map to their exit codes. `sys.exit` appears
+only in `src/omac/cli/main.py`. The contract must remain backward compatible.
 
-## Terminology (§10.2 — Required in User-Facing Output and Documentation)
+## Terminology (Required in User-Facing Output and Documentation)
 
-| Required term | Do not use |
-|---|---|
-| result collection (`collect_results`) | harvest |
-| running nodes (`running_nodes`) | in-flight |
-| ready nodes (`ready_nodes`) | frontier |
+| Required term | Chinese | Do not use |
+|---|---|---|
+| result collection (`collect_results`) | 结果收集 | harvest |
+| running nodes (`running_nodes`) | 进行中节点 | in-flight, 在飞 |
+| ready nodes (`ready_nodes`) | 就绪节点 | frontier |
 
 Use the required terms in identifiers, error messages, guide text, and design
 documents. Avoid ad hoc translated jargon.
-
-## TDD
-
-1. **Write tests before implementation.** New or changed executable behavior
-   needs regression coverage. Cover at least the main path, boundaries, and
-   known risks.
-2. **Delivery = code + tests + necessary documentation.** Changes to source
-   code, tests, build/package configuration, schemas, or executable behavior
-   require a green `python3 -m pytest tests/` run for completion.
-3. **Use proportional verification for documentation-only changes.** A diff
-   containing only Markdown or static diagram assets does not require the full
-   pytest suite. Run `git diff --check`, verify local links and assets, and
-   parse or render changed formats when tooling is available. If documentation
-   is packaged or machine-consumed, run its relevant targeted tests.
-4. **Verify independently before completion.** Writing code is not completion.
-   Completion requires objective evidence from tests, builds, or actual command
-   output.
 
 ## Errors Teach Users
 
 User-facing output and errors must state what is missing, how to fix it, and a
 copyable command. For invalid arguments, print the error and the command's full
-help text so an agent can correct itself after one mistake.
+help text so an agent can correct itself after one mistake. All user-facing text
+goes through `omac.i18n.ui(english, chinese)`.
+
+## Tests
+
+1. **Write tests before implementation.** New or changed executable behavior
+   needs regression coverage of the main path, boundaries, and known risks.
+2. **CI-equivalent run:** `python3 -m pytest tests/ -m "not live"`. Code must
+   work on Python 3.10 and 3.12. `live` tests need a configured Multica
+   workspace and run only on request (`-m live`).
+3. **Tests protect behavior, not text.** Do not assert on source code text or
+   `inspect.getsource`, do not test the test doubles themselves, do not restate
+   constants (`assert X == set(X_MAP)`), and mock only external boundaries
+   (platform CLI, network, clock). Duplicate test names are a defect.
+4. **Fixtures are synthetic and small.** No captured real-project data, machine
+   paths, platform IDs, emails, or credentials (see `CONTRIBUTING.md`). A single
+   fixture file stays under 1 MB. Tests must not read paths outside the
+   repository. `[enforced from Phase 0]`
+5. **Architecture checks** live in `tests/test_architecture.py` and
+   `lint-imports`; do not weaken them to make a change pass. `[enforced from
+   Phase 0]`
+6. Changes to packaged documents (`src/omac/guide/**`, `src/omac/agents/**`)
+   run `tests/test_guide.py`, `tests/test_i18n.py`, and
+   `tests/test_agent_templates.py`.
+
+## Verification
+
+- Source code, tests, build/package configuration, schemas, or executable
+  behavior: the CI-equivalent pytest run must be green, and `lint-imports` must
+  pass.
+- Documentation-only changes (Markdown or static diagram assets): run
+  `git diff --check`, verify local links and assets, and parse or render changed
+  formats when tooling is available, plus the packaged-document tests above when
+  they apply.
+- Writing code is not completion. Completion requires objective evidence from
+  tests, builds, or actual command output.
+
+## Design Documents
+
+The current design lives in `docs/design/` (tracked). `docs/dev/` is local and
+ignored by Git; never cite it from code or this file. Cite design sections only
+by documents that exist in the repository. `[docs/design/ created in Phase 9]`
+
+## Releases
+
+The version comes from `pyproject.toml`. Tags use `v*.*.*`. `release.yml` runs
+`scripts/check_release.py`, builds, and checks distributions. Release artifacts
+must not contain `tests/fixtures`.
 
 ## Definition of Done
 
 A change is complete only when all of the following are true:
 
 - [ ] It stays within the planned scope.
-- [ ] It consumes only `WorkItemStore` and `AgentRuntime` interfaces; it does
-  not shell out to platform CLIs directly.
-- [ ] Verification is proportional to the change: full
-  `python3 -m pytest tests/` for code/configuration/behavior changes; targeted
-  document checks (and relevant document tests when applicable) for
-  documentation-only changes.
-- [ ] Documentation and guides are updated when necessary.
+- [ ] It respects the platform boundary and layering rules; no new lazy import
+  crosses a layer, and the `lint-imports` baseline did not grow.
+- [ ] It adds no incident-specific constants or one-off recovery code to
+  `src/omac`.
+- [ ] Verification is proportional to the change (see Verification).
+- [ ] Documentation, guides, and this file are updated when commands, behavior,
+  or rules change.

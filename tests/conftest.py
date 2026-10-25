@@ -9,6 +9,39 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from _support import budget  # noqa: E402
+
+_session_tmp_bytes = 0
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Enforce the per-test budgets of tests/_support/budget.py (PLAN 6.2)."""
+    global _session_tmp_bytes
+    outcome = yield
+    report = outcome.get_result()
+    if call.when != "call" or not report.passed or Path(item.fspath).name in budget.EXEMPT_FILES:
+        return
+    tmp = item.funcargs.get("tmp_path")
+    tmp_bytes = budget.tree_bytes(tmp) if tmp else 0
+    _session_tmp_bytes += tmp_bytes
+    problems = budget.check_call(
+        seconds=call.duration, tmp_bytes=tmp_bytes, session_tmp_bytes=_session_tmp_bytes,
+        rss_before=item.stash.get(_RSS_KEY, 0), rss_after=budget.peak_rss_bytes(),
+        is_docker=item.get_closest_marker("docker") is not None)
+    if problems:
+        report.outcome = "failed"
+        report.longrepr = "resource budget exceeded: " + "; ".join(problems)
+
+
+_RSS_KEY = pytest.StashKey[int]()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    item.stash[_RSS_KEY] = budget.peak_rss_bytes()
+    yield
+
 
 @pytest.fixture(autouse=True)
 def _reset_mock_state():

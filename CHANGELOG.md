@@ -8,6 +8,10 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `omac init` now defaults to the `multica` engine when the engine prompt is answered with Enter.
+
 ### Added
 
 - New reviewed amendments use an identity envelope that binds the base manifest

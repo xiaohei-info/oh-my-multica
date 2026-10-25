@@ -18,6 +18,7 @@
 
 - [ ] The change stays within the stated scope.
 - [ ] New or changed behavior has regression coverage.
+- [ ] The change adds only generic mechanisms: no project- or incident-specific constants, node names, or one-off recovery code.
 - [ ] Verification is proportional to the change.
 - [ ] User-facing documentation is updated when needed.
 - [ ] Logs, screenshots, and fixtures contain no secrets or personal data.

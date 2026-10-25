@@ -67,3 +67,45 @@ markers = [
     "live: tests that hit a real platform (Multica/GitHub). Skipped by default in CI; run locally with `-m live`.",
     "e2e: CLI 子进程级端到端验收(mock 引擎)。稳定回归护栏,无 sleep 竞态(mock delay=0)。",
 ]
+
+[tool.importlinter]
+root_package = "omac"
+
+[[tool.importlinter.contracts]]
+id = "layers"
+name = "Layering: web -> cli -> pipeline -> engines -> core -> i18n -> errors (function-level imports count)"
+type = "layers"
+layers = ["omac.web", "omac.cli", "omac.pipeline", "omac.engines", "omac.core", "omac.i18n", "omac.errors"]
+ignore_imports = [
+    # Permanent exception: `omac web` is the launcher of the web surface.
+    "omac.cli.commands.web -> omac.web.server",
+    # ---- Baseline: may only shrink; delete a line when its import is removed ----
+    # Phase 1 (project-specific code removal)
+    "omac.core.owner_amendment -> omac.cli.commands.dag",
+    "omac.core.owner_amendment -> omac.pipeline.amendment",
+    "omac.core.owner_amendment -> omac.pipeline.owner_amendment",
+    "omac.core.owner_amendment -> omac.pipeline.portable_owner",
+    "omac.core.owner_amendment -> omac.pipeline.tasks",
+    "omac.core.owner_amendment -> omac.pipeline.worker_decision",
+    "omac.core.owner_amendment -> omac.engines.models",
+    "omac.core.current_owner_source -> omac.pipeline.amendment",
+    "omac.core.current_owner_source -> omac.pipeline.owner_amendment",
+    "omac.core.historical_review_source -> omac.pipeline.owner_amendment",
+    "omac.core.prospective_owner -> omac.engines.models",
+    "omac.core.credential_prospective -> omac.engines.models",
+    "omac.core.literal_correction -> omac.engines.models",
+    # Phase 3 (layering cleanup)
+    "omac.core.amendment -> omac.engines.models",
+    "omac.core.stage_recovery -> omac.engines.models",
+    "omac.i18n -> omac.core.config",
+    # Phase 8 (mock removal)
+    "omac.engines.mock -> omac.pipeline.dispatch",
+]
+
+[[tool.importlinter.contracts]]
+id = "adapters-via-factory"
+name = "Concrete engine adapters are assembled only by the omac.engines factory"
+type = "forbidden"
+source_modules = ["omac.web", "omac.cli", "omac.pipeline", "omac.core"]
+forbidden_modules = ["omac.engines.multica", "omac.engines.mock"]
+allow_indirect_imports = true

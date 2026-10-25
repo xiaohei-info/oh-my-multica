@@ -18,14 +18,14 @@ git clone https://github.com/xiaohei-info/oh-my-multica.git
 cd oh-my-multica
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e . pytest
+python -m pip install -e ".[test]" import-linter
 ```
 
 Run focused checks while developing. Before opening a Pull Request, verify the
 change in proportion to what it touches:
 
 - Source code, tests, package/build configuration, schemas, or executable
-  behavior: `python -m pytest tests/`
+  behavior: `python -m pytest tests/ -m "not live"` and `lint-imports`
 - Markdown-only changes: `git diff --check`, local-link checks, and rendering
   or parsing for changed diagrams or formats when available.
 

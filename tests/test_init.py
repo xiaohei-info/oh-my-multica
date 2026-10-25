@@ -333,16 +333,24 @@ class _Tty:
         return True
 
 
+def test_engine_prompt_defaults_to_multica(monkeypatch):
+    from omac.cli.commands.init_cmd import _select_engine
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(builtins, "input", lambda prompt="": "")
+    assert _select_engine(SimpleNamespace(engine=None), language="en") == "multica"
+
+
 def test_interactive_main_path(tmp_path, monkeypatch, capsys):
     """交互式:回车用缺省,主路径生成 config 且 --check 通过。"""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "stdin", _Tty())
-    # 回答顺序:language(回车=en)→ engine(回车=mock)→ workspace(回车=第一个)→ 不创建模板 Agent → planner(回车=1)
+    # 回答顺序:language(回车=en)→ engine(显式 mock)→ workspace(回车=第一个)→ 不创建模板 Agent → planner(回车=1)
     # → orchestrator(回车=1)→ workers(回车=1)→ reviewers(回车=1)→ acceptor(回车跳过)
     # → max_parallel(6)→ retry values → workflow defaults
     monkeypatch.setattr(builtins, "input", _answers([
         "",       # language → en
-        "",       # engine → mock
+        "mock",   # engine
         "",       # workspace → 首个(mock-workspace)
         "",       # 不通过模板创建 Agent
         "",       # planner → 序号1=alice

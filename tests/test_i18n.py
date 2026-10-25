@@ -117,8 +117,8 @@ def test_init_engine_prompt_uses_selected_language(monkeypatch):
     prompts = []
     monkeypatch.setattr(builtins, "input", lambda prompt: prompts.append(prompt) or "")
 
-    assert init_cmd._select_engine(SimpleNamespace(engine=None), language="en") == "mock"
-    assert prompts == ["Choose engine [mock]: "]
+    assert init_cmd._select_engine(SimpleNamespace(engine=None), language="en") == "multica"
+    assert prompts == ["Choose engine [multica]: "]
 
 
 def test_root_help_defaults_to_english(tmp_path, monkeypatch, capsys):
