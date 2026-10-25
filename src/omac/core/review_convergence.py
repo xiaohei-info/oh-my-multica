@@ -978,16 +978,9 @@ def _results_by_id(values: Any, id_key: str, *, errors: list[str], prefix: str) 
     return results
 
 
-def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[str]:
-    """Validate finite obligation coverage and cross-round blocker disposition."""
-    if not isinstance(report, dict):
-        return ["review_report is required"]
-    if report.get("review_protocol") != REVIEW_PROTOCOL_VERSION:
-        return [f"review_report.review_protocol must be {REVIEW_PROTOCOL_VERSION}"]
-
-    errors: list[str] = review_boundary_report_errors(report)
+def _validate_nits(report: dict, verdict: str, errors: list[str]) -> list[str]:
     nits = report.get("nits")
-    valid_nits = []
+    valid_nits: list[str] = []
     if nits is None and verdict != "pass-with-nits":
         pass
     elif not isinstance(nits, list):
@@ -1002,6 +995,11 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
     if verdict == "pass-with-nits" and not valid_nits:
         errors.append(
             "review_report pass-with-nits verdict requires at least one non-empty nit")
+    return valid_nits
+
+
+def _validate_obligation_results(item: Any, report: dict, errors: list[str]):
+    """Every obligation needs one pass|fail result with evidence. Returns (expected ids, results)."""
     obligations = getattr(item, "review_obligations", None)
     if not isinstance(obligations, list) or not obligations:
         obligations = build_review_obligations(item)
@@ -1026,33 +1024,30 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
                 f"review_report obligation evidence is required: {obligation_id}")
     for obligation_id in sorted(set(results) - expected):
         errors.append(f"review_report references unknown obligation: {obligation_id}")
+    return expected, results
 
-    prior_results = _results_by_id(
-        report.get("prior_blocker_results", []), "blocker_id",
-        errors=errors, prefix="review_report.prior_blocker_results")
-    ledger = current_review_ledger(item)
+
+def _open_blockers_for_subject(item: Any, ledger: Any) -> dict:
     all_records = {
         blocker.get("blocker_id"): blocker
         for blocker in (ledger.get("blockers", []) if isinstance(ledger, dict) else [])
         if isinstance(blocker, dict) and blocker.get("blocker_id")
     }
     cycles = ledger.get("cycles", []) if isinstance(ledger, dict) else []
-    if (
-        cycles
-        and cycles[-1].get("subject_digest")
-        == getattr(item, "review_subject_digest", None)
-    ):
+    if cycles and cycles[-1].get("subject_digest") == getattr(item, "review_subject_digest", None):
         prior_ids = cycles[-1].get("prior_open_blocker_ids", [])
-        open_blockers = {
+        return {
             blocker_id: all_records[blocker_id]
             for blocker_id in prior_ids if blocker_id in all_records
         }
-    else:
-        open_blockers = {
-            blocker["blocker_id"]: blocker
-            for blocker in _open_blockers(ledger)
-            if blocker.get("blocker_id")
-        }
+    return {
+        blocker["blocker_id"]: blocker
+        for blocker in _open_blockers(ledger)
+        if blocker.get("blocker_id")
+    }
+
+
+def _validate_prior_blocker_results(open_blockers: dict, prior_results: dict, errors: list[str]) -> None:
     for blocker_id in sorted(open_blockers):
         if blocker_id not in prior_results:
             errors.append(f"review_report missing prior blocker result: {blocker_id}")
@@ -1067,6 +1062,9 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
     for blocker_id in sorted(set(prior_results) - set(open_blockers)):
         errors.append(f"review_report references unknown open blocker: {blocker_id}")
 
+
+def _validate_report_blockers(report: dict, expected: set, results: dict, errors: list[str]):
+    """Structural checks per blocker. Returns (valid blockers, blockers keyed by root_cause_key)."""
     blockers = report.get("blockers", [])
     if not isinstance(blockers, list):
         errors.append("review_report.blockers must be a list")
@@ -1104,13 +1102,17 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
             else:
                 blockers_by_root[root_cause_key] = blocker
         valid_blockers.append(blocker)
+    return valid_blockers, blockers_by_root
 
+
+def _validate_prior_dispositions(open_blockers: dict, prior_results: dict, blockers_by_root: dict,
+                                 errors: list[str]) -> None:
+    """A prior blocker is either fixed (root gone) or carried forward with the same classification."""
     for blocker_id, record in open_blockers.items():
         result = prior_results.get(blocker_id)
         if result is None or result.get("status") not in _PRIOR_STATUSES:
             continue
-        root_cause_key = record.get("root_cause_key")
-        current_blocker = blockers_by_root.get(root_cause_key)
+        current_blocker = blockers_by_root.get(record.get("root_cause_key"))
         status = result["status"]
         if status == "fixed":
             if current_blocker is not None:
@@ -1128,6 +1130,9 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
                 f"review_report blocker classification must match prior status: "
                 f"{blocker_id}")
 
+
+def _validate_verdict_consistency(verdict: str, results: dict, prior_results: dict,
+                                  valid_blockers: list, errors: list[str]) -> None:
     failed = {
         obligation_id for obligation_id, result in results.items()
         if result.get("status") == "fail"
@@ -1140,11 +1145,7 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
             errors.append("review_report pass verdict requires all obligations to pass")
         if valid_blockers:
             errors.append("review_report pass verdict requires no blockers")
-        unresolved = [
-            blocker_id for blocker_id, result in prior_results.items()
-            if result.get("status") != "fixed"
-        ]
-        if unresolved:
+        if any(result.get("status") != "fixed" for result in prior_results.values()):
             errors.append("review_report pass verdict requires all prior blockers to be fixed")
     elif verdict == "reject":
         if not valid_blockers:
@@ -1152,6 +1153,26 @@ def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[st
         if not failed:
             errors.append(
                 "review_report reject verdict requires at least one failed obligation")
+
+
+def validate_convergence_review(item: Any, verdict: str, report: Any) -> list[str]:
+    """Validate finite obligation coverage and cross-round blocker disposition."""
+    if not isinstance(report, dict):
+        return ["review_report is required"]
+    if report.get("review_protocol") != REVIEW_PROTOCOL_VERSION:
+        return [f"review_report.review_protocol must be {REVIEW_PROTOCOL_VERSION}"]
+
+    errors: list[str] = review_boundary_report_errors(report)
+    _validate_nits(report, verdict, errors)
+    expected, results = _validate_obligation_results(item, report, errors)
+    prior_results = _results_by_id(
+        report.get("prior_blocker_results", []), "blocker_id",
+        errors=errors, prefix="review_report.prior_blocker_results")
+    open_blockers = _open_blockers_for_subject(item, current_review_ledger(item))
+    _validate_prior_blocker_results(open_blockers, prior_results, errors)
+    valid_blockers, blockers_by_root = _validate_report_blockers(report, expected, results, errors)
+    _validate_prior_dispositions(open_blockers, prior_results, blockers_by_root, errors)
+    _validate_verdict_consistency(verdict, results, prior_results, valid_blockers, errors)
     return errors
 
 
