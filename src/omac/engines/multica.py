@@ -23,7 +23,7 @@ from collections import OrderedDict
 from concurrent.futures import Future
 from dataclasses import replace
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 import yaml
 
@@ -367,6 +367,10 @@ def _is_not_found(message: str) -> bool:
 
 def _as_dict(value: Any, cls: type) -> Any:
     return value.as_dict() if isinstance(value, cls) else value
+
+
+def _nonempty_dict(value: Any) -> Optional[dict]:
+    return value if isinstance(value, dict) and value else None
 
 
 def _text(value: Optional[int]) -> Optional[str]:
@@ -939,99 +943,91 @@ class MulticaStore(WorkItemStore):
             ),
         )
 
-    def _issue_to_control_projection(
-        self, issue_data: Dict, workspace_id: str,
-    ) -> WorkItemControlProjection:
-        """Map one Issue envelope without downloading attachment-backed bodies."""
-        metadata = issue_data.get("metadata", {})
-        unknown_persisted_fields = {
+    @staticmethod
+    def _unknown_persisted_fields(issue_data: Dict, metadata: Dict) -> Dict[str, Any]:
+        unknown = {
             f"metadata.{key}": value
             for key, value in metadata.items()
             if key not in _KNOWN_WORK_ITEM_METADATA_KEYS
         }
         for key, value in issue_data.items():
-            if key in _KNOWN_ISSUE_FIELDS:
-                continue
-            if key in _READ_ONLY_ISSUE_ENVELOPE_FIELDS:
+            if key in _KNOWN_ISSUE_FIELDS or key in _READ_ONLY_ISSUE_ENVELOPE_FIELDS:
                 continue
             if (
                 key in _EMPTY_DEFAULT_ISSUE_ENVELOPE_FIELDS
                 and value == _EMPTY_DEFAULT_ISSUE_ENVELOPE_FIELDS[key]
             ):
                 continue
-            unknown_persisted_fields[f"issue.{key}"] = value
+            unknown[f"issue.{key}"] = value
+        return unknown
+
+    @staticmethod
+    def _platform_assignee_id(issue_data: Dict) -> Optional[str]:
         raw_assignee = issue_data.get("assignee_id") or issue_data.get("assignee")
         if isinstance(raw_assignee, dict):
             raw_assignee = raw_assignee.get("id") or raw_assignee.get("identifier")
-        platform_assignee_id = str(raw_assignee) if raw_assignee else None
+        return str(raw_assignee) if raw_assignee else None
 
+    @staticmethod
+    def _blocked_by_and_wave(metadata: Dict) -> Tuple[List[Any], Optional[int]]:
         blocked_by = metadata.get("blocked_by", [])
         if isinstance(blocked_by, str):
             try:
                 blocked_by = json.loads(blocked_by)
             except Exception:
                 blocked_by = []
-
         wave = metadata.get("wave")
         if isinstance(wave, str):
             try:
                 wave = int(wave)
             except Exception:
                 wave = None
+        return (blocked_by if isinstance(blocked_by, list) else []), wave
 
-        deliverable_ref_declared = DELIVERABLE_REF_KEY in metadata
+    def _payload_ref_fields(self, metadata: Dict) -> Dict[str, Any]:
+        """Inline-or-referenced payloads: a declared *_ref key always wins over the inline value."""
         deliverable_ref = self._json_metadata(metadata, DELIVERABLE_REF_KEY)
-        deliverable = None if deliverable_ref_declared else metadata.get(DELIVERABLE_KEY)
-
-        project_rules_ref_declared = PROJECT_RULES_REF_KEY in metadata
         project_rules_ref = self._json_metadata(metadata, PROJECT_RULES_REF_KEY)
-        project_rules = (
-            None if project_rules_ref_declared else metadata.get(PROJECT_RULES_KEY)
-        )
-
-        verification_ref_declared = VERIFICATION_REF_KEY in metadata
-        review_report_ref_declared = REVIEW_REPORT_REF_KEY in metadata
         verification_ref = self._json_metadata(metadata, VERIFICATION_REF_KEY)
         review_report_ref = self._json_metadata(metadata, REVIEW_REPORT_REF_KEY)
+        legacy_verification = (
+            None if VERIFICATION_REF_KEY in metadata
+            else self._json_metadata(metadata, "verification"))
+        legacy_report = (
+            None if REVIEW_REPORT_REF_KEY in metadata
+            else self._json_metadata(metadata, "review_report"))
+        return {
+            "deliverable": None if DELIVERABLE_REF_KEY in metadata else metadata.get(DELIVERABLE_KEY),
+            "deliverable_ref": _nonempty_dict(deliverable_ref),
+            "project_rules": (
+                None if PROJECT_RULES_REF_KEY in metadata else metadata.get(PROJECT_RULES_KEY)),
+            "project_rules_ref": _nonempty_dict(project_rules_ref),
+            "verification": legacy_verification if isinstance(legacy_verification, dict) else None,
+            "verification_ref": _nonempty_dict(verification_ref),
+            "review_report": legacy_report if isinstance(legacy_report, dict) else None,
+            # Unlike the other refs the report ref is kept verbatim (it may be a non-dict marker).
+            "review_report_ref": review_report_ref,
+        }
+
+    def _issue_to_control_projection(
+        self, issue_data: Dict, workspace_id: str,
+    ) -> WorkItemControlProjection:
+        """Map one Issue envelope without downloading attachment-backed bodies."""
+        metadata = issue_data.get("metadata", {})
+        blocked_by, wave = self._blocked_by_and_wave(metadata)
+        payloads = self._payload_ref_fields(metadata)
         review_ledger_ref = self._json_metadata(metadata, REVIEW_LEDGER_REF_KEY)
-        review_generation = self._optional_text_metadata(
-            metadata, REVIEW_GENERATION_KEY)
-        review_ledger_generation = self._optional_text_metadata(
-            metadata, REVIEW_LEDGER_GENERATION_KEY)
-        bounce_baseline = self._json_metadata(metadata, BOUNCE_BASELINE_KEY)
-        review_obligations_ref = self._json_metadata(
-            metadata, REVIEW_OBLIGATIONS_REF_KEY)
-        review_continuation = self._json_metadata(
-            metadata, REVIEW_CONTINUATION_KEY)
-        reviewer_run_baseline = self._json_metadata(
-            metadata, REVIEWER_RUN_BASELINE_KEY)
-        machine_feedback_ref = self._json_metadata(
-            metadata, MACHINE_FEEDBACK_REF_KEY)
-        decision_required = self._json_metadata(metadata, DECISION_REQUIRED_KEY)
-        review_nits_acceptance = self._json_metadata(
-            metadata, REVIEW_NITS_ACCEPTANCE_KEY)
-        amendment_attempt = self._json_metadata(metadata, AMENDMENT_ATTEMPT_KEY)
-        review_obligations = self._json_metadata(metadata, REVIEW_OBLIGATIONS_KEY)
+        review_obligations_ref = self._json_metadata(metadata, REVIEW_OBLIGATIONS_REF_KEY)
+        machine_feedback_ref = self._json_metadata(metadata, MACHINE_FEEDBACK_REF_KEY)
         contract_ref = self._json_metadata(metadata, CONTRACT_REF_KEY)
-        source_refs = self._json_metadata(metadata, SOURCE_REFS_KEY)
-        verification = None
-        if not verification_ref_declared:
-            legacy_verification = self._json_metadata(metadata, "verification")
-            verification = legacy_verification if isinstance(legacy_verification, dict) else None
-
-        review_report = None
-        if not review_report_ref_declared:
-            legacy_report = self._json_metadata(metadata, "review_report")
-            review_report = legacy_report if isinstance(legacy_report, dict) else None
-
+        review_obligations = self._json_metadata(metadata, REVIEW_OBLIGATIONS_KEY)
         legacy_contract = self._json_metadata(metadata, "contract")
-        contract = legacy_contract if isinstance(legacy_contract, dict) else None
         deferred_payloads = frozenset(
             payload for payload, ref in (
-                (WorkItemPayload.DELIVERABLE, deliverable_ref),
-                (WorkItemPayload.PROJECT_RULES, project_rules_ref),
-                (WorkItemPayload.VERIFICATION, verification_ref),
-                (WorkItemPayload.REVIEW_REPORT, review_report_ref),
+                (WorkItemPayload.DELIVERABLE, payloads["deliverable_ref"]),
+                (WorkItemPayload.PROJECT_RULES, payloads["project_rules_ref"]),
+                (WorkItemPayload.VERIFICATION, payloads["verification_ref"]),
+                (WorkItemPayload.REVIEW_REPORT, payloads["review_report_ref"]),
                 (WorkItemPayload.REVIEW_LEDGER, review_ledger_ref),
                 (WorkItemPayload.REVIEW_OBLIGATIONS, review_obligations_ref),
                 (WorkItemPayload.MACHINE_FEEDBACK, machine_feedback_ref),
@@ -1039,6 +1035,8 @@ class MulticaStore(WorkItemStore):
             )
             if isinstance(ref, dict) and ref
         )
+        amendment_attempt = self._json_metadata(metadata, AMENDMENT_ATTEMPT_KEY)
+        source_refs = self._json_metadata(metadata, SOURCE_REFS_KEY)
 
         item = WorkItem(
             id=issue_data["id"],
@@ -1050,79 +1048,50 @@ class MulticaStore(WorkItemStore):
             dag_key=metadata.get("dag_key", ""),
             worker=metadata.get("worker"),
             reviewer=metadata.get("reviewer"),
-            blocked_by=blocked_by if isinstance(blocked_by, list) else [],
+            blocked_by=blocked_by,
             wave=wave,
             artifacts=self._json_metadata(metadata, "artifacts"),
-            verification=verification,
-            verification_ref=(
-                verification_ref if isinstance(verification_ref, dict) and verification_ref
-                else None),
             review_verdict=self._optional_text_metadata(metadata, "review_verdict"),
             review_comment=self._optional_text_metadata(metadata, "review_comment"),
             machine_feedback=None,
-            machine_feedback_ref=(
-                machine_feedback_ref),
-            review_report=review_report,
-            review_report_ref=(
-                review_report_ref),
+            machine_feedback_ref=machine_feedback_ref,
             review_subject_digest=self._optional_text_metadata(
                 metadata, REVIEW_SUBJECT_DIGEST_KEY),
             review_obligations=(
                 review_obligations if isinstance(review_obligations, list) else []),
-            review_obligations_ref=(
-                review_obligations_ref
-                if isinstance(review_obligations_ref, dict) and review_obligations_ref
-                else None),
+            review_obligations_ref=_nonempty_dict(review_obligations_ref),
             review_ledger=None,
-            review_ledger_ref=(
-                review_ledger_ref
-                if isinstance(review_ledger_ref, dict) and review_ledger_ref
-                else None),
-            review_generation=review_generation,
-            review_ledger_generation=review_ledger_generation,
-            bounce_baseline=(
-                bounce_baseline
-                if isinstance(bounce_baseline, dict) and bounce_baseline
-                else None),
-            review_continuation=(
-                review_continuation
-                if isinstance(review_continuation, dict) and review_continuation
-                else None),
+            review_ledger_ref=_nonempty_dict(review_ledger_ref),
+            review_generation=self._optional_text_metadata(metadata, REVIEW_GENERATION_KEY),
+            review_ledger_generation=self._optional_text_metadata(
+                metadata, REVIEW_LEDGER_GENERATION_KEY),
+            bounce_baseline=_nonempty_dict(self._json_metadata(metadata, BOUNCE_BASELINE_KEY)),
+            review_continuation=_nonempty_dict(
+                self._json_metadata(metadata, REVIEW_CONTINUATION_KEY)),
             reviewer_run_baseline=parse_reviewer_run_baseline(
-                reviewer_run_baseline),
+                self._json_metadata(metadata, REVIEWER_RUN_BASELINE_KEY)),
             worker_handoff=parse_worker_handoff(
                 self._control_payload_value(
                     issue_data["id"], WORKER_HANDOFF_KEY,
                     metadata.get(WORKER_HANDOFF_KEY))),
             delivery_identity=parse_delivery_identity(
                 self._json_metadata(metadata, DELIVERY_IDENTITY_KEY)),
-            decision_required=decision_required,
-            review_nits_acceptance=(
-                review_nits_acceptance
-                if isinstance(review_nits_acceptance, dict)
-                and review_nits_acceptance
-                else None),
+            decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
+            review_nits_acceptance=_nonempty_dict(
+                self._json_metadata(metadata, REVIEW_NITS_ACCEPTANCE_KEY)),
             amendment_attempt=(
                 amendment_attempt if isinstance(amendment_attempt, dict) else None),
-            contract=contract,
+            contract=legacy_contract if isinstance(legacy_contract, dict) else None,
             contract_ref=contract_ref if isinstance(contract_ref, dict) else None,
             source_refs=source_refs if isinstance(source_refs, list) else [],
             kind=parse_kind(metadata.get(KIND_KEY)),
             phase=parse_phase(metadata.get(PHASE_KEY)),
             bounces=parse_bounces(metadata),
-            deliverable=deliverable,
-            deliverable_ref=(
-                deliverable_ref if isinstance(deliverable_ref, dict) and deliverable_ref
-                else None),
-            project_rules=project_rules,
-            project_rules_ref=(
-                project_rules_ref
-                if isinstance(project_rules_ref, dict) and project_rules_ref
-                else None),
             created_at=issue_data.get("created_at"),
             updated_at=issue_data.get("updated_at"),
-            platform_assignee_id=platform_assignee_id,
-            unknown_persisted_fields=unknown_persisted_fields,
+            platform_assignee_id=self._platform_assignee_id(issue_data),
+            unknown_persisted_fields=self._unknown_persisted_fields(issue_data, metadata),
+            **payloads,
         )
         return WorkItemControlProjection(item, deferred_payloads)
 
