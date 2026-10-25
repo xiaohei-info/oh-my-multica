@@ -13,7 +13,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-import re
 import secrets
 import time
 from typing import Any, Callable, Dict, List, Set, Tuple
@@ -86,6 +85,10 @@ from .apply import ManifestState, Ports, apply, apply_one
 from .decide_loop import (
     DoneDevelopObservation, decide_done_develop, plan_block, plan_done_non_develop, plan_evidence_gate_failed,
     plan_return_to_worker_failed, plan_worker_failed,
+)
+from .decide_reviewer import (
+    BaselineAction, BaselineObservation, DispatchBaselineObservation, NoSubmitAction, RunAction, RunObservation, decide_baseline,
+    decide_dispatch_baseline, decide_no_submit, decide_reviewer_run, no_submit_grace,
 )
 from .decide_runs import (
     TRANSIENT_RUNTIME_MAX_RUNS, ExpectedTerminalRun, RunFailure,
@@ -1431,20 +1434,9 @@ def _reviewer_no_submit_grace_state(
         if fresh.review_verdict:
             return "submitted"
 
-        ended_at = parse_platform_time(observed.run.updated_at)
-        if observed.run.updated_at and (
-            ended_at is None or ended_at.tzinfo is None
-        ):
-            return "unavailable"
-        if ended_at is not None:
-            age = (_utcnow() - ended_at).total_seconds()
-            if age < 0:
-                return "unavailable"
-            return (
-                "elapsed"
-                if age >= _HANDOFF_TERMINAL_GRACE_SECONDS
-                else "waiting"
-            )
+        state = no_submit_grace(observed.run.updated_at, _utcnow(), _HANDOFF_TERMINAL_GRACE_SECONDS)
+        if state != "unknown":
+            return state
 
         if attempt + 1 >= _HANDOFF_OBSERVATION_ATTEMPTS:
             break
@@ -1472,84 +1464,23 @@ def _reviewer_run_baseline_for_observation(
     reviewer: str,
     reviewer_id: str,
 ) -> tuple[ReviewerRunBaseline | None, str | None]:
-    """Load the baseline, or derive it from the sealed delivery's creation time."""
-    baseline = item.reviewer_run_baseline
-    if baseline is not None:
-        if (
-            baseline.subject_digest == item.review_subject_digest
-            and baseline.target_reviewer == reviewer
-            and baseline.target_agent_id == reviewer_id
-        ):
-            identity = _delivery_identity(item)
-            identity_cutoff = (
-                parse_platform_time(identity.verification_created_at)
-                if identity is not None and identity.is_complete() else None
-            )
-            if identity_cutoff is None or identity_cutoff.tzinfo is None:
-                return None, (
-                    "the current delivery identity or verification time is unusable")
-            if not baseline.cutoff_created_at:
-                baseline = replace(
-                    baseline, cutoff_created_at=identity.verification_created_at,
-                    generation=f"review-{secrets.token_hex(8)}")
-                _mark_recovery_pending(manifest, key)
-                apply([
-                    UpdateMetadata(item.id, {'reviewer_run_baseline': baseline}),
-                ], Ports(store=store))
-            cutoff = parse_platform_time(baseline.cutoff_created_at)
-            if cutoff is None or cutoff.tzinfo is None or cutoff != identity_cutoff:
-                return None, (
-                    "the persisted reviewer Run cutoff is unusable or mismatched")
-            if not baseline.is_causally_bound():
-                return None, "the persisted reviewer Run baseline is incomplete"
-            return baseline, None
-        return None, "the persisted reviewer Run baseline is incomplete or stale"
-
+    """Load the baseline, or derive it from the sealed delivery's creation time (decide_reviewer.decide_baseline)."""
     identity = _delivery_identity(item)
-    if identity is None or not identity.is_complete():
-        return None, "the current delivery identity is missing or incomplete"
-    cutoff = parse_platform_time(identity.verification_created_at)
-    if (
-        not item.review_subject_digest
-        or cutoff is None
-        or cutoff.tzinfo is None
-        or not runtime.capabilities.stable_direct_run_identity
-    ):
-        return None, (
-            "the sealed delivery verification time or stable Run identity "
-            "support is unavailable")
-
-    direct_runs = [
-        run for run in runtime.list_runs(item.id)
-        if run.kind == "direct" and run.agent_id == reviewer_id
-    ]
-    historical_runs = []
-    for run in direct_runs:
-        created_at = parse_platform_time(run.created_at)
-        if created_at is None or created_at.tzinfo is None:
-            return None, f"Reviewer Run {run.id} has no usable creation time"
-        if created_at <= cutoff:
-            historical_runs.append(run)
-    try:
-        historical_ids, _ = bounded_direct_run_baseline(
-            historical_runs,
-            gate_cutoff_created_at=identity.verification_created_at)
-    except PlatformError as exc:
-        return None, str(exc)
-    baseline = ReviewerRunBaseline(
-        schema=REVIEWER_RUN_BASELINE_SCHEMA,
-        subject_digest=item.review_subject_digest,
-        target_reviewer=reviewer,
-        target_agent_id=reviewer_id,
-        cutoff_created_at=identity.verification_created_at,
-        generation=f"review-{secrets.token_hex(8)}",
-        baseline_direct_run_ids=tuple(sorted(historical_ids)),
-    )
-    _mark_recovery_pending(manifest, key)
-    apply([
-        UpdateMetadata(item.id, {'reviewer_run_baseline': baseline}),
-    ], Ports(store=store))
-    return baseline, None
+    reviewer_runs = ()
+    if item.reviewer_run_baseline is None and identity is not None and identity.is_complete():
+        reviewer_runs = tuple(
+            run for run in runtime.list_runs(item.id) if run.kind == "direct" and run.agent_id == reviewer_id)
+    decision = decide_baseline(BaselineObservation(
+        persisted=item.reviewer_run_baseline, subject_digest=item.review_subject_digest, reviewer=reviewer,
+        reviewer_id=reviewer_id, identity=identity,
+        stable_run_identity=runtime.capabilities.stable_direct_run_identity, reviewer_runs=reviewer_runs),
+        generation=f"review-{secrets.token_hex(8)}")
+    if decision.action is BaselineAction.UNAVAILABLE:
+        return None, decision.reason
+    if decision.action in {BaselineAction.CREATE, BaselineAction.FILL_CUTOFF}:
+        _mark_recovery_pending(manifest, key)
+        apply([UpdateMetadata(item.id, {'reviewer_run_baseline': decision.baseline})], Ports(store=store))
+    return decision.baseline, None
 
 
 def _retry_reviewer_attempt(
@@ -1649,29 +1580,14 @@ def _prepare_new_review_subject(store, manifest, key, item_id, current, subject_
 
 
 def _new_reviewer_baseline(runtime, current, item_id, subject_digest, node, reviewer_id):
-    if not runtime.capabilities.stable_direct_run_identity:
-        raise PlatformError(
-            "Reviewer recovery requires stable direct Run identity support")
-    identity = _delivery_identity(current)
-    cutoff = (
-        parse_platform_time(identity.verification_created_at)
-        if identity is not None else None
-    )
-    if identity is None or not identity.is_complete() or cutoff is None or cutoff.tzinfo is None:
-        raise PlatformError(
-            "Reviewer dispatch requires a sealed delivery verification time")
-    baseline_ids, _ = bounded_direct_run_baseline(
-        runtime.list_runs(item_id),
-        gate_cutoff_created_at=identity.verification_created_at)
-    return ReviewerRunBaseline(
-        schema=REVIEWER_RUN_BASELINE_SCHEMA,
-        subject_digest=subject_digest,
-        target_reviewer=node.reviewer,
-        target_agent_id=reviewer_id,
-        cutoff_created_at=identity.verification_created_at,
-        generation=f"review-{secrets.token_hex(8)}",
-        baseline_direct_run_ids=baseline_ids,
-    )
+    decision = decide_dispatch_baseline(DispatchBaselineObservation(
+        subject_digest=subject_digest, reviewer=node.reviewer, reviewer_id=reviewer_id,
+        identity=_delivery_identity(current),
+        stable_run_identity=runtime.capabilities.stable_direct_run_identity,
+        direct_runs=tuple(runtime.list_runs(item_id))), generation=f"review-{secrets.token_hex(8)}")
+    if decision.action is BaselineAction.UNAVAILABLE:
+        raise PlatformError(decision.reason)
+    return decision.baseline
 
 
 def _observe_prepared_reviewer_assignment(store, runtime, item_id, reviewer_id, baseline) -> None:
@@ -3843,93 +3759,72 @@ def _observe_reviewer_run(c: _Collect, n: _Node) -> bool:
         cutoff_created_at=baseline.cutoff_created_at,
         target_run_id=baseline.target_run_id,
         attempt=baseline.attempt)
-    if observed.state == "unexpected":
+    decision = decide_reviewer_run(RunObservation(
+        observed=observed, attempt=baseline.attempt,
+        in_review_unassigned=(
+            n.item.status == WorkItemStatus.IN_REVIEW and n.item.phase == TaskPhase.REVIEW
+            and not n.item.reviewer and not n.item.platform_assignee_id)))
+    if decision.action is RunAction.BLOCK_BASELINE_UNAVAILABLE:
         c.failures[key] = _block_reviewer(
             c.store, c.manifest, c.manifest_path, key, n.item,
-            "reviewer-run-baseline-unavailable", observed.detail)
+            "reviewer-run-baseline-unavailable", decision.detail)
         return True
     if observed.target_run_id != baseline.target_run_id:
-        baseline = replace(
-            baseline, target_run_id=observed.target_run_id)
+        baseline = replace(baseline, target_run_id=observed.target_run_id)
         apply([
             UpdateMetadata(n.item.id, {'reviewer_run_baseline': baseline}),
         ], Ports(store=c.store))
-    if (
-        observed.state == "missing" and baseline.attempt > 1
-        and baseline.target_run_id is None
-    ):
+    if decision.action is RunAction.BLOCK_DISPATCH_UNRESOLVED:
         c.failures[key] = _block_reviewer(
             c.store, c.manifest, c.manifest_path, key, n.item,
-            "reviewer-run-dispatch-unresolved",
-            "persisted retry generation has no target Run")
+            "reviewer-run-dispatch-unresolved", decision.detail)
         return True
-    if (
-        observed.state == "missing"
-        and baseline.attempt == 1
-        and baseline.target_run_id is None
-        and n.item.status == WorkItemStatus.IN_REVIEW
-        and n.item.phase == TaskPhase.REVIEW
-        and not n.item.reviewer
-        and not n.item.platform_assignee_id
-    ):
+    if decision.action is RunAction.QUEUE_INITIAL_DISPATCH:
         # A current subject can be prepared without dispatching.
         # Reuse guarded initial dispatch; assigned or bound
         # attempts stay on their existing observation path.
         c.pending_review.append(
             (key, node.work_item_id, node.reviewer))
         return True
-    reviewer_terminal = observed.terminal
-    retry_kind = None
-    if reviewer_terminal:
-        dispatch_block = _guard_reviewer_dispatch_control(
-            c.store, c.manifest, key, n.item.id)
-        if dispatch_block is not None:
-            c.failures[key] = dispatch_block
-            return True
-    if reviewer_terminal and reviewer_terminal.outcome != "finished-without-submit":
-        reviewer_failure = RunFailure(
-            reviewer_terminal.run,
-            (
-                "transient"
-                if reviewer_terminal.outcome == "transient-failure"
-                else "nonretryable"
-            ),
-            reviewer_terminal.consecutive_runs,
+    if decision.action is RunAction.WAIT:
+        return False
+    dispatch_block = _guard_reviewer_dispatch_control(
+        c.store, c.manifest, key, n.item.id)
+    if dispatch_block is not None:
+        c.failures[key] = dispatch_block
+        return True
+    if decision.action is RunAction.BLOCK_RUNTIME_FAILURE:
+        c.failures[key] = (
+            _block_runtime_failure(
+                c.store, c.manifest, c.manifest_path, key, n.item,
+                "reviewer", decision.failure)
         )
-        if (
-            reviewer_failure.classification == "nonretryable"
-            or reviewer_failure.exhausted
-        ):
-            c.failures[key] = (
-                _block_runtime_failure(
-                    c.store, c.manifest, c.manifest_path, key, n.item,
-                    "reviewer", reviewer_failure)
-            )
-            return True
+        return True
+    if decision.action is RunAction.RETRY_INFRASTRUCTURE:
         time.sleep(_TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS)
         retry_kind = "infrastructure_retry"
-    elif reviewer_terminal:
-        grace_state = _reviewer_no_submit_grace_state(
-            c.store, c.runtime, n.item, baseline, reviewer_terminal)
-        if grace_state in {"submitted", "waiting"}:
+    else:
+        reviewer_terminal = observed.terminal
+        no_submit = decide_no_submit(
+            _reviewer_no_submit_grace_state(
+                c.store, c.runtime, n.item, baseline, reviewer_terminal),
+            consecutive_runs=reviewer_terminal.consecutive_runs, budget=c.no_submit_runs)
+        if no_submit is NoSubmitAction.WAIT:
             return True
-        if grace_state == "blocked":
+        if no_submit is NoSubmitAction.STOP_BLOCKED:
             dispatch_block = _guard_reviewer_dispatch_control(
                 c.store, c.manifest, key, n.item.id)
             if dispatch_block is not None:
                 c.failures[key] = dispatch_block
             return True
-        if grace_state == "unavailable":
+        if no_submit is NoSubmitAction.BLOCK_TERMINAL_TIME_UNAVAILABLE:
             c.failures[key] = _block_reviewer(
                 c.store, c.manifest, c.manifest_path, key, n.item,
                 "reviewer-run-terminal-time-unavailable",
                 "terminal timestamp is unavailable",
                 reviewer_terminal.run.id)
             return True
-        if (
-            reviewer_terminal.consecutive_runs
-            >= c.no_submit_runs
-        ):
+        if no_submit is NoSubmitAction.BLOCK_EXHAUSTED:
             c.failures[key] = _block_reviewer(
                 c.store, c.manifest, c.manifest_path, key, n.item,
                 "reviewer-run-no-submit-retry-exhausted",
@@ -3938,34 +3833,32 @@ def _observe_reviewer_run(c: _Collect, n: _Node) -> bool:
                 reviewer_terminal.run.id)
             return True
         retry_kind = "finished_without_submit"
-    if retry_kind:
-        dispatch_block = _guard_reviewer_dispatch_control(
-            c.store, c.manifest, key, n.item.id)
-        if dispatch_block is not None:
-            c.failures[key] = dispatch_block
-            return True
-        retry_error = _retry_reviewer_attempt(
-            c.store, c.runtime, node, n.item, baseline,
-            manifest=c.manifest, key=key)
-        if retry_error:
-            if c.manifest.nodes[key].status == "blocked":
-                c.failures[key] = ui(
-                    "Reviewer dispatch is blocked by the existing decision or platform status.",
-                    "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
-                )
-                return True
-            c.failures[key] = _block_reviewer(
-                c.store, c.manifest, c.manifest_path, key, n.item,
-                "reviewer-run-dispatch-unresolved", retry_error)
-            return True
-        set_node(c.manifest, key, status="in_review")
-        log.info(
-            logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND,
-            node=key, id=node.work_item_id,
-            reviewer=node.reviewer, recovered=True,
-            **{retry_kind: True})
+    dispatch_block = _guard_reviewer_dispatch_control(
+        c.store, c.manifest, key, n.item.id)
+    if dispatch_block is not None:
+        c.failures[key] = dispatch_block
         return True
-    return False
+    retry_error = _retry_reviewer_attempt(
+        c.store, c.runtime, node, n.item, baseline,
+        manifest=c.manifest, key=key)
+    if retry_error:
+        if c.manifest.nodes[key].status == "blocked":
+            c.failures[key] = ui(
+                "Reviewer dispatch is blocked by the existing decision or platform status.",
+                "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
+            )
+            return True
+        c.failures[key] = _block_reviewer(
+            c.store, c.manifest, c.manifest_path, key, n.item,
+            "reviewer-run-dispatch-unresolved", retry_error)
+        return True
+    set_node(c.manifest, key, status="in_review")
+    log.info(
+        logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND,
+        node=key, id=node.work_item_id,
+        reviewer=node.reviewer, recovered=True,
+        **{retry_kind: True})
+    return True
 
 
 def _review_without_verdict(c: _Collect, n: _Node) -> None:

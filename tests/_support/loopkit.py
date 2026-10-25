@@ -90,6 +90,10 @@ class Kit:
             time.sleep(0.4)
         raise AssertionError(f"DAG still running after {timeout}s: {result}")
 
+    def tick_until(self, manifest, path, predicate, *, timeout=60.0, what="condition", **kwargs):
+        """Tick (idempotent) until ``predicate()`` holds; real Runs and the clock advance between ticks."""
+        return self.wait_for(lambda: (self.tick(manifest, path, **kwargs), predicate())[1], timeout=timeout, what=what)
+
     def wait_for(self, predicate: Callable[[], Any], *, timeout=30.0, what="condition"):
         deadline = time.time() + timeout
         while time.time() < deadline:
