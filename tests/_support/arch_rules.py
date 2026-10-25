@@ -25,6 +25,7 @@ SUBPROCESS_ALLOWED = {
     "src/omac/cli/commands/init_cmd.py",
 }
 ENGINES_PREFIX = "src/omac/engines/"
+FUNCTION_LINES_MAX = 150
 
 
 _parse = functools.lru_cache(maxsize=None)(ast.parse)  # every rule walks the same ~80 modules
@@ -120,6 +121,14 @@ def engine_assembly(path: str, source: str) -> list[str]:
     return [f"{path}:{n.lineno}: create_engine called outside engines/ (use engine_from_config)"
             for n in ast.walk(_parse(source))
             if isinstance(n, ast.Call) and _tail(n.func) == "create_engine"]
+
+
+def function_length(path: str, source: str) -> list[str]:
+    """No function or method in src/omac is longer than FUNCTION_LINES_MAX lines."""
+    return [f"{path}:{n.lineno}: {n.name} is {n.end_lineno - n.lineno + 1} lines (max {FUNCTION_LINES_MAX})"
+            for n in ast.walk(_parse(source))
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.end_lineno - n.lineno + 1 > FUNCTION_LINES_MAX]
 
 
 def decide_imports(path: str, source: str) -> list[str]:
