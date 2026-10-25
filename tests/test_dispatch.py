@@ -386,8 +386,8 @@ class TestRenderIssueBody:
         """Multica PR 自动关联靠 issue key,worker body 必须把该约束前置。"""
         n = Node(id="n", worker="alice", contract=_full_contract())
         body = render_issue_body(
-            n, n.contract, TaskKind.DEVELOP, "uuid-1", issue_key="AITEAM-762")
-        assert "AITEAM-762" in body
+            n, n.contract, TaskKind.DEVELOP, "uuid-1", issue_key="PROJ-762")
+        assert "PROJ-762" in body
         assert "PR 关联标识" in body
 
     def test_bootstrap_can_include_engine_env_for_no_checkout_runtime(self):
@@ -431,7 +431,7 @@ class TestRenderIssueBody:
         env = {
             "OMAC_ENGINE": "multica",
             "OMAC_WORKSPACE_ID": "ws-1",
-            "OMAC_WORKSPACE_SLUG": "guantik-aiteam",
+            "OMAC_WORKSPACE_SLUG": "acme-team",
         }
 
         body = render_issue_body(

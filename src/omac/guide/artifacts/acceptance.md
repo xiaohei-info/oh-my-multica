@@ -75,7 +75,7 @@ flows:
 
 历史 `omac.acceptance/v1` 仍可读取：OMAC 把正文中明确携带 `Action ID=...` 的记录视为
 `business-action`，其余记录视为 `flow-step`，并以 `<flow-id>/STEP-<序号>` 生成稳定步骤身份。
-这是旧 OAC 文档中 495 个业务 Action 的既有口径，不使用 `ACT-` 前缀猜测。新产物不得依赖兼容推断，
+这是 v1 文档既有的口径，不使用 `ACT-` 前缀猜测。新产物不得依赖兼容推断，
 必须直接写 `action.id` 与 `action.kind`。
 
 ## 常见错误 → 修正

@@ -7,7 +7,7 @@ license: MIT
 metadata:
   hermes:
     tags: [software, development, meta, routing]
-    related_skills: [software-design-patterns-and-refactoring, software-ddd-domain-modeling, software-aiteam-worktree-lifecycle-governance]
+    related_skills: [software-design-patterns-and-refactoring, software-ddd-domain-modeling]
 ---
 
 # Software Development (Meta Skill)
@@ -20,7 +20,6 @@ This is the top-level entry point for the software development skill family. It 
 |------|-----------|
 | Pre-code structural guidance (design patterns, refactoring) | `software-design-patterns-and-refactoring` |
 | DDD domain modeling (bounded contexts, aggregates) | `software-ddd-domain-modeling` |
-| Git worktree lifecycle governance | `software-aiteam-worktree-lifecycle-governance` |
 | Kanban task splitting from acceptance specs | `software-acceptance-driven-kanban-splitting` |
 | s6-overlay container supervision | `software-hermes-s6-container-supervision` |
 | Project direction governance | `software-project-governance-and-repositioning` |

@@ -16,7 +16,7 @@ def test_scope_gap_rejects_mutation_of_shared_store_object(during_run_read):
     workspace = "scope-gap-shared-snapshot"
     engine = create_engine("mock", EngineConfig("mock", workspace, extra={"MOCK_AUTO_COMPLETE": "false"}))
     item = engine.store.create_work_item(
-        workspace, "assessment", "Offline Source assessment", "amend-owner-" + "a" * 64,
+        workspace, "assessment", "Offline Source assessment", "amend-assessment",
         "alice", kind=TaskKind.AMENDMENT,
     )
     item.status = WorkItemStatus.IN_PROGRESS

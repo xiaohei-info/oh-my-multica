@@ -352,14 +352,14 @@ def test_multica_maps_current_and_ledger_review_generations():
             "dag_key": "contracts-platform-resource-schema",
             "kind": "develop",
             "phase": "authoring",
-            "review_generation": "amendment-aiteam-850",
-            "review_ledger_generation": "review-aiteam-849",
+            "review_generation": "amendment-proj-850",
+            "review_ledger_generation": "review-legacy-convergence",
             "bounce_baseline": '{"worker":14,"review":3,"merge":0}',
         },
     }, "ws").work_item
 
-    assert item.review_generation == "amendment-aiteam-850"
-    assert item.review_ledger_generation == "review-aiteam-849"
+    assert item.review_generation == "amendment-proj-850"
+    assert item.review_ledger_generation == "review-legacy-convergence"
     assert item.bounce_baseline == {"worker": 14, "review": 3, "merge": 0}
 
 
@@ -392,7 +392,7 @@ def test_authoring_generation_tombstone_hides_legacy_inline_review_report(
     monkeypatch.setattr(store, "get_work_item", lambda _item_id: SimpleNamespace())
 
     store.restore_authoring_generation(
-        item_id, {"objective": "amended"}, "amendment-aiteam-850")
+        item_id, {"objective": "amended"}, "amendment-proj-850")
 
     # restore 现在逐键经 `issue metadata set` 写入;在服务端侧合并被写入的键。
     projected = dict(old_metadata)
@@ -431,7 +431,7 @@ def test_multica_restore_writes_metadata_via_metadata_set_not_issue_put(
         "review_report_ref": '{"attachment_id":"report-849"}',
         "review_ledger_ref": json.dumps(
             {"attachment_id": "ledger-849", "sha256": "a" * 64}),
-        "review_ledger_generation": "review-aiteam-849",
+        "review_ledger_generation": "review-legacy-convergence",
         "review_continuation": '{"authorized_through_round":6}',
         "worker_handoff": '{"schema":"omac.worker-handoff/v1"}',
     }
@@ -439,7 +439,7 @@ def test_multica_restore_writes_metadata_via_metadata_set_not_issue_put(
     put_bodies = []
     metadata_sets = []
     expected = SimpleNamespace(
-        id=item_id, review_generation="amendment-aiteam-850")
+        id=item_id, review_generation="amendment-proj-850")
     monkeypatch.setattr(
         store, "_publish_payload_comment",
         lambda *_args, **_kwargs: dict(contract_ref))
@@ -459,7 +459,7 @@ def test_multica_restore_writes_metadata_via_metadata_set_not_issue_put(
     result = store.restore_authoring_generation(
         item_id,
         {"objective": "amended contract"},
-        "amendment-aiteam-850",
+        "amendment-proj-850",
         {"worker": 14, "review": 3, "merge": 0},
     )
 
@@ -480,7 +480,7 @@ def test_multica_restore_writes_metadata_via_metadata_set_not_issue_put(
         key: value for set_id, key, value in metadata_sets
         if set_id == item_id
     }
-    assert written["review_generation"] == "amendment-aiteam-850"
+    assert written["review_generation"] == "amendment-proj-850"
     assert written["bounce_baseline"] == {
         "worker": 14, "review": 3, "merge": 0}
     assert written["contract_ref"] == contract_ref
@@ -522,14 +522,14 @@ def test_multica_restore_rerun_skips_already_matching_metadata(monkeypatch):
         "review_continuation": "{}",
         "worker_handoff": "{}",
         "delivery_identity": "{}",
-        "review_generation": "amendment-aiteam-850",
+        "review_generation": "amendment-proj-850",
         "bounce_baseline": json.dumps(
             {"worker": 14, "review": 3, "merge": 0}),
         "contract_ref": json.dumps(contract_ref),
         "reviewer": "",
         "review_ledger_ref": json.dumps(
             {"attachment_id": "ledger-849", "sha256": "a" * 64}),
-        "review_ledger_generation": "review-aiteam-849",
+        "review_ledger_generation": "review-legacy-convergence",
     }
     put_bodies = []
     metadata_sets = []
@@ -552,7 +552,7 @@ def test_multica_restore_rerun_skips_already_matching_metadata(monkeypatch):
     store.restore_authoring_generation(
         item_id,
         {"objective": "amended contract"},
-        "amendment-aiteam-850",
+        "amendment-proj-850",
         {"worker": 14, "review": 3, "merge": 0},
     )
 
@@ -1493,7 +1493,7 @@ def test_multica_description_resolve_timeout_uses_direct_exact_update(monkeypatc
     )
 
     store.update_work_item_metadata(
-        "00000000-0000-0000-0000-000000000000",
+        "00000000-0000-4000-8000-000000000001",
         worker="bob",
         description="compact body",
     )
@@ -1501,7 +1501,7 @@ def test_multica_description_resolve_timeout_uses_direct_exact_update(monkeypatc
     assert events == [
         (
             "direct-description",
-            "00000000-0000-0000-0000-000000000000",
+            "00000000-0000-4000-8000-000000000001",
             "compact body",
         ),
         ("metadata", "worker"),
@@ -1530,7 +1530,7 @@ def test_direct_description_update_keeps_token_out_of_process_args(
     monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
 
     store._put_issue_description_direct(
-        "00000000-0000-0000-0000-000000000000",
+        "00000000-0000-4000-8000-000000000001",
         "compact body",
     )
 
@@ -1559,7 +1559,7 @@ def test_confirmed_merge_normalization_is_one_atomic_suppressed_update(
     monkeypatch.setattr("omac.engines.multica.subprocess.run", run)
 
     store.normalize_confirmed_merge(
-        "00000000-0000-0000-0000-000000000000")
+        "00000000-0000-4000-8000-000000000001")
 
     assert observed == [{
         "status": "done",
@@ -1749,7 +1749,7 @@ def test_multica_issue_identifier_is_exposed_on_work_item():
     item = store._issue_to_work_item(
         {
             "id": "issue-1",
-            "identifier": "AITEAM-762",
+            "identifier": "PROJ-762",
             "title": "t",
             "description": "d",
             "status": "todo",
@@ -1758,7 +1758,7 @@ def test_multica_issue_identifier_is_exposed_on_work_item():
         "ws",
     )
 
-    assert item.identifier == "AITEAM-762"
+    assert item.identifier == "PROJ-762"
 
 
 def test_multica_review_report_source_writes_ref_without_full_report_metadata(monkeypatch):
@@ -3362,7 +3362,7 @@ def test_multica_runtime_treats_current_nonterminal_statuses_as_active(
         "id": "b8e84b2e-ab15-40e2-a67a-7245cac713c0",
         "kind": "direct",
         "status": status,
-        "agent_id": "00000000-0000-0000-0000-000000000000",
+        "agent_id": "00000000-0000-4000-8000-000000000002",
         "created_at": "2026-08-02T23:40:05Z",
         "dispatched_at": "2026-08-02T23:40:05.348Z",
         "started_at": None,
@@ -3575,7 +3575,7 @@ def test_multica_silent_reviewer_assignment_uses_suppressed_update(
 ):
     """Reviewer identity is assigned without letting UpdateIssue resume a session."""
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    item_id = "00000000-0000-0000-0000-000000000000"
+    item_id = "00000000-0000-4000-8000-000000000001"
     config_path = tmp_path / "config.json"
     config_path.write_text(
         '{"server_url":"https://api.example.test","token":"secret-token"}',
@@ -3619,7 +3619,7 @@ def test_multica_silent_reviewer_assignment_then_wake_avoids_active_duplicate(
 ):
     """A silent handoff still lets runtime.wake preserve active-Run idempotency."""
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    item_id = "00000000-0000-0000-0000-000000000000"
+    item_id = "00000000-0000-4000-8000-000000000001"
     config_path = tmp_path / "config.json"
     config_path.write_text(
         '{"server_url":"https://api.example.test","token":"secret-token"}',
@@ -3661,7 +3661,7 @@ def test_multica_silent_initial_reviewer_handoff_wakes_with_fresh_rerun(
 ):
     """The first reviewer Run is created by issue rerun without a task id."""
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
-    item_id = "00000000-0000-0000-0000-000000000000"
+    item_id = "00000000-0000-4000-8000-000000000001"
     config_path = tmp_path / "config.json"
     config_path.write_text(
         '{"server_url":"https://api.example.test","token":"secret-token"}',
@@ -4037,9 +4037,24 @@ def test_multica_readiness_malformed_payload_fails_closed(monkeypatch, payload):
     assert isinstance(result, PullRequestReadinessFailure)
 
 
+def _rejected_ledger_and_report():
+    from omac.core.review_convergence import advance_review_ledger, build_review_obligations
+    from test_review_convergence import _item, _report
+
+    blocker = {
+        "root_cause_key": "stale-release-lineage", "obligation_id": "dimension:structure",
+        "classification": "new", "owner": "owner-a", "summary": "stale release lineage",
+        "evidence": "the artifact predates the reviewed head", "required_fix": "rebuild from the reviewed head",
+    }
+    report = _report(build_review_obligations(_item()), blockers=[blocker], failed=("dimension:structure",))
+    ledger = advance_review_ledger(
+        None, report, verdict="reject", subject_digest="subject-1", round_index=1)
+    return ledger, report
+
+
 @pytest.mark.parametrize("mode", ["authoring", "review", "retired", "invalid", "wrong-report", "mismatched-subject"])
 def test_rework_recovery_after_reset_uses_valid_current_ledger_subject(monkeypatch, mode):
-    ledger = yaml.safe_load((Path(__file__).parent / "fixtures/executor_reject_ledger.yaml").read_text())
+    ledger, report = _rejected_ledger_and_report()
     if mode == "invalid":
         ledger["cycles"][-1]["round"] = 99
     store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
@@ -4051,7 +4066,6 @@ def test_rework_recovery_after_reset_uses_valid_current_ledger_subject(monkeypat
     )
     monkeypatch.setattr(store, "get_work_item", lambda _: item)
     calls = []
-    report = yaml.safe_load((Path(__file__).parent / "fixtures/executor_reject_report.yaml").read_text())
     if mode == "wrong-report":
         report["blockers"][0]["required_fix"] = "different review"
     comments = [{"id": "comment", "content": "", "attachments": [{
@@ -4064,7 +4078,7 @@ def test_rework_recovery_after_reset_uses_valid_current_ledger_subject(monkeypat
         assert recovered["verdict"] == "reject"
         assert recovered["subject_digest"] == ledger["cycles"][-1]["subject_digest"]
         assert recovered["report_ref"]["attachment_id"] == "report"
-        assert recovered["blockers"][0]["root_cause_key"] == "platform-resource-stale-release-artifact-lineage"
+        assert recovered["blockers"][0]["root_cause_key"] == "stale-release-lineage"
     else:
         assert recovered == {}
     assert bool(calls) == (mode in {"authoring", "wrong-report"})

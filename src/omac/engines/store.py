@@ -519,19 +519,6 @@ class WorkItemStore(ABC):
     ) -> VerificationAttachmentObservation:
         """独立读取 verification 附件平台归属，并对下载字节重新计算摘要。"""
 
-    def read_immutable_artifact(self, url: str) -> bytes:
-        """Read a supported immutable published artifact; unsupported engines fail closed."""
-        raise PlatformError("This Store cannot independently read immutable published artifacts")
-
-
-    def publish_source_artifact(self, item_id: str, content: bytes) -> Dict[str, Any]:
-        """Publish a bounded immutable source chunk before any Agent assignment."""
-        raise PlatformError("This Store cannot publish portable owner source artifacts")
-
-    def read_source_artifact(self, ref: Dict[str, Any]) -> bytes:
-        """Read an exact native source locator; arbitrary URLs are unsupported."""
-        raise PlatformError("This Store cannot read portable owner source artifacts")
-
     def observe_release_assets(self, urls: List[str], *, download: bool = True):
         """Read exact release/asset identities and optionally verify their bytes."""
         raise PlatformError("This Store cannot observe pinned release assets")

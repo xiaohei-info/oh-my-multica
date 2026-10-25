@@ -79,9 +79,8 @@ acceptance document complete.
 
 Legacy `omac.acceptance/v1` remains readable. A record with an explicit embedded
 `Action ID=...` is a `business-action`; every other record is a `flow-step` with
-the stable migration identity `<flow-id>/STEP-<index>`. This preserves the
-existing 495-business-Action OAC interpretation without inferring from an
-`ACT-` prefix. New artifacts write both `action.id` and `action.kind` directly.
+the stable migration identity `<flow-id>/STEP-<index>`. Identity is never
+inferred from an `ACT-` prefix. New artifacts write both `action.id` and `action.kind` directly.
 
 ## Common errors → corrections
 

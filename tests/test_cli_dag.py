@@ -434,7 +434,7 @@ class TestDagStatusCLI:
             yaml.dump({
                 "engine": "mock",
                 "workspace": "ws",
-                "workspace_slug": "guantik-aiteam",
+                "workspace_slug": "acme-team",
             }, f)
         path = _manifest_yaml(tmp_path, [
             {"id": "a", "worker": "alice", "status": "todo"},
@@ -447,7 +447,7 @@ class TestDagStatusCLI:
             "project": None,
         })())
 
-        assert engine.store.config.extra["workspace_slug"] == "guantik-aiteam"
+        assert engine.store.config.extra["workspace_slug"] == "acme-team"
 
     def test_table_output_default(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)

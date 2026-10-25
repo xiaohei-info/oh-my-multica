@@ -29,7 +29,10 @@ def pytest_runtest_makereport(item, call):
         seconds=call.duration, tmp_bytes=tmp_bytes, session_tmp_bytes=_session_tmp_bytes,
         rss_before=item.stash.get(_RSS_KEY, 0), rss_after=budget.peak_rss_bytes(),
         is_docker=item.get_closest_marker("docker") is not None)
-    if problems:
+    if problems and os.environ.get("OMAC_BUDGET_REPORT"):  # calibration: list overages instead of failing
+        with open(os.environ["OMAC_BUDGET_REPORT"], "a", encoding="utf-8") as out:
+            out.write(f"{item.nodeid}\t{'; '.join(problems)}\n")
+    elif problems:
         report.outcome = "failed"
         report.longrepr = "resource budget exceeded: " + "; ".join(problems)
 
@@ -56,11 +59,9 @@ def _reset_mock_state():
 
 
 @pytest.fixture
-def aiteam_849_legacy_snapshot():
-    path = Path(__file__).parent / "fixtures" / (
-        "aiteam_849_legacy_convergence_snapshot.yaml"
-    )
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+def legacy_convergence_snapshot():
+    from _support.samples import legacy_convergence_snapshot as build
+    return build()
 
 
 def seal_mock_delivery(store, item_id, pr_url, verification, *, phase=None):

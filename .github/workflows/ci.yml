@@ -12,8 +12,7 @@ jobs:
   test:
     name: pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    # Transitional until Phase 1 lands: the suite still carries incident tests. Back to 15 in Phase 1.
-    timeout-minutes: 180
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

@@ -681,8 +681,8 @@ def test_authoring_show_does_not_project_ledger_from_previous_review_generation(
         review_ledger_source=yaml.safe_dump(ledger, sort_keys=False),
     )
     current = store.get_work_item(item.id)
-    current.review_generation = "amendment-aiteam-850"
-    current.review_ledger_generation = "review-aiteam-849"
+    current.review_generation = "amendment-proj-850"
+    current.review_ledger_generation = "review-legacy-convergence"
 
     out = build_show_output(current, "worker:alice")
 
@@ -727,8 +727,8 @@ def test_review_submit_does_not_advance_raw_ledger_from_previous_generation(
     }
     store.update_work_item_metadata(
         item.id,
-        review_generation="amendment-aiteam-850",
-        review_ledger_generation="review-aiteam-849",
+        review_generation="amendment-proj-850",
+        review_ledger_generation="review-legacy-convergence",
         review_ledger=old_ledger,
         review_ledger_source=yaml.safe_dump(old_ledger),
         review_subject_digest="subject-new-generation",
@@ -753,7 +753,7 @@ def test_review_submit_does_not_advance_raw_ledger_from_previous_generation(
 
     assert observed == [None]
     current = store.get_work_item(item.id)
-    assert current.review_ledger_generation == "amendment-aiteam-850"
+    assert current.review_ledger_generation == "amendment-proj-850"
 
 
 def test_first_review_in_new_generation_starts_a_fresh_ledger(tmp_path):
@@ -909,9 +909,9 @@ def test_show_cli_json_output(tmp_path, monkeypatch, capsys):
 
 
 def test_work_show_legacy_convergence_snapshot_returns_structured_exit_20(
-    aiteam_849_legacy_snapshot, monkeypatch, capsys,
+    legacy_convergence_snapshot, monkeypatch, capsys,
 ):
-    snapshot = aiteam_849_legacy_snapshot["work_item"]
+    snapshot = legacy_convergence_snapshot["work_item"]
     store = _store()
     item = store.create_work_item(
         "mock-workspace",
@@ -1173,24 +1173,24 @@ def test_work_resolve_store_preserves_workspace_slug_from_config(tmp_path, monke
         yaml.safe_dump({
             "engine": "mock",
             "workspace": "mock-workspace",
-            "workspace_slug": "guantik-aiteam",
+            "workspace_slug": "acme-team",
         }, f)
 
     store = work_cmd._resolve_store()
 
-    assert store.config.extra["workspace_slug"] == "guantik-aiteam"
+    assert store.config.extra["workspace_slug"] == "acme-team"
 
 
 def test_develop_show_mentions_issue_key_for_pr_autolink():
     """有平台 issue key 时,work show 指导 worker 让 PR 自动关联到 Multica issue。"""
     store = _store()
     item = _make_item(store, TaskKind.DEVELOP, TaskPhase.AUTHORING)
-    item.identifier = "AITEAM-762"
+    item.identifier = "PROJ-762"
 
     out = build_show_output(item, f"worker:{item.worker}")
 
-    assert out["task"]["issue_key"] == "AITEAM-762"
-    assert "AITEAM-762" in out["protocol"]
+    assert out["task"]["issue_key"] == "PROJ-762"
+    assert "PROJ-762" in out["protocol"]
     assert "branch name, title, or body" in out["protocol"]
 
 
@@ -1871,7 +1871,7 @@ class TestSubmitPerKindPhase:
             "mock-workspace", "t", "d", dag_key="a", worker="alice",
             kind=dispatch_mod.TaskKind.DEVELOP,
         )
-        item.identifier = "AITEAM-762"
+        item.identifier = "PROJ-762"
         eng.store.set_node_contract(item.id, CONTRACT)
         vfile = tmp_path / "verification.yaml"
         vfile.write_text(yaml.safe_dump(_make_verification()))

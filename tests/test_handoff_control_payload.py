@@ -3,10 +3,10 @@
 from copy import deepcopy
 import hashlib
 import json
-from pathlib import Path
 
 import pytest
 
+from _support import samples
 from omac.engines.multica import MulticaStore
 from omac.engines.models import EngineConfig
 from omac.errors import PlatformError
@@ -14,11 +14,8 @@ from omac.errors import PlatformError
 
 @pytest.fixture
 def case(monkeypatch):
-    folder = Path(__file__).parent / "fixtures"
-    metadata = json.loads(
-        (folder / "convergence_metadata_before_handoff.json").read_text()
-    )
-    intent = json.loads((folder / "convergence_failed_handoff.json").read_text())
+    metadata = samples.control_metadata_before_handoff()
+    intent = samples.failed_handoff_intent()
     store = MulticaStore(EngineConfig("multica", "ws"))
     bodies = {}
     writes = []
@@ -83,7 +80,7 @@ def case(monkeypatch):
     return store, metadata, intent, bodies, writes, publications, issue
 
 
-def test_real_total_limit_fixture_roundtrips_complete_intent_without_other_changes(
+def test_near_limit_metadata_roundtrips_complete_intent_without_other_changes(
     case,
 ):
     store, metadata, intent, bodies, writes, publications, issue = case

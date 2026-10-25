@@ -129,15 +129,15 @@ def test_stage_recovery_retires_the_previous_assignment(stage):
     assert recovered.reviewer is None
 
 
-def test_authoring_recovery_hides_aiteam_849_review_control_but_keeps_audit(
-    aiteam_849_legacy_snapshot,
+def test_authoring_recovery_hides_legacy_convergence_review_control_but_keeps_audit(
+    legacy_convergence_snapshot,
 ):
     """新 authoring 世代不得继续消费 amendment 前的 convergence 控制事实。"""
-    snapshot = aiteam_849_legacy_snapshot["work_item"]
+    snapshot = legacy_convergence_snapshot["work_item"]
     engine = _engine()
     item = engine.store.create_work_item(
         "ws",
-        "AITEAM-849",
+        "PROJ-849",
         "redacted production snapshot",
         dag_key=snapshot["dag_key"],
         worker=snapshot["worker_handoff"]["target_worker"],
@@ -1754,38 +1754,41 @@ def test_responsibility_operation_stays_compact_for_145_large_contracts(tmp_path
     assert len(rendered.encode("utf-8")) < 150_000
 
 
-_OAC_MANIFEST = Path(
-    "/workspace/code/ai/open-agent-cluster/.omac/open-agent-cluster.yaml")
+def _done_node_manifest(tmp_path):
+    path = tmp_path / "done.yaml"
+    path.write_text(yaml.safe_dump({
+        "meta": {"name": "done-demo"},
+        "nodes": [{
+            "id": "baseline", "worker": "alice", "reviewer": "bob", "blocked_by": [],
+            "work_item_id": "7", "status": "done", "merged": True,
+            "merged_at": "2026-01-01T00:00:00Z", "merge_request_state": "merged",
+            "contract": {
+                "objective": "baseline", "source_of_truth": ["docs/design.md"],
+                "acceptance": ["UJ-LEGACY-1"], "non_goals": ["feature work"],
+                "verification_commands": ["pytest -q"],
+                "integration_gates": [{
+                    "name": "baseline-gate", "layer": "L1", "delivery_goal": "baseline holds",
+                    "source_of_truth": ["docs/design.md"], "covers": ["baseline"],
+                    "acceptance_refs": ["UJ-LEGACY-1"], "commands": ["pytest -q"],
+                }],
+                "pr_base": "main", "scope_paths": ["src"],
+            },
+        }],
+    }, sort_keys=False))
+    return path
 
 
-@pytest.mark.skipif(not _OAC_MANIFEST.exists(), reason="local OAC regression input is unavailable")
-@pytest.mark.integration
-def test_real_oac_done_node_historical_responsibility_correction_is_facts_only(tmp_path, monkeypatch):
-    from omac.core.state_transport import decode
-
-    raw = yaml.safe_load(decode(_OAC_MANIFEST.read_bytes()))
-    source = next(
-        node for node in raw["nodes"]
-        if node["id"] == "source-ownership-baseline-contract")
-    path = tmp_path / "oac.yaml"
-    path.write_text(yaml.safe_dump({"meta": {"name": "oac"}, "nodes": [source]}, sort_keys=False))
-    monkeypatch.chdir(_OAC_MANIFEST.parent.parent)
+def test_done_node_historical_responsibility_correction_is_facts_only(tmp_path, monkeypatch):
+    path = _done_node_manifest(tmp_path)
     manifest = load_manifest(str(path))
-    node = manifest.nodes["source-ownership-baseline-contract"]
+    node = manifest.nodes["baseline"]
     facts_before = {
         field: getattr(node, field)
-        for field in (
-            "work_item_id", "status", "merged", "merged_at", "merge_request_state",
-        )
+        for field in ("work_item_id", "status", "merged", "merged_at", "merge_request_state")
     }
     item = WorkItem(
-        id=node.work_item_id,
-        workspace_id="ws",
-        title="source ownership",
-        description="historical delivery",
-        status=WorkItemStatus.DONE,
-        dag_key="source-ownership-baseline-contract",
-    )
+        id=node.work_item_id, workspace_id="ws", title="baseline", description="historical delivery",
+        status=WorkItemStatus.DONE, dag_key="baseline")
     item.contract = copy.deepcopy(node.contract)
     item.contract_ref = {"sha256": "historical-contract"}
 
@@ -1799,39 +1802,27 @@ def test_real_oac_done_node_historical_responsibility_correction_is_facts_only(t
             assert item_id == item.id
             return item
 
+    refs = ["UJ-NEW-1", "UJ-NEW-2"]
     operation = {
-        "op": "update-responsibility",
-        "node": node.id,
-        "acceptance_claims": [
-            "UJ-PLATFORM-INSTALL-001", "UJ-OAC-UPGRADE-001",
-        ],
-        "acceptance_contributions": [],
-        "acceptance_refs": [
-            "UJ-PLATFORM-INSTALL-001", "UJ-OAC-UPGRADE-001",
-        ],
+        "op": "update-responsibility", "node": node.id,
+        "acceptance_claims": refs, "acceptance_contributions": [], "acceptance_refs": refs,
         "clear_legacy_acceptance": True,
-        "integration_gate_responsibility_patches": [{
-            "name": "source-ownership-baseline-contract-gate",
-            "acceptance_refs": [
-                "UJ-PLATFORM-INSTALL-001", "UJ-OAC-UPGRADE-001",
-            ],
-        }],
+        "integration_gate_responsibility_patches": [{"name": "baseline-gate", "acceptance_refs": refs}],
         "historical_contract_correction": True,
-        "reason": "Migrate the actual OAC legacy acceptance ownership contract",
+        "reason": "Migrate the legacy acceptance ownership contract",
     }
     reviewed = build_reviewed_amendment(
         manifest, _proposal(operation), HistoricalStore(),
-        issue_id="oac-amendment", reviewer_verdict="pass")
+        issue_id="amendment-issue", reviewer_verdict="pass")
     monkeypatch.setattr(
         amendment_mod, "prepare_stage_recovery",
-        lambda *_args, **_kwargs: pytest.fail("actual OAC historical correction cannot recover a Store stage"),
-    )
+        lambda *_args, **_kwargs: pytest.fail("historical correction must not recover a Store stage"))
 
     first = apply_amendment(str(path), reviewed, HistoricalStore(), {node.worker, node.reviewer})
     updated = load_manifest(str(path)).nodes[node.id]
     assert {field: getattr(updated, field) for field in facts_before} == facts_before
     assert updated.contract.acceptance == []
-    assert updated.contract.acceptance_claims == operation["acceptance_claims"]
+    assert updated.contract.acceptance_claims == refs
     assert first["minimal_rerun"] == {"review": [], "authoring": [], "merging": []}
     assert load_manifest(str(path)).meta["amendment_apply"]["nodes"][node.id]["stage"] == (
         "historical_contract_correction")
@@ -2160,7 +2151,7 @@ def test_new_attempt_is_auditable_idempotent_and_preserves_old_issue(
     old = engine.store.create_work_item(
         "ws", "old amendment", "old confirmation", f"amend-{path.stem}", "alice",
         reviewer="bob", kind=TaskKind.AMENDMENT)
-    old.identifier = "AITEAM-811"
+    old.identifier = "PROJ-811"
     engine.store.update_work_item_metadata(
         old.id, deliverable="old proposal", review_verdict="pass",
         phase=TaskPhase.CONFIRMATION)
@@ -2217,8 +2208,8 @@ def test_new_attempt_is_auditable_idempotent_and_preserves_old_issue(
     assert attempt_issue.amendment_attempt["docs_sha256"]
     assert attempt_issue.source_refs == [{
         "issue_id": old.id,
-        "issue_key": "AITEAM-811",
-        "label": "superseded amendment AITEAM-811",
+        "issue_key": "PROJ-811",
+        "label": "superseded amendment PROJ-811",
         "kind": "amendment",
         "relation": "supersedes",
         "report_sha256": attempt_issue.amendment_attempt["report_sha256"],
@@ -2262,7 +2253,7 @@ def test_new_attempt_allows_blocked_decision_required_without_active_run(
     old = engine.store.create_work_item(
         "ws", "failed amendment", "authority conflict", "amend-old", "alice",
         kind=TaskKind.AMENDMENT)
-    old.identifier = "AITEAM-843"
+    old.identifier = "PROJ-843"
     engine.store.update_work_item_metadata(
         old.id,
         phase=TaskPhase.AUTHORING,
@@ -2318,7 +2309,7 @@ def test_new_attempt_allows_platform_finalized_decision_required_without_active_
     old = engine.store.create_work_item(
         "ws", "failed amendment", "authority conflict", "amend-old", "alice",
         kind=TaskKind.AMENDMENT)
-    old.identifier = "AITEAM-843"
+    old.identifier = "PROJ-843"
     engine.store.update_work_item_metadata(
         old.id,
         phase=TaskPhase.AUTHORING,
@@ -2515,7 +2506,7 @@ def test_docs_digest_is_recursive_order_independent_and_content_bound(tmp_path):
     assert reordered == first
     assert any(path.endswith("nested/detail.md") for path in first["docs_files"])
 
-    issue = SimpleNamespace(id="old", identifier="AITEAM-811")
+    issue = SimpleNamespace(id="old", identifier="PROJ-811")
     manifest = _manifest(project_root)
     first_attempt = amendment_pipeline._attempt_context(
         str(manifest), report="report", docs_snapshot=first,
@@ -2688,7 +2679,7 @@ def test_docs_digest_is_stable_across_cwd_and_relative_absolute_inputs(
     assert from_root["docs_files"] == [
         "docs/nested/detail.md", "docs/overview.md"]
 
-    superseded = SimpleNamespace(id="old", identifier="AITEAM-811")
+    superseded = SimpleNamespace(id="old", identifier="PROJ-811")
     attempts = [
         amendment_pipeline._attempt_context(
             str(manifest), report="report", docs_snapshot=snapshot,
@@ -2809,7 +2800,7 @@ def _apply_exhausted_stage_amendment(tmp_path, stage):
     return path, engine, item
 
 
-def _seed_aiteam_849_review_control(engine, item, snapshot):
+def _seed_legacy_convergence_review_control(engine, item, snapshot):
     decision = {
         "schema": DECISION_REQUIRED_SCHEMA,
         "reason_code": "review-convergence-ledger-unverifiable",
@@ -2850,13 +2841,13 @@ def _seed_aiteam_849_review_control(engine, item, snapshot):
 
 
 @pytest.mark.parametrize("checkpoint", ("before_switch", "after_switch"))
-def test_aiteam_849_authoring_generation_apply_is_restart_safe_and_idempotent(
-    tmp_path, monkeypatch, aiteam_849_legacy_snapshot, checkpoint,
+def test_legacy_convergence_authoring_generation_apply_is_restart_safe_and_idempotent(
+    tmp_path, monkeypatch, legacy_convergence_snapshot, checkpoint,
 ):
-    snapshot = aiteam_849_legacy_snapshot["work_item"]
+    snapshot = legacy_convergence_snapshot["work_item"]
     path, engine, item, reviewed = _stage_amendment_with_handoff(
         tmp_path, "authoring")
-    _seed_aiteam_849_review_control(engine, item, snapshot)
+    _seed_legacy_convergence_review_control(engine, item, snapshot)
     original_restore = engine.store.restore_authoring_generation
     crashed = False
 
@@ -2919,13 +2910,13 @@ def test_aiteam_849_authoring_generation_apply_is_restart_safe_and_idempotent(
     assert entry["observed"]["review_continuation_pending"] is False
 
 
-def test_runner_restart_after_aiteam_849_amendment_uses_fresh_worker_budget(
-    tmp_path, aiteam_849_legacy_snapshot,
+def test_runner_restart_after_legacy_convergence_amendment_uses_fresh_worker_budget(
+    tmp_path, legacy_convergence_snapshot,
 ):
-    snapshot = aiteam_849_legacy_snapshot["work_item"]
+    snapshot = legacy_convergence_snapshot["work_item"]
     path, engine, item, reviewed = _stage_amendment_with_handoff(
         tmp_path, "authoring")
-    _seed_aiteam_849_review_control(engine, item, snapshot)
+    _seed_legacy_convergence_review_control(engine, item, snapshot)
     apply_amendment(
         str(path), reviewed, engine.store, {"alice", "bob", "charlie"},
         acceptance=_responsibility_acceptance_doc(),
@@ -3201,20 +3192,20 @@ def test_already_applied_authoring_crash_resume_blocks_active_formal_run(
 
 
 def _legacy_synced_authoring_accept_fixture(
-    tmp_path, aiteam_849_legacy_snapshot,
+    tmp_path, legacy_convergence_snapshot,
 ):
-    snapshot = aiteam_849_legacy_snapshot["work_item"]
+    snapshot = legacy_convergence_snapshot["work_item"]
     path = _manifest(tmp_path)
     engine = _engine()
     target = engine.store.create_work_item(
         "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
     engine.store.set_node_contract(
         target.id, load_manifest(str(path)).nodes["bootstrap"].contract)
-    _seed_aiteam_849_review_control(engine, target, snapshot)
+    _seed_legacy_convergence_review_control(engine, target, snapshot)
     engine.store.update_work_item_metadata(target.id, worker_bounce=14)
     engine.store.update_status(target.id, WorkItemStatus.BLOCKED)
     amendment_issue = engine.store.create_work_item(
-        "ws", "amendment", "desc", "amend-aiteam-850", "alice",
+        "ws", "amendment", "desc", "amend-proj-850", "alice",
         reviewer="bob", kind=TaskKind.AMENDMENT)
     engine.store.update_work_item_metadata(
         amendment_issue.id,
@@ -3240,7 +3231,7 @@ def _legacy_synced_authoring_accept_fixture(
     entry["state"] = "synced"
     save_manifest(legacy, str(path))
 
-    _seed_aiteam_849_review_control(engine, target, snapshot)
+    _seed_legacy_convergence_review_control(engine, target, snapshot)
     current = engine.store.get_work_item(target.id)
     current.review_generation = None
     current.review_ledger_generation = None
@@ -3251,18 +3242,18 @@ def _legacy_synced_authoring_accept_fixture(
 
     reviewed["human_confirmation"] = "applied"
     reviewed["apply_result"] = {"legacy": True}
-    amendment_file = tmp_path / "aiteam-850.amendment.yaml"
+    amendment_file = tmp_path / "proj-850.amendment.yaml"
     amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
     engine.store.update_status(amendment_issue.id, WorkItemStatus.DONE)
     return path, amendment_file, engine, target, reviewed
 
 
 def test_same_legacy_synced_accept_repairs_missing_authoring_projection(
-    tmp_path, aiteam_849_legacy_snapshot,
+    tmp_path, legacy_convergence_snapshot,
 ):
     path, amendment_file, engine, target, reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
 
     result = amendment_pipeline.accept_amendment(
         engine,
@@ -3307,11 +3298,11 @@ def test_same_legacy_synced_accept_repairs_missing_authoring_projection(
 
 
 def test_synced_authoring_reobserves_stale_projection_with_expected_generation(
-    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+    tmp_path, monkeypatch, legacy_convergence_snapshot,
 ):
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     manifest = load_manifest(str(path))
     entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
     entry["expected_review_generation"] = amendment_mod._authoring_review_generation(
@@ -3345,11 +3336,11 @@ def test_synced_authoring_reobserves_stale_projection_with_expected_generation(
 
 
 def test_authoring_repair_noop_restore_does_not_mark_synced(
-    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+    tmp_path, monkeypatch, legacy_convergence_snapshot,
 ):
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     before = copy.deepcopy(engine.store.get_work_item(target.id))
     monkeypatch.setattr(engine.runtime, "list_runs", lambda _item_id: [])
     monkeypatch.setattr(
@@ -3376,11 +3367,11 @@ def test_authoring_repair_noop_restore_does_not_mark_synced(
 
 
 def test_legacy_authoring_repair_baseline_read_failure_has_no_side_effect(
-    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+    tmp_path, monkeypatch, legacy_convergence_snapshot,
 ):
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     legacy = load_manifest(str(path))
     legacy.meta["amendment_apply"]["nodes"]["bootstrap"].pop(
         "attempt_baseline", None)
@@ -3613,11 +3604,11 @@ def test_authoring_unknown_formal_run_blocks_first_accept(
 
 @pytest.mark.parametrize("checkpoint", ("before_switch", "after_switch"))
 def test_legacy_synced_authoring_repair_is_restart_safe(
-    tmp_path, monkeypatch, aiteam_849_legacy_snapshot, checkpoint,
+    tmp_path, monkeypatch, legacy_convergence_snapshot, checkpoint,
 ):
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     original_restore = engine.store.restore_authoring_generation
     crashed = False
 
@@ -3673,11 +3664,11 @@ def test_legacy_synced_authoring_repair_is_restart_safe(
 
 
 def test_legacy_synced_repair_fails_closed_for_active_formal_run(
-    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+    tmp_path, monkeypatch, legacy_convergence_snapshot,
 ):
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     before_manifest = path.read_bytes()
     before_item = copy.deepcopy(engine.store.get_work_item(target.id))
     active = AgentRunObservation(
@@ -3711,11 +3702,11 @@ def test_legacy_synced_repair_fails_closed_for_active_formal_run(
 @pytest.mark.parametrize("progress", ("delivery", "review"))
 @pytest.mark.parametrize("repair_state", ("synced", "repairing"))
 def test_legacy_synced_repair_does_not_rollback_progressed_work_item(
-    tmp_path, monkeypatch, aiteam_849_legacy_snapshot, progress, repair_state,
+    tmp_path, monkeypatch, legacy_convergence_snapshot, progress, repair_state,
 ):
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     manifest = load_manifest(str(path))
     entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
     if repair_state == "repairing":
@@ -3773,11 +3764,11 @@ def test_legacy_synced_repair_does_not_rollback_progressed_work_item(
 
 
 def test_legacy_synced_repair_first_reconcile_dispatches_one_worker(
-    tmp_path, aiteam_849_legacy_snapshot,
+    tmp_path, legacy_convergence_snapshot,
 ):
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     amendment_pipeline.accept_amendment(
         engine,
         str(path),
@@ -3800,7 +3791,7 @@ def test_legacy_synced_repair_first_reconcile_dispatches_one_worker(
 
 
 def test_recovery_normalizes_stale_in_progress_authoring_node_to_dispatchable(
-    tmp_path, aiteam_849_legacy_snapshot,
+    tmp_path, legacy_convergence_snapshot,
 ):
     """历史 dispatch 残留的 in_progress 节点恢复收敛后必须回到 todo。
 
@@ -3810,7 +3801,7 @@ def test_recovery_normalizes_stale_in_progress_authoring_node_to_dispatchable(
     """
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     manifest = load_manifest(str(path))
     manifest.nodes["bootstrap"].status = "in_progress"
     manifest.nodes["closeout"].status = "abandoned"
@@ -3838,12 +3829,12 @@ def test_recovery_normalizes_stale_in_progress_authoring_node_to_dispatchable(
 
 
 def test_recovery_reaccept_normalizes_stale_node_when_entry_already_synced(
-    tmp_path, aiteam_849_legacy_snapshot,
+    tmp_path, legacy_convergence_snapshot,
 ):
     """已 synced 的 authoring entry 在重入 accept 时仍要归一节点状态。"""
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     manifest = load_manifest(str(path))
     manifest.nodes["closeout"].status = "abandoned"
     save_manifest(manifest, str(path))
@@ -3873,7 +3864,7 @@ def test_recovery_reaccept_normalizes_stale_node_when_entry_already_synced(
 
 
 def test_reaccept_upgrades_legacy_baseline_when_work_item_at_recovery_target(
-    tmp_path, aiteam_849_legacy_snapshot,
+    tmp_path, legacy_convergence_snapshot,
 ):
     """synced entry 带着 legacy 残缺 baseline 重入时必须升级而非卡死。
 
@@ -3884,7 +3875,7 @@ def test_reaccept_upgrades_legacy_baseline_when_work_item_at_recovery_target(
     """
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     manifest = load_manifest(str(path))
     manifest.nodes["closeout"].status = "abandoned"
     save_manifest(manifest, str(path))
@@ -3928,12 +3919,12 @@ def test_reaccept_upgrades_legacy_baseline_when_work_item_at_recovery_target(
 
 
 def test_legacy_repair_upgrades_incomplete_baseline_when_syncing(
-    tmp_path, aiteam_849_legacy_snapshot,
+    tmp_path, legacy_convergence_snapshot,
 ):
     """repair 路径收敛 synced 时必须把残缺 baseline 升级为结构化快照。"""
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     manifest = load_manifest(str(path))
     entry = manifest.meta["amendment_apply"]["nodes"]["bootstrap"]
     entry["baseline"] = {
@@ -3962,12 +3953,12 @@ def test_legacy_repair_upgrades_incomplete_baseline_when_syncing(
 
 
 def test_reaccept_legacy_baseline_fails_closed_when_work_item_drifted(
-    tmp_path, aiteam_849_legacy_snapshot,
+    tmp_path, legacy_convergence_snapshot,
 ):
     """legacy baseline + WorkItem 已漂移时必须保持 fail-closed。"""
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     manifest = load_manifest(str(path))
     manifest.nodes["closeout"].status = "abandoned"
     save_manifest(manifest, str(path))
@@ -4002,11 +3993,11 @@ def test_reaccept_legacy_baseline_fails_closed_when_work_item_drifted(
 
 
 def test_worker_retry_log_distinguishes_absolute_and_generation_consumption(
-    tmp_path, aiteam_849_legacy_snapshot,
+    tmp_path, legacy_convergence_snapshot,
 ):
     path, amendment_file, engine, target, _reviewed = (
         _legacy_synced_authoring_accept_fixture(
-            tmp_path, aiteam_849_legacy_snapshot))
+            tmp_path, legacy_convergence_snapshot))
     amendment_pipeline.accept_amendment(
         engine,
         str(path),
@@ -5135,3 +5126,49 @@ def test_cli_amendment_forwards_new_attempt(tmp_path, monkeypatch):
     assert code == exit_codes.NEEDS_DECISION
     assert observed["new_attempt"] is True
     assert observed["supersedes_issue_id"] == "issue-old"
+
+
+# ---- validate_affected: the derived affected set must be safe to touch ----
+
+def _affected_case(tmp_path, decision=None):
+    path = _manifest(tmp_path)
+    manifest = load_manifest(str(path))
+    engine = _engine()
+    item = engine.store.create_work_item(
+        "ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    assert item.id == manifest.nodes["bootstrap"].work_item_id
+    item.decision_required = decision
+    return manifest, engine.store, _proposal({"op": "resume", "node": "bootstrap", "stage": "authoring"})
+
+
+def test_validate_affected_accepts_a_node_without_held_decision(tmp_path):
+    manifest, store, proposal = _affected_case(tmp_path)
+    amendment_mod.validate_affected(manifest, proposal, store)
+
+
+def test_validate_affected_rejects_a_node_holding_a_worker_decision(tmp_path):
+    manifest, store, proposal = _affected_case(
+        tmp_path, decision={"reason_code": "worker-decision-required"})
+    with pytest.raises(ValidationError, match="bootstrap.*unresolved worker decision"):
+        amendment_mod.validate_affected(manifest, proposal, store)
+
+
+def test_validate_affected_rejects_a_vanished_work_item(tmp_path, monkeypatch):
+    from omac.errors import WorkItemNotFoundError
+
+    manifest, store, proposal = _affected_case(tmp_path)
+
+    def gone(_item_id):
+        raise WorkItemNotFoundError("gone")
+
+    monkeypatch.setattr(store, "get_work_item", gone)
+    with pytest.raises(ValidationError, match="lost its work item"):
+        amendment_mod.validate_affected(manifest, proposal, store)
+
+
+def test_validate_affected_ignores_nodes_outside_the_derived_set(tmp_path):
+    manifest, store, proposal = _affected_case(
+        tmp_path, decision={"reason_code": "worker-decision-required"})
+    manifest.nodes["bootstrap"].work_item_id = "unrelated"
+    other = _proposal({"op": "resume", "node": "closeout", "stage": "authoring"})
+    amendment_mod.validate_affected(manifest, other, store)

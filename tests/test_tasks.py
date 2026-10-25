@@ -8,9 +8,7 @@
 from __future__ import annotations
 
 import copy
-import json
 from dataclasses import fields
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -64,11 +62,14 @@ def _poll():
     pass
 
 
-_MULTICA_AITEAM_812_FIXTURE = (
-    Path(__file__).resolve().parent
-    / "fixtures"
-    / "multica_issue_aiteam_812.json"
-)
+_MULTICA_PRISTINE_ISSUE = {
+    "id": "issue-pristine-1", "identifier": "PROJ-812",
+    "title": "[DAG:amend-project-attempt-standard-envelope] new amendment",
+    "description": "new amendment", "status": "todo", "metadata": {}, "assignee_type": None,
+    "creator_type": "member", "due_date": None, "labels": [], "number": 812,
+    "parent_issue_id": None, "position": -1, "priority": "none", "properties": {},
+    "stage": None, "start_date": None,
+}
 
 
 def _review_report(verdict="pass", item=None):
@@ -2208,7 +2209,7 @@ def test_new_attempt_finalizes_every_partial_shell_before_dispatch(
     dag_key = "amend-project-attempt-deadbeef"
     source_refs = [{
         "issue_id": "old-issue",
-        "issue_key": "AITEAM-811",
+        "issue_key": "PROJ-811",
         "relation": "supersedes",
         "report_sha256": "report-digest",
         "docs_sha256": "docs-digest",
@@ -2221,7 +2222,7 @@ def test_new_attempt_finalizes_every_partial_shell_before_dispatch(
         "docs_sha256": "docs-digest",
         "docs_file_count": 1,
         "supersedes_issue_id": "old-issue",
-        "supersedes_issue_key": "AITEAM-811",
+        "supersedes_issue_key": "PROJ-811",
     }
     payload = _payload(title="new amendment")
     spec = AuthoringTaskSpec(
@@ -2521,13 +2522,13 @@ _AMENDMENT_ACTIVITY_FIELD_CASES = [
 ]
 
 
-def _multica_aiteam_812_pristine_item(
+def _multica_pristine_item(
     eng,
     *,
     issue_overrides=None,
     metadata_overrides=None,
 ):
-    issue = json.loads(_MULTICA_AITEAM_812_FIXTURE.read_text(encoding="utf-8"))
+    issue = copy.deepcopy(_MULTICA_PRISTINE_ISSUE)
     issue.update(issue_overrides or {})
     issue["metadata"] = {
         **issue.get("metadata", {}),
@@ -2576,7 +2577,7 @@ def _pristine_attempt_fixture():
 
 def test_multica_stable_issue_envelope_fields_are_not_unknown_activity():
     eng = _engine(MOCK_AUTO_COMPLETE="false")
-    item = _multica_aiteam_812_pristine_item(
+    item = _multica_pristine_item(
         eng,
         issue_overrides={
             "last_activity_at": "2026-09-04T01:00:00Z",
@@ -2594,7 +2595,7 @@ def test_multica_standard_issue_envelope_pristine_shell_can_finalize_and_dispatc
     monkeypatch, issue_overrides,
 ):
     eng = _engine(MOCK_AUTO_COMPLETE="false")
-    item = _multica_aiteam_812_pristine_item(eng, issue_overrides=issue_overrides)
+    item = _multica_pristine_item(eng, issue_overrides=issue_overrides)
     monkeypatch.setattr(eng.store, "create_work_item", lambda *args, **kwargs: (
         pytest.fail("recover the existing attempt; do not create another issue")))
     assignments = []
@@ -2635,7 +2636,7 @@ def test_multica_standard_issue_envelope_pristine_shell_can_finalize_and_dispatc
 
     assert result["item_id"] == item.id
     assert result["verdict"] == "pass"
-    assert item.identifier == "AITEAM-812"
+    assert item.identifier == "PROJ-812"
     assert item.unknown_persisted_fields == {}
     assert assignments == [(item.id, "alice", "worker")]
     assert wakes == [(item.id, "alice", "worker")]
@@ -2663,7 +2664,7 @@ def test_multica_pristine_shell_keeps_unknown_facts_fail_closed(
     expected_unknown,
 ):
     eng = _engine(MOCK_AUTO_COMPLETE="false")
-    item = _multica_aiteam_812_pristine_item(
+    item = _multica_pristine_item(
         eng,
         issue_overrides=issue_overrides,
         metadata_overrides=metadata_overrides,
@@ -2719,7 +2720,7 @@ def test_pristine_amendment_projection_allows_only_initialization_fields(
 ):
     eng, item, spec, body, refs = _pristine_attempt_fixture()
     if field_name == "identifier":
-        item.identifier = "AITEAM-ATTEMPT"
+        item.identifier = "PROJ-ATTEMPT"
     elif field_name == "contract_ref":
         item.contract_ref = {"attachment_id": "contract"}
     elif field_name == "created_at":

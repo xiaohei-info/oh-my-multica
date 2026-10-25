@@ -15,7 +15,7 @@ import yaml
 from ..core.acceptance import load_acceptance_doc_file
 from ..core.amendment import (
     amendment_review_binding, apply_amendment, authoring_recovery_node_ids,
-    build_reviewed_amendment, parse_proposal, validate_proposal,
+    build_reviewed_amendment, parse_proposal, validate_affected, validate_proposal,
 )
 from ..core.manifest import Contract, load_manifest
 from ..core.repository_files import revision_directory_files
@@ -466,7 +466,6 @@ def propose_amendment(
     restart_authoring: bool = False,
     new_attempt: bool = False,
     supersedes_issue_id: str | None = None,
-    owner_request_file: str | None = None,
     poll=None,
 ) -> dict[str, Any]:
     requested_docs = list(docs)
@@ -524,32 +523,17 @@ def propose_amendment(
         raise ValidationError(
             "Amendment agents are not in the workspace pool: "
             + ", ".join(sorted(set(missing_agents))))
-    owner_digest = owner_key = owner_resume = None
-    if owner_request_file:
-        if new_attempt or supersedes_issue_id or resume_issue_id or restart_authoring:
-            raise ValidationError("Owner assessment uses its exact once-only request identity; legacy resume/new-attempt flags are not allowed")
-        from .owner_amendment import begin_assessment
-        owner_digest, owner_key, owner_resume = begin_assessment(
-            engine, manifest_path, owner_request_file,
-            report_file=report_file, docs=requested_docs, blocked_nodes=blocked_nodes,
-            orchestrator=orchestrator, reviewers=reviewers, max_revisions=max_revisions)
-        manifest = load_manifest(manifest_path)
-    else:
-        _validate_amendment_admission(
-            engine, manifest, manifest_path, blocked_nodes,
-            new_attempt=new_attempt, supersedes_issue_id=supersedes_issue_id,
-        )
+    _validate_amendment_admission(
+        engine, manifest, manifest_path, blocked_nodes,
+        new_attempt=new_attempt, supersedes_issue_id=supersedes_issue_id,
+    )
 
     description = (
         "A DAG already approved and running has exposed a contract/topology defect. "
         "Read every design document under each supplied docs path, the current manifest, "
         "and the Reviewer report. Submit one YAML object using schema "
         "omac.dag-amendment/v1 with reason and operations. Supported operations are "
-        "update/add/remove/resume/update-responsibility/correct-contract-literal. Never patch runtime fields. "
-        "A correct-contract-literal operation must be the sole operation and preserve the exact "
-        "read-only prepare-literal-correction output, including immutable authority, the real prior "
-        "reject and every frozen descendant snapshot. Never invent or edit that witness package; "
-        "a new independent review must explicitly prove semantic non-propagation. "
+        "update/add/remove/resume/update-responsibility. Never patch runtime fields. "
         "Done/merged nodes are immutable except update-responsibility with explicit "
         "historical_contract_correction=true and an operation reason. Use "
         "update-responsibility for every acceptance responsibility migration: carry only "
@@ -584,66 +568,11 @@ def propose_amendment(
             project_root=project_root),
     }
 
-    if owner_digest:
-        from ..core.owner_amendment import owner_request
-        assessment_request = owner_request(manifest.meta["owner_amendment_resolutions"][owner_digest])
-        description += ("\n\nThis is only an operator-authorized source-bound amendment assessment, "
-                        "not product PASS or approval of owner claims/operations. Retrieve the authoritative owner-source index with omac work read <this-issue-id> --source owner-source --output-file owner-source.json and every exact entry with --entry <label>. Git manifest-runtime and operator-local paths are provenance, never current runtime authority. If source or assessment scope is missing, use the typed omac work block report from work show and stop without a fake proposal. Preserve full sources "
-                        "and use budget_policy: preserve. Exact proposal owner_resolution: " + owner_digest +
-                        "\nExact owner_resolution_approval: " + manifest.meta["owner_amendment_resolutions"][owner_digest]["approval_sha256"])
-        payload["description"] = description
-        payload["contract"].source_of_truth.append(owner_request_file)
-        qualification = assessment_request.get("source_qualification")
-        if qualification is not None:
-            description += ("\n\nThe qualified opaque fields and all original native failures remain "
-                            "unresolved product obligations. Read the full preservation witness and "
-                            "every referenced native history. Do not classify fields as harmless, "
-                            "retire an active hold, replay old authority or change budgets. "
-                            "The failed call-correlation proof is retained failure history, never authority; "
-                            "absent call IDs and original truncated output remain unknown/incomplete. "
-                            "Explicitly assess these retained obligations in independent Review.")
-            payload["contract"].acceptance.append(
-                "Independent assessment retains all opaque fields and original failures as unresolved "
-                "obligations, without active-hold retirement, budget grant, old-authority replay or product PASS"
-            )
-            payload["description"] = description
-            payload["contract"].source_of_truth.extend(
-                [qualification["input"]["file"]]
-                + [v["file"] for v in qualification["references"].values()]
-            )
-        prospective = assessment_request.get("prospective_assessment")
-        if prospective:
-            description += ("\n\nProspective assessment-only declarations: " + json.dumps(prospective["declarations"], sort_keys=True) +
-                            "\nThese candidates are not-created and not-allocated. No consumed usage, native baseline, remaining budget or default 20 grant is asserted. "
-                            "The complete original terminal scope request is coordination input, not a submitted proposal or Reviewer PASS. Preserve all failed helper results and original rejected reports/ledgers, both held sources and derived api-mcp. "
-                            "Assess the exact supplied publication boundary and unresolved compatibility obligations. Do not redefine DONE producers. Independent draft Review does not authorize allocation, application or Worker dispatch; a separate typed authority is required.")
-            payload["description"] = description
-            payload["contract"].acceptance.append("Prospective declarations remain assessment-only/not-created/not-allocated; Reviewer PASS is not allocation/application/dispatch permission.")
-            payload["contract"].source_of_truth.extend(ref["file"] for ref in [prospective["input"], *prospective["references"].values()])
-        current_source = assessment_request.get("current_source_qualification")
-        if current_source is not None:
-            description += (
-                "\n\nRead the complete separately approved current Source file and every full historical entry. "
-                "The file binds the whole current manifest/DONE, full owner history, native terminal Runs, "
-                "budgets/contracts/generations/required bytes and exact existing/candidate scope. "
-                "Historical authority is not current authority. Preserve the third unreviewed entry and "
-                "all original failures without consuming/replaying them. This is assessment only, not "
-                "Product PASS, budget grant, candidate allocation/application/dispatch or live eligibility."
-            )
-            payload["description"] = description
-            payload["contract"].source_of_truth.append(current_source["input"]["file"])
-            payload["contract"].acceptance.append(
-                "Independent Review reads complete current Source and all historical entries; "
-                "current approval and original provenance remain separate, exact and unresolved."
-            )
     attempt = None
     source_refs = None
     dag_key = f"amend-{Path(manifest_path).stem}"
     effective_resume_issue_id = resume_issue_id
-    if owner_digest:
-        dag_key = owner_key
-        effective_resume_issue_id = owner_resume
-    elif new_attempt:
+    if new_attempt:
         superseded = engine.store.get_work_item(supersedes_issue_id)
         if superseded.kind != TaskKind.AMENDMENT:
             raise ValidationError("--supersedes-issue-id must reference an amendment issue")
@@ -700,48 +629,12 @@ def propose_amendment(
         if not item.deliverable:
             return ["amendment deliverable is empty"]
         proposal = parse_proposal(item.deliverable)
-        if owner_digest and proposal.get("owner_resolution") != owner_digest:
-            raise ValidationError("Planner delivery must bind the exact approved owner_resolution")
         errors = validate_proposal(manifest, proposal, pool, acceptance=acceptance)
         if errors:
             return errors
-        from ..core.owner_amendment import validate_affected
-        current = load_manifest(manifest_path)
-        validate_affected(current, proposal, engine.store, engine.runtime)
-        if owner_digest:
-            from ..core.amendment import _minimal_rerun, _apply_definition, _validate_stage_preconditions
-            minimal, _, _ = _minimal_rerun(current, proposal)
-            _validate_stage_preconditions(_apply_definition(current, proposal), minimal, engine.store)
+        validate_affected(load_manifest(manifest_path), proposal, engine.store)
         return []
 
-    assessment_kwargs = {}
-    if owner_digest:
-        from .owner_amendment import checkpoint_review_dispatch
-        from .owner_amendment import checkpoint_authoring_dispatch
-        from .portable_owner import authenticate_sources, publish_sources, read_source
-        source_request = assessment_request
-        payload["contract"].source_of_truth = [
-            "omac work read <this-issue-id> --source owner-source --output-file owner-source.json; "
-            "retrieve every exact entry using --entry <index-label>; local paths are provenance only"
-        ]
-        def authoring_checkpoint(item_id, stage):
-            reference = None
-            authority = None
-            if stage == "before":
-                files, contents, authority = authenticate_sources(
-                    engine, manifest_path, owner_request_file, owner_digest, source_request, report_file, requested_docs)
-                reference = publish_sources(engine.store, item_id, files, owner_resolution=owner_digest,
-                                            approval=authority["approval_sha256"], expected=authority, contents=contents)[0]
-            checkpoint_authoring_dispatch(engine, manifest_path, owner_digest, item_id, stage,
-                                          portable_reference=reference, portable_authority=authority)
-        assessment_kwargs["before_authoring_dispatch"] = authoring_checkpoint
-        def review_checkpoint(item, reviewer):
-            ref = next((r for r in item.source_refs if r.get("label") == "owner-source"), None)
-            if ref is None:
-                raise ValidationError("Independent Review requires the same exact portable owner Source")
-            read_source(engine.store, ref)
-            checkpoint_review_dispatch(engine, manifest_path, owner_digest, item, reviewer)
-        assessment_kwargs["before_review_dispatch"] = review_checkpoint
     try:
         outcome = run_task(
             engine,
@@ -761,7 +654,6 @@ def propose_amendment(
             reuse_dag_key=new_attempt,
             review_acceptance_doc=acceptance,
             review_amendment_manifest=manifest,
-            **assessment_kwargs,
         )
     except NeedsDecision as exc:
         if exc.report.get("reason_code") == "amendment-resume-contract-drift":
@@ -811,10 +703,6 @@ def propose_amendment(
         raise ValidationError(
             "Amendment did not reach Reviewer-pass or pass-with-nits confirmation")
 
-    if owner_digest:
-        from .owner_amendment import record_review
-        guard(issue)
-        manifest = record_review(engine, manifest_path, owner_digest, issue)
     reviewed = build_reviewed_amendment(
         manifest,
         outcome["delivery"]["amendment"],

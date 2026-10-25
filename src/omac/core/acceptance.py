@@ -142,8 +142,8 @@ def _load_action(raw, *, flow_id: str, index: int, require_id: bool) -> Action:
             f"flow {flow_id} action {index} kind is required by omac.acceptance/v2")
     if kind is None:
         # v1 did not carry a kind field. Its explicit `Action ID=...` marker is
-        # the published distinction used by the OAC acceptance document: 495
-        # business Actions versus the remaining flow procedure steps.
+        # the established distinction between business Actions and the remaining
+        # flow procedure steps.
         kind = ACTION_KIND_BUSINESS if embedded_ids else ACTION_KIND_FLOW_STEP
     if kind not in _ACTION_KINDS:
         raise ValueError(

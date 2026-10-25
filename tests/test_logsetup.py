@@ -56,7 +56,7 @@ class TestConfigure:
         capsys.readouterr()
         logsetup.configure_logging(logsetup.JSON)
         log = logsetup.get_logger()
-        log.info(logsetup.EVT_DISPATCH, kind="plan", id="AITEAM-696",
+        log.info(logsetup.EVT_DISPATCH, kind="plan", id="PROJ-696",
                  worker="hermes-architect")
         cap = capsys.readouterr()
         assert cap.out == ""  # stdout 数据线不被污染
@@ -64,18 +64,18 @@ class TestConfigure:
         obj = json.loads(line)  # 机器可解析
         assert obj["event"] == "dispatch"
         assert obj["kind"] == "plan"
-        assert obj["id"] == "AITEAM-696"
+        assert obj["id"] == "PROJ-696"
         assert obj["worker"] == "hermes-architect"
 
     def test_text_format_is_human_readable_on_stderr(self, capsys, monkeypatch):
         monkeypatch.delenv("OMAC_LOG_FORMAT", raising=False)
         logsetup.configure_logging(logsetup.TEXT)
         log = logsetup.get_logger()
-        log.info(logsetup.EVT_NODE_DONE, kind="plan", id="AITEAM-696")
+        log.info(logsetup.EVT_NODE_DONE, kind="plan", id="PROJ-696")
         cap = capsys.readouterr()
         assert cap.out == ""
         # 人类文本:含事件名与字段,但不是 JSON
         assert "node_done" in cap.err
-        assert "AITEAM-696" in cap.err
+        assert "PROJ-696" in cap.err
         with pytest.raises(json.JSONDecodeError):
             json.loads(cap.err.strip().splitlines()[-1])

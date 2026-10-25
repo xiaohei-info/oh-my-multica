@@ -17,7 +17,7 @@ FIELDS = {"schema", "encoding", "decoded_bytes", "decoded_sha256", "payload"}
 
 
 def fail(detail):
-    raise ValidationError(detail + "; preserve original state and inspect `omac dag recover-sync --help`")
+    raise ValidationError(detail + "; keep the original file and restore it from git history (`git log -- <manifest>`)")
 
 
 def is_transport(raw):
@@ -103,7 +103,7 @@ def decode(raw):
             fail("Nested full-state transport is not allowed")
         return body
     except (ValueError, TypeError, UnicodeError, OSError, EOFError, yaml.YAMLError) as exc:
-        raise ValidationError("Malformed full-state transport; preserve original and inspect `omac dag recover-sync --help`") from exc
+        raise ValidationError("Malformed full-state transport; keep the original file and restore it from git history (`git log -- <manifest>`)") from exc
 
 
 def encode(body):

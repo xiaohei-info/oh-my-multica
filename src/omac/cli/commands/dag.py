@@ -19,7 +19,7 @@ from ...core.graph import node_waves
 from ...core.lint import lint
 from ...core.manifest import load_manifest, manifest_write_lock
 from pathlib import Path
-from ...core.gitsync import commit_manifest, ensure_config_synced
+from ...core.gitsync import ensure_config_synced
 from ...engines import create_engine
 from ...engines.models import EngineConfig
 from ...errors import NeedsDecision, ValidationError
@@ -137,22 +137,6 @@ def register(parser):
     snapshot_p.add_argument("manifest", help="manifest 文件路径")
     add_output_flag(snapshot_p)
 
-    recovery = sub.add_parser("recover-sync", help="Explicit full-state transport and unpublished managed-only Git recovery")
-    recovery.add_argument("manifest")
-    recovery.add_argument("--repo", required=True)
-    recovery.add_argument("--writer-lock", required=True, help="Existing canonical writer lock; never recreated")
-    operation = recovery.add_mutually_exclusive_group(required=True)
-    operation.add_argument("--prepare-preservation", metavar="WITNESS_FILE", help="Capture exact immutable Source with new Root preservation authority; no archive or migration")
-    operation.add_argument("--prepare", metavar="REQUEST_FILE")
-    operation.add_argument("--resolve", metavar="REQUEST_FILE")
-    recovery.add_argument("--archive", help="New immutable bundle outside repository, required for prepare")
-    recovery.add_argument("--preservation-witness", help="Exact outside-worktree preserved Source witness")
-    recovery.add_argument("--preservation-sha256", help="Explicit Root-approved complete preservation witness digest")
-    recovery.add_argument("--request-sha256")
-    recovery.add_argument("--authority")
-    recovery.add_argument("--reason")
-    add_output_flag(recovery, default="json")
-
     tick = sub.add_parser("tick", help="单轮推进后退出(exit 0/10/20)")
     tick.add_argument("manifest", help="manifest 文件路径")
     tick.add_argument("--engine", help="引擎类型覆盖(缺省读 config/env)")
@@ -178,7 +162,6 @@ def register(parser):
     propose.add_argument("--reviewer", action="append", help="Reviewer agent；可重复，缺省读 roles.reviewers")
     propose.add_argument("--max-revisions", type=int, help="Orchestrator↔Reviewer 最大修订轮次")
     propose.add_argument("--output-file", help="reviewed amendment 输出文件")
-    propose.add_argument("--owner-request-file", help="Exact explicitly resolved source-bound owner assessment request")
     propose.add_argument("--resume-issue-id", help="恢复已有 amendment issue，不新建")
     propose.add_argument(
         "--restart-authoring",
@@ -197,57 +180,6 @@ def register(parser):
     propose.add_argument("--engine", help="引擎类型覆盖")
     propose.add_argument("--workspace", help="workspace 覆盖")
     add_output_flag(propose, default="json")
-
-    owner_prepare = amend_sub.add_parser("prepare-owner", help="Read-only full source-bound minimal amendment assessment request")
-    owner_prepare.add_argument("manifest")
-    owner_prepare.add_argument("--blocked-node", action="append", required=True)
-    owner_prepare.add_argument("--allowed-node", action="append", required=True)
-    owner_prepare.add_argument("--report-file", required=True)
-    owner_prepare.add_argument("--docs", action="append", required=True)
-    owner_prepare.add_argument("--output-file", required=True)
-    owner_witness = owner_prepare.add_mutually_exclusive_group()
-    owner_witness.add_argument("--source-witness-file", help="Exact unresolved historical source preservation witness; no active-hold retirement")
-    owner_witness.add_argument("--prospective-source-file", help="Exact qualified assessment-only prospective declaration witness; grants no allocation/application")
-    owner_prepare.add_argument("--current-source-file", help="Separately approved complete current Source; old historical witness remains mandatory")
-    history_prepare = amend_sub.add_parser("prepare-review-source", help="Capture complete historical reject source qualification without control effects")
-    history_prepare.add_argument("manifest")
-    history_prepare.add_argument("--node", required=True)
-    history_prepare.add_argument("--witness-file", required=True)
-    history_prepare.add_argument("--output-file", required=True)
-    for action in ("observe-review-source", "resolve-review-source"):
-        history = amend_sub.add_parser(action, help="Observe or explicitly resolve exact historical review source identity")
-        history.add_argument("manifest")
-        history.add_argument("source_file")
-        if action == "resolve-review-source":
-            history.add_argument("--source-sha256", required=True)
-            history.add_argument("--authority", required=True)
-            history.add_argument("--reason", required=True)
-    current_prepare = amend_sub.add_parser("prepare-owner-source", help="Capture complete pending current assessment Source, no authority or Actor effect")
-    current_prepare.add_argument("manifest")
-    current_prepare.add_argument("--blocked-node", action="append", required=True)
-    current_prepare.add_argument("--allowed-node", action="append", required=True)
-    current_prepare.add_argument("--report-file", required=True)
-    current_prepare.add_argument("--docs", action="append", required=True)
-    current_prepare.add_argument("--output-file", required=True)
-    current_witness = current_prepare.add_mutually_exclusive_group(required=True)
-    current_witness.add_argument("--source-witness-file")
-    current_witness.add_argument("--prospective-source-file")
-    current_resolve = amend_sub.add_parser("resolve-owner-source", help="Explicit exact current operator Source approval; assessment only")
-    current_resolve.add_argument("manifest")
-    current_resolve.add_argument("source_file")
-    current_resolve.add_argument("--source-sha256", required=True)
-    current_resolve.add_argument("--authority", required=True)
-    current_resolve.add_argument("--reason", required=True)
-    owner_resolve = amend_sub.add_parser("resolve-owner", help="Explicit exact coordinator resolution for assessment only")
-    owner_resolve.add_argument("manifest")
-    owner_resolve.add_argument("request_file")
-    owner_resolve.add_argument("--request-sha256", required=True)
-    owner_resolve.add_argument("--authority", required=True)
-    owner_resolve.add_argument("--reason", required=True)
-    for owner_parser in (owner_prepare, owner_resolve, current_prepare, current_resolve):
-        owner_parser.add_argument("--engine")
-        owner_parser.add_argument("--workspace")
-        add_output_flag(owner_parser, default="json")
 
     budget_preview = amend_sub.add_parser("budget-preview", help="Read-only existing recovery budgets and renewal comparison")
     budget_preview.add_argument("manifest")
@@ -286,33 +218,6 @@ def register(parser):
     accept_nits.add_argument("--workspace", help="workspace 覆盖")
     add_output_flag(accept_nits, default="json")
 
-    literal = amend_sub.add_parser(
-        "prepare-literal-correction",
-        help="只读准备独立评审所需的精确合同字面量修订，不应用或派发",
-    )
-    literal.add_argument("manifest", help="当前权威 manifest")
-    literal.add_argument("node", help="既有 TODO authoring 目标")
-    literal.add_argument("--index", required=True, type=int, help="non_goals 字符串索引")
-    literal.add_argument("--old-token", required=True)
-    literal.add_argument("--new-token", required=True)
-    literal.add_argument("--authority-url", required=True, help="commit-pinned GitHub docs blob")
-    literal.add_argument("--authority-sha256", required=True)
-    literal.add_argument("--authority-quote", required=True)
-    literal.add_argument("--source-reject-issue-id", required=True)
-    literal.add_argument("--reason", required=True)
-    literal.add_argument("--engine")
-    literal.add_argument("--workspace")
-    add_output_flag(literal, default="json")
-
-    repair = amend_sub.add_parser(
-        "repair-contract-commands",
-        help="从已应用 amendment 原文恢复受限 shell command 损坏，不重放 accept",
-    )
-    repair.add_argument("manifest", help="当前运行 manifest 文件路径")
-    repair.add_argument("amendment_file", help="已 applied 的 approved amendment YAML")
-    repair.add_argument("--engine", help="引擎类型覆盖")
-    repair.add_argument("--workspace", help="workspace 覆盖")
-    add_output_flag(repair, default="json")
 
 
 def _assemble_engine(args):
@@ -639,53 +544,10 @@ def _amend_locked(args) -> int:
         accept_amendment_nits,
         propose_amendment,
     )
-    from ...pipeline.contract_repair import repair_contract_commands
 
     engine, _ = _assemble_engine(args)
     config = _load_config_for_manifest(args.manifest)
     roles = config.get("roles") or {}
-    if args.amend_action in {"prepare-review-source", "observe-review-source", "resolve-review-source"}:
-        from ...pipeline.historical_review_source import prepare_review_source, observe_review_source, resolve_review_source
-        if args.amend_action == "prepare-review-source":
-            result = prepare_review_source(engine, args.manifest, args.node, args.witness_file, args.output_file)
-        elif args.amend_action == "observe-review-source":
-            result = observe_review_source(engine, args.manifest, args.source_file)
-        else:
-            result = resolve_review_source(engine, args.manifest, args.source_file,
-                                          source_sha256=args.source_sha256, authority=args.authority, reason=args.reason)
-        print_json(result)
-        return exit_codes.OK
-    if args.amend_action in {"prepare-owner-source", "resolve-owner-source"}:
-        from ...pipeline.owner_amendment import prepare_current_owner_source, resolve_current_owner_source
-        if args.amend_action == "prepare-owner-source":
-            result = prepare_current_owner_source(
-                engine, args.manifest, blocked_nodes=args.blocked_node,
-                allowed_nodes=args.allowed_node, report_file=args.report_file,
-                docs=args.docs, output_file=args.output_file,
-                source_witness_file=args.source_witness_file,
-                prospective_source_file=args.prospective_source_file)
-        else:
-            result = resolve_current_owner_source(
-                engine, args.manifest, args.source_file,
-                source_sha256=args.source_sha256, authority=args.authority, reason=args.reason)
-        print_json(result)
-        return exit_codes.OK
-    if args.amend_action in {"prepare-owner", "resolve-owner"}:
-        from ...pipeline.owner_amendment import prepare_owner_amendment, resolve_owner_amendment
-        if args.amend_action == "prepare-owner":
-            result = prepare_owner_amendment(
-                engine, args.manifest, blocked_nodes=args.blocked_node,
-                allowed_nodes=args.allowed_node, report_file=args.report_file,
-                docs=args.docs, output_file=args.output_file,
-                source_witness_file=args.source_witness_file,
-                prospective_source_file=args.prospective_source_file,
-                current_source_file=args.current_source_file)
-        else:
-            result = resolve_owner_amendment(
-                engine, args.manifest, args.request_file,
-                request_sha256=args.request_sha256, authority=args.authority, reason=args.reason)
-        print_json(result)
-        return exit_codes.OK
     if args.amend_action == "budget-preview":
         from pathlib import Path
         from ...core.amendment import preview_amendment_budgets
@@ -696,29 +558,6 @@ def _amend_locked(args) -> int:
         result = preview_amendment_budgets(load_manifest(args.manifest),
             proposal_source, engine.store,
             set(engine.store.list_members(engine.store.config.workspace_id)))
-        print_json(result)
-        return exit_codes.OK
-    if args.amend_action == "prepare-literal-correction":
-        from ...core.literal_correction import prepare_literal_correction
-        proposal = prepare_literal_correction(
-            load_manifest(args.manifest), engine.store, engine.runtime,
-            node_id=args.node, index=args.index,
-            old_token=args.old_token, new_token=args.new_token,
-            authority_url=args.authority_url,
-            authority_sha256=args.authority_sha256,
-            authority_quote=args.authority_quote,
-            source_issue_id=args.source_reject_issue_id, reason=args.reason,
-        )
-        print_json(proposal)
-        return exit_codes.OK
-    if args.amend_action == "repair-contract-commands":
-        result = repair_contract_commands(
-            engine, args.manifest, args.amendment_file)
-        commit_manifest(
-            args.manifest,
-            "fix(omac): repair contract command placeholders",
-            engine_type=engine.store.config.engine_type,
-        )
         print_json(result)
         return exit_codes.OK
     if args.amend_action == "propose":
@@ -749,7 +588,6 @@ def _amend_locked(args) -> int:
                 restart_authoring=args.restart_authoring,
                 new_attempt=args.new_attempt,
                 supersedes_issue_id=args.supersedes_issue_id,
-                owner_request_file=getattr(args, "owner_request_file", None),
             )
         except NeedsDecision as exc:
             print_json(exc.report)
@@ -991,40 +829,6 @@ def run(args) -> int:
     幂等:全部状态在 manifest + 平台,任意中断重跑即续跑,done 节点复用。
     有界:--max-rounds / --max-minutes 支持分段跑。
     """
-    if args.action == "recover-sync":
-        from ...core.state_sync_recovery import prepare, prepare_preservation, resolve, digest, _validate, _durable
-        if args.prepare_preservation:
-            if args.archive or args.request_sha256 or args.preservation_witness or args.preservation_sha256 or not all((args.authority, args.reason)):
-                raise ValidationError("Witness capture requires only new authority/reason; inspect `omac dag recover-sync --help`")
-            target = Path(args.prepare_preservation)
-            if target.exists() or target.resolve().is_relative_to(Path(args.repo).resolve()):
-                raise ValidationError("New preservation witness outside worktree required; never overwrite; inspect `omac dag recover-sync --help`")
-            witness = prepare_preservation(args.manifest, args.repo, args.writer_lock, authority=args.authority, reason=args.reason)
-            _durable(target, witness)
-            print_json({"preservation_witness": witness, "preservation_sha256": digest(witness), "state": "awaiting-exact-Root-preservation-approval"})
-        elif args.prepare:
-            if not args.archive or any((args.request_sha256, args.authority, args.reason)):
-                raise ValidationError("Prepare requires --archive only; inspect `omac dag recover-sync --help`")
-            target = Path(args.prepare)
-            if target.exists():
-                raise ValidationError("Prepared request already exists; observe it without replacing; inspect `omac dag recover-sync --help`")
-            request = prepare(args.manifest, args.repo, args.archive, args.writer_lock, preservation_file=args.preservation_witness, preservation_sha256=args.preservation_sha256)
-            from ...core.state_sync_recovery import _durable
-            _durable(target, request)
-            print_json({"request": request, "request_sha256": digest(request), "state": "awaiting-exact-Root-approval"})
-        else:
-            if args.archive or args.preservation_witness or args.preservation_sha256 or not all((args.request_sha256, args.authority, args.reason)):
-                raise ValidationError("Resolve requires exact request SHA/authority/reason; inspect `omac dag recover-sync --help`")
-            import json
-            try:
-                request = json.loads(Path(args.resolve).read_bytes())
-            except (ValueError, UnicodeError, OSError) as exc:
-                raise ValidationError("Complete valid prepared request required; inspect `omac dag recover-sync --help`") from exc
-            _validate(request, args.request_sha256)
-            if request["source"]["path"] != str(Path(args.manifest).resolve()) or request["source"]["repo"] != str(Path(args.repo).resolve()) or request["writer_lock"]["path"] != str(Path(args.writer_lock).resolve()):
-                raise ValidationError("Request source/path/lock differ; inspect `omac dag recover-sync --help`")
-            print_json(resolve(request, request_sha256=args.request_sha256, authority=args.authority, reason=args.reason))
-        return exit_codes.OK
     if args.action == "check":
         return check(args)
     if args.action == "show":

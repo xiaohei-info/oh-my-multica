@@ -1,6 +1,6 @@
 """任务类型×阶段模型:kind/phase/bounces 写后读回 + 旧 issue 向后兼容。
 
-验收(AITEAM-308):
+验收(PROJ-308):
 - mock 写后读回 kind/phase/bounces
 - multica(subprocess mock)写后读回 kind/phase/bounces
 - 未带 kind 的旧 issue 读回缺省 develop(兼容)

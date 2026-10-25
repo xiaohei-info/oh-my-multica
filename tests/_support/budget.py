@@ -17,7 +17,22 @@ TMP_PER_TEST = 10 * MB
 TMP_PER_SESSION = 200 * MB
 
 # Test files that predate the budget; Phases 1, 5 and 8 shrink this set, Phase 8 empties it.
-EXEMPT_FILES: set[str] = set()
+# Overages per file: ~/code/omac-clean/evidence/phase1-budget-exempt.txt (not part of the repository).
+EXEMPT_FILES: set[str] = {
+    "test_amendment.py",
+    "test_cli_node.py",
+    "test_delivery_merge.py",
+    "test_e2e_p1.py",
+    "test_e2e_p4_delivery.py",
+    "test_engines_multica.py",
+    "test_gitsync.py",
+    "test_lightweight_reconcile.py",
+    "test_loop.py",
+    "test_taskmeta.py",
+    "test_tasks.py",
+    "test_web_api.py",
+    "test_web_static.py",
+}
 
 
 def seconds_limit(is_docker: bool) -> float:

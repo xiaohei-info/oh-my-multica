@@ -1,9 +1,6 @@
 """Reject admission preserves complete failed integration results, not pass claims."""
 
 from copy import deepcopy
-import hashlib
-import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -13,26 +10,33 @@ from omac.core.manifest import Contract
 
 
 @pytest.fixture
-def actual_review():
-    folder = Path(__file__).parent / "fixtures/reject_integration_evidence"
-    raw = (folder / "actual-review-report.json").read_bytes()
-    assert len(raw) == 54070
-    assert (
-        hashlib.sha256(raw).hexdigest()
-        == "2926a59aadfc4beb96015b213ed542271975306d585526be27f3fd610a9bd4fa"
-    )
-    control = json.loads((folder / "actual-fixture-control.json").read_text())
-    item = SimpleNamespace(**control)
-    item.review_report = json.loads(raw)
-    item.review_verdict = "reject"
-    node = SimpleNamespace(contract=SimpleNamespace(**control["contract"]))
+def unsubmitted_reject():
+    """A reject with one structured blocker covering one of four failed dimensions."""
+    dimensions = ("dimension:structure", "dimension:execution", "dimension:regression", "dimension:evidence")
+    obligations = [{"obligation_id": name, "category": "dimension", "requirement": name} for name in dimensions]
+    report = {
+        "review_protocol": "omac.review/v2",
+        "full_review_completed": True,
+        "review_goals": ["complete scope"],
+        "diff_reviewed": True, "tests_rerun": True, "coverage_checked": True,
+        "integration_tests_rerun": True,
+        "acceptance_mapping": [{"acceptance": "works", "status": "fail"}],
+        "obligation_results": [
+            {"obligation_id": name, "status": "fail", "evidence": f"checked {name}"} for name in dimensions],
+        "blockers": [{
+            "root_cause_key": "root-a", "obligation_id": "dimension:evidence", "classification": "new",
+            "owner": "owner-a", "summary": "evidence is missing", "evidence": "no artifact attached",
+            "required_fix": "attach the artifact",
+        }],
+    }
+    node = SimpleNamespace(contract=Contract(acceptance=["works"], verification_commands=["check"], pr_base="main"))
+    item = SimpleNamespace(
+        review_verdict="reject", review_report=report, review_obligations=obligations, kind="develop")
     return node, item
 
 
-def test_actual_unsubmitted_reject_retains_only_real_blocker_format_errors(
-    actual_review,
-):
-    node, item = actual_review
+def test_reject_reports_every_failed_dimension_without_a_blocker(unsubmitted_reject):
+    node, item = unsubmitted_reject
     before = deepcopy(item)
     assert validate_review_evidence(node, item) == [
         "review_report failed obligation has no blocker: dimension:execution",
@@ -196,8 +200,8 @@ def test_worker_integration_gate_remains_success_only(failed_gate):
     assert any("integration metric below gate" in e for e in errors)
 
 
-def test_report_dimension_association_and_string_shape_are_not_waived(actual_review):
-    node, item = actual_review
+def test_report_dimension_association_and_string_shape_are_not_waived(unsubmitted_reject):
+    node, item = unsubmitted_reject
     # Prose mentions of another root are not an existing structured association.
     item.review_report["blockers"][0]["obligation_ids"] = [
         "dimension:execution",
@@ -213,8 +217,8 @@ def test_report_dimension_association_and_string_shape_are_not_waived(actual_rev
     )
 
 
-def test_duplicate_root_cannot_cover_failed_dimensions(actual_review):
-    node, item = actual_review
+def test_duplicate_root_cannot_cover_failed_dimensions(unsubmitted_reject):
+    node, item = unsubmitted_reject
     duplicate = deepcopy(item.review_report["blockers"][0])
     duplicate["obligation_id"] = "dimension:execution"
     item.review_report["blockers"].append(duplicate)

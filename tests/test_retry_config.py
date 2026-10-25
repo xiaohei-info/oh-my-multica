@@ -1,4 +1,4 @@
-"""config.retry.{worker|ci|review|merge} 可配性 + 校验出口(AITEAM-354)。
+"""config.retry.{worker|ci|review|merge} 可配性 + 校验出口(PROJ-354)。
 
 验收:
 - init 生成的 config.yaml 含 retry.{worker|ci|review|merge},缺省 3

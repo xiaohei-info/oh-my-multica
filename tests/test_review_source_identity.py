@@ -3,7 +3,7 @@ from copy import deepcopy
 import pytest
 
 HEAD='e9b4440f9c119275ccbacf989087b8b067385ca7'
-PR='https://github.com/xiaohei-info/open-agent-cluster/pull/96'
+PR='https://github.com/xiaohei-info/demo-project/pull/96'
 
 
 def nested():return {'review_protocol':'omac.review/v2','reviewed_source':{'head':HEAD,'pr_url':PR}}

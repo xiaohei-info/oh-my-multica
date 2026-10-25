@@ -294,10 +294,10 @@ def retained_review_subject(current, prior_handoff, feedback, *, store=None):
                 != prior_handoff.source_review_subject_digest)):
         raise ValueError("Retained review source conflicts with current feedback; inspect work show before retry")
     if store is not None and prior.get("ledger_ref"):
-        from .owner_amendment import _attachment
+        from .digest import read_attachment
         from .review_convergence import validate_review_ledger, _review_report_digest
-        ledger = _attachment(store, current.id, prior["ledger_ref"])["body"]
-        report = _attachment(store, current.id, prior.get("report_ref"))["body"]
+        ledger = read_attachment(store, current.id, prior["ledger_ref"])["body"]
+        report = read_attachment(store, current.id, prior.get("report_ref"))["body"]
         validate_review_ledger(ledger)
         cycles = ledger["cycles"]
         if (not cycles or cycles[-1]["subject_digest"] != prior_handoff.source_review_subject_digest

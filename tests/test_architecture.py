@@ -1,7 +1,7 @@
 """Architecture guards: no incident-specific code, no platform CLI outside adapters, small synthetic fixtures.
 
 Layer direction itself is enforced by ``lint-imports`` (contracts in pyproject.toml).
-``TRANSITIONAL`` lists paths that still violate a rule; it may only shrink.
+``TRANSITIONAL`` lists paths that still violate a rule; it may only shrink, and it is empty today.
 """
 from __future__ import annotations
 
@@ -24,75 +24,14 @@ PLACEHOLDER_UUID = re.compile(r"^0{8}-0{4}-0{4}-0{4}-0{12}$|^[0-9a-f]{8}-0000-00
 
 # Rule name -> relative paths still violating it. Phase 1 empties all of them.
 TRANSITIONAL: dict[str, set[str]] = {
-    "project_names": {
-        "src/omac/agents/backend-eng/skills/software-development/SKILL.md",
-        "src/omac/agents/frontend-eng/skills/software-development/SKILL.md",
-        "src/omac/core/acceptance.py",
-        "src/omac/engines/models.py",
-        "src/omac/guide/artifacts/acceptance.md",
-        "src/omac/guide/en/artifacts/acceptance.md",
-        "src/omac/guide/en/recovery.md",
-        "src/omac/guide/recovery.md",
-        "src/omac/pipeline/publication_review.py",
-        "src/omac/pipeline/sdk_checkpoint_review.py",
-        "src/omac/pipeline/sdk_publication_review.py",
-    },
-    "captured_literals": {
-        "src/omac/core/credential_prospective.py",
-        "src/omac/core/historical_review_source.py",
-        "src/omac/core/owner_amendment.py",
-        "src/omac/core/prospective_owner.py",
-        "src/omac/pipeline/evidence_handoff.py",
-        "src/omac/pipeline/sdk_checkpoint_review.py",
-        "src/omac/pipeline/sdk_publication_review.py",
-    },
-    "id_comparisons": {
-        "src/omac/core/historical_review_source.py",
-        "src/omac/core/owner_amendment.py",
-        "src/omac/pipeline/evidence_handoff.py",
-    },
-    "subprocess_use": {
-        "src/omac/core/state_sync_recovery.py",
-    },
-    "platform_argv": {
-        "src/omac/pipeline/evidence_review.py",
-        "src/omac/pipeline/publication_review.py",
-        "src/omac/pipeline/sdk_publication_review.py",
-    },
+    "project_names": set(),
+    "captured_literals": set(),
+    "id_comparisons": set(),
+    "subprocess_use": set(),
+    "platform_argv": set(),
 }
 # Fixture entries (names directly under tests/fixtures) that predate the size/content rule.
-TRANSITIONAL_FIXTURES: set[str] = {
-    "aiteam_849_legacy_convergence_snapshot.yaml",
-    "amend_budget_retention",
-    "completed_review_source_identity",
-    "consumed_review_node_local",
-    "convergence_failed_handoff.json",
-    "convergence_metadata_before_handoff.json",
-    "credential_prospective_source",
-    "current_owner_source",
-    "evidence_handoff",
-    "executor_reject_ledger.yaml",
-    "executor_reject_report.yaml",
-    "full_state_transport",
-    "harness_handoff_round3",
-    "immutable_github_binary",
-    "multica_issue_aiteam_812.json",
-    "normal_reservation_hydration",
-    "oac_legacy",
-    "operator_assignment_observation",
-    "operator_reservation_dispatch",
-    "operator_review_recovery",
-    "owner_amendment_admission",
-    "preview_publication",
-    "prospective_owner_assessment",
-    "reject_integration_evidence",
-    "sdk_command18_checkpoint",
-    "sdk_native_publication",
-    "system_historical_source",
-    "ui_preserved_owner_assessment",
-    "unconsumed_evidence_retirement",
-    "untracked_preservation",
-}
+TRANSITIONAL_FIXTURES: set[str] = set()
 SYNTHETIC_FIXTURES = {"smoke_p1.yaml", "smoke_live_manifest.yaml"}
 
 

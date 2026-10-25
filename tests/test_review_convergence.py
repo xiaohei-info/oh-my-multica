@@ -763,9 +763,9 @@ def test_legacy_cycle_without_blocker_facts_fails_closed():
     ],
 )
 def test_corrupt_legacy_ledger_is_invalid(
-    aiteam_849_legacy_snapshot, corrupt,
+    legacy_convergence_snapshot, corrupt,
 ):
-    ledger = deepcopy(aiteam_849_legacy_snapshot["work_item"]["review_ledger"])
+    ledger = deepcopy(legacy_convergence_snapshot["work_item"]["review_ledger"])
     corrupt(ledger)
 
     with pytest.raises(ValueError) as exc_info:
@@ -823,9 +823,9 @@ def test_corrupt_legacy_ledger_is_invalid(
     ],
 )
 def test_legacy_shared_field_mutations_are_invalid(
-    aiteam_849_legacy_snapshot, mutate,
+    legacy_convergence_snapshot, mutate,
 ):
-    ledger = deepcopy(aiteam_849_legacy_snapshot["work_item"]["review_ledger"])
+    ledger = deepcopy(legacy_convergence_snapshot["work_item"]["review_ledger"])
     mutate(ledger)
 
     with pytest.raises(ValueError) as exc_info:
@@ -1475,9 +1475,9 @@ def _empty_legacy_ledger(verdict):
         "classification", "deeper"),
 ], ids=["stale-unchanged-count", "stale-summary-classification"])
 def test_legacy_latest_classification_count_mismatch_is_invalid(
-    aiteam_849_legacy_snapshot, mutate,
+    legacy_convergence_snapshot, mutate,
 ):
-    ledger = deepcopy(aiteam_849_legacy_snapshot["work_item"]["review_ledger"])
+    ledger = deepcopy(legacy_convergence_snapshot["work_item"]["review_ledger"])
     mutate(ledger)
 
     with pytest.raises(ValueError) as exc_info:
@@ -1539,9 +1539,9 @@ def test_legacy_classification_history_rejects_invalid_combinations(
 
 @pytest.mark.parametrize("verdict", ["pass", "pass-with-nits"])
 def test_legacy_pass_verdict_with_open_blockers_is_invalid(
-    aiteam_849_legacy_snapshot, verdict,
+    legacy_convergence_snapshot, verdict,
 ):
-    ledger = deepcopy(aiteam_849_legacy_snapshot["work_item"]["review_ledger"])
+    ledger = deepcopy(legacy_convergence_snapshot["work_item"]["review_ledger"])
     ledger["cycles"][-1]["verdict"] = verdict
 
     with pytest.raises(ValueError) as exc_info:

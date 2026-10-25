@@ -3,7 +3,7 @@ from copy import deepcopy
 from dataclasses import asdict
 import json
 
-from ..core.owner_amendment import digest, plain
+from ..core.digest import digest, plain
 
 from ..core.taskmeta import TaskKind, TaskPhase, review_context_binding, DECISION_REQUIRED_SCHEMA
 from ..engines.models import WorkItemStatus
@@ -13,12 +13,9 @@ SCHEMA = "omac.amendment-scope-gap/v1"
 
 
 def scope_gap_template(item):
-    ref = next((r for r in item.source_refs if r.get("label") == "owner-source"), {})
     return {"schema": SCHEMA, "reason_code": "scope-gap", "issue_id": item.id,
             "worker": item.worker, "run_id": "<current-direct-planner-run-id>",
             "review_context_binding": review_context_binding(item),
-            "owner_resolution": item.dag_key.removeprefix("amend-owner-") if item.dag_key.startswith("amend-owner-") else None,
-            "owner_source_sha256": ref.get("content_sha256"),
             "summary": "<observed source or authorized assessment boundary gap>",
             "decision_needed": "<exact missing input or assessment authority>",
             "evidence": []}
@@ -69,7 +66,7 @@ def report_scope_gap(store, runtime, issue_id, report):
     with store.worker_control_lock(issue_id):
         item = deepcopy(store.get_work_item(issue_id))
         template = scope_gap_template(item)
-        fixed = {"schema", "issue_id", "worker", "review_context_binding", "owner_resolution", "owner_source_sha256"}
+        fixed = {"schema", "issue_id", "worker", "review_context_binding"}
         if (set(report) != set(template) or any(report[k] != template[k] for k in fixed)
                 or item.kind != TaskKind.AMENDMENT or item.phase != TaskPhase.AUTHORING
                 or item.status not in {WorkItemStatus.IN_PROGRESS, WorkItemStatus.BLOCKED}

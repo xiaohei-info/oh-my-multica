@@ -15,10 +15,6 @@ from typing import Any
 
 import yaml
 
-from .literal_correction import (
-    OP as LITERAL_CORRECTION_OPERATION, literal_operation,
-    validate_literal_operation, verify_literal_correction, literal_review_binding,
-)
 from .lint import lint
 from .manifest import (
     Manifest, Node, _dump_contract, _load_contract, load_manifest, save_manifest,
@@ -38,7 +34,7 @@ from .taskmeta import (
     amendment_review_nits_acceptance_is_valid,
 )
 from ..engines.models import WorkItemStatus
-from ..errors import NeedsDecision, ValidationError
+from ..errors import NeedsDecision, ValidationError, WorkItemNotFoundError
 from ..i18n import ui
 
 
@@ -651,12 +647,8 @@ def validate_proposal(
     if proposal.get("budget_policy") == "preserve" and any(
         isinstance(op, dict) and op.get("historical_contract_correction") is True for op in operations
     ):
-        return errors + ["preserve budget policy does not support historical responsibility corrections; do not omit required owner operations to bypass this boundary"]
+        return errors + ["preserve budget policy does not support historical responsibility corrections; split the correction into its own amendment"]
 
-    try:
-        literal_operation(proposal)
-    except ValidationError as exc:
-        return [str(exc)]
     seen: set[str] = set()
     for index, operation in enumerate(operations):
         prefix = f"operations[{index}]"
@@ -664,10 +656,10 @@ def validate_proposal(
             errors.append(f"{prefix} must be an object")
             continue
         op = operation.get("op")
-        if op not in {"update", "add", "remove", "resume", _RESPONSIBILITY_OPERATION, LITERAL_CORRECTION_OPERATION}:
+        if op not in {"update", "add", "remove", "resume", _RESPONSIBILITY_OPERATION}:
             errors.append(
                 f"{prefix}.op must be update, add, remove, resume, or "
-                f"{_RESPONSIBILITY_OPERATION}, or {LITERAL_CORRECTION_OPERATION}")
+                f"{_RESPONSIBILITY_OPERATION}")
             continue
         if "clear_contract_boundary" in operation and op != "update":
             errors.append(
@@ -701,12 +693,6 @@ def validate_proposal(
         if node_id in seen:
             errors.append(f"{prefix}: node {node_id!r} has multiple operations")
         seen.add(node_id)
-        if op == LITERAL_CORRECTION_OPERATION:
-            try:
-                validate_literal_operation(manifest, operation)
-            except ValidationError as exc:
-                errors.append(f"{prefix}: {exc}")
-            continue
         if op == _RESPONSIBILITY_OPERATION:
             responsibility_errors = _validate_responsibility_operation(
                 node, operation, prefix)
@@ -940,9 +926,6 @@ def _proposal_core(proposal: dict[str, Any]) -> dict[str, Any]:
     }
     if "budget_policy" in proposal:
         result["budget_policy"] = proposal["budget_policy"]
-    if "owner_resolution" in proposal:
-        result["owner_resolution"] = proposal["owner_resolution"]
-        result["owner_resolution_approval"] = proposal.get("owner_resolution_approval")
     return result
 
 
@@ -957,7 +940,6 @@ def _amendment_id(
     acceptance_digest: str | None = None,
     issue_id: str | None = None,
     reviewer_verdict: str | None = None,
-    literal_binding: dict | None = None,
     budget_bindings: dict | None = None,
 ) -> str:
     # Bind the reviewed envelope as well as the definition.  Otherwise a
@@ -969,8 +951,6 @@ def _amendment_id(
         "issue_id": issue_id,
         "reviewer_verdict": reviewer_verdict,
     }
-    if literal_binding is not None:
-        envelope["literal_review_binding"] = literal_binding
     if budget_bindings is not None:
         envelope["budget_bindings"] = budget_bindings
     identity_parts = [
@@ -1006,10 +986,7 @@ def build_reviewed_amendment(
         raise ValidationError(
             "Only a reviewer pass or pass-with-nits can enter human confirmation")
 
-    from .owner_amendment import validate_affected
-    validate_affected(manifest, proposal, store, runtime)
-    verify_literal_correction(manifest, proposal, store, runtime)
-    literal_binding = literal_review_binding(proposal, store, runtime, issue_id)
+    validate_affected(manifest, proposal, store)
     minimal, derived, immutable = _minimal_rerun(manifest, proposal)
     if immutable:
         raise ValidationError(
@@ -1059,12 +1036,9 @@ def build_reviewed_amendment(
         acceptance_digest=base.get("acceptance_sha256"),
         issue_id=issue_id,
         reviewer_verdict=reviewer_verdict,
-        literal_binding=literal_binding,
         budget_bindings=budget_bindings,
     )
     review = {"issue_id": issue_id, "verdict": reviewer_verdict}
-    if literal_binding is not None:
-        review["literal_review_binding"] = literal_binding
     # Keep the Reviewer verdict untouched while carrying a read-only snapshot of
     # the facts the operator must accept for a pass-with-nits amendment.  The
     # marker is checked again against Store facts before either acceptance or
@@ -1356,11 +1330,34 @@ def _normalize_recovered_authoring_node(
     return True
 
 
+def validate_affected(manifest: Manifest, proposal: dict[str, Any], store: Any) -> None:
+    """Fail closed when the derived affected set touches a vanished WorkItem or an unresolved held decision.
+
+    The affected set is derived from the operations and the minimal re-run, never from a caller-chosen
+    node list, so an amendment cannot reach beyond what its operations imply.
+    """
+    minimal, _, _ = _minimal_rerun(manifest, proposal)
+    affected = set(_changed_node_ids(proposal)) | {n for ids in minimal.values() for n in ids}
+    for node_id in sorted(affected):
+        node = manifest.nodes.get(node_id)
+        if not (node and node.work_item_id):
+            continue
+        try:
+            decision = store.get_work_item(node.work_item_id).decision_required
+        except WorkItemNotFoundError as exc:
+            raise ValidationError(
+                f"Affected node {node_id!r} lost its work item on the platform; inspect it with "
+                f"`omac node show <manifest> {node_id}` before proposing or accepting this amendment") from exc
+        if isinstance(decision, dict) and decision.get("reason_code") == "worker-decision-required":
+            raise ValidationError(
+                f"Affected node {node_id!r} holds an unresolved worker decision; resolve it first "
+                f"(`omac work show {node.work_item_id}`), then propose the amendment again")
+
+
 def _resume_apply_ledger(
     manifest: Manifest,
     manifest_path: str,
     store: Any,
-    before_recovery=None,
 ) -> dict[str, list[str]]:
     ledger = manifest.meta.get("amendment_apply")
     if not isinstance(ledger, dict) or ledger.get("schema") != APPLY_LEDGER_SCHEMA:
@@ -1520,16 +1517,10 @@ def _resume_apply_ledger(
             _save_ledger(manifest, manifest_path, ledger)
             summary["observed_progress"].append(node_id)
             continue
-        if before_recovery is not None:
-            before_recovery(manifest, node_id)
         entry["state"] = (
             "repairing" if legacy_synced_authoring else "syncing")
         entry["attempt_baseline"] = current
         _save_ledger(manifest, manifest_path, ledger)
-        if before_recovery is not None:
-            confirmed = load_manifest(manifest_path)
-            if confirmed != manifest:
-                raise ValidationError("Owner recovery intention/checkpoint was not confirmed; observe without restoring")
         prepare_stage_recovery(
             node,
             store,
@@ -1611,9 +1602,6 @@ def apply_amendment(
     runtime: Any = None,
 ) -> dict[str, Any]:
     amendment = parse_proposal(amendment_source)
-    from .prospective_owner import reject_unallocated_application
-
-    reject_unallocated_application(amendment)
     review = amendment.get("review")
     if not isinstance(review, dict) or review.get("verdict") not in {
         "pass", "pass-with-nits",
@@ -1658,10 +1646,6 @@ def apply_amendment(
         identity_kwargs["budget_bindings"] = budget_bindings
     elif budget_bindings is not None:
         raise ValidationError("Budget bindings require explicit preserve policy")
-    if literal_operation(amendment) is not None:
-        if identity_schema != AMENDMENT_IDENTITY_SCHEMA or not review.get("literal_review_binding"):
-            raise ValidationError("Literal correction requires the bound independent review identity")
-        identity_kwargs["literal_binding"] = review["literal_review_binding"]
     expected_id = _amendment_id(
         base.get("definition_sha256") or "",
         amendment,
@@ -1707,13 +1691,7 @@ def apply_amendment(
     already_applied = current.meta.get("last_amendment_id") == amendment.get("amendment_id")
     runtime_rebased = False
     if not already_applied:
-        from .owner_amendment import verify_reviewed_resolution
-        verify_reviewed_resolution(current, amendment, store, runtime, manifest_path)
-        verify_literal_correction(current, amendment, store, runtime)
-        if literal_operation(amendment) is not None and literal_review_binding(
-            amendment, store, runtime, review.get("issue_id")
-        ) != review["literal_review_binding"]:
-            raise ValidationError("Literal correction independent review facts changed")
+        validate_affected(current, amendment, store)
         runtime_rebased = _verify_base(current, amendment)
         expected_acceptance = (amendment.get("base") or {}).get(
             "acceptance_sha256")
@@ -1796,14 +1774,7 @@ def apply_amendment(
 
     if budget_bindings is not None:
         _validate_preserved_budget_ledger(current.meta.get("amendment_apply") or {}, budget_bindings)
-    before_recovery = None
-    if amendment.get("owner_resolution"):
-        from .owner_amendment import guard_apply_resume
-        guard_apply_resume(current, amendment, store, runtime)
-        before_recovery = lambda manifest, node_id: guard_apply_resume(
-            manifest, amendment, store, runtime, before_node=node_id)
-    sync_summary = _resume_apply_ledger(
-        current, manifest_path, store, before_recovery=before_recovery)
+    sync_summary = _resume_apply_ledger(current, manifest_path, store)
 
     return {
         "amendment_id": amendment.get("amendment_id"),

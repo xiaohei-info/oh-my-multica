@@ -87,54 +87,6 @@ def test_review_identity_binds_explicit_budget_policy(scenario):
     assert preserved["amendment_id"] != renewed["amendment_id"]
 
 
-@pytest.fixture
-def actual_packet():
-    folder = Path(__file__).parent / "fixtures/amend_budget_retention"
-    manifest = load_manifest(str(folder / "manifest.yaml"))
-    proposal = core.parse_proposal((folder / "proposal.yaml").read_text())
-    items = {}
-    for file in folder.glob("current-control-*.json"):
-        d = json.loads(file.read_text())
-        d["bounces"] = SimpleNamespace(**d["bounces"])
-        items[d["id"]] = SimpleNamespace(**d)
-    store = Mock()
-    store.get_work_item.side_effect = lambda iid: items[iid]
-    return manifest, proposal, items, store
-
-
-def test_actual_seven_effective_baselines_are_retained_read_only(actual_packet):
-    manifest, proposal, items, store = actual_packet
-    from omac.core.retry_budget import preserved_amendment_budget
-
-    before = deepcopy(items)
-    nodes = core._minimal_rerun(manifest, proposal)[0]
-    ids = sorted(set(k for values in nodes.values() for k in values))
-    assert len(ids) == 7
-    result = {}
-    for node_id in ids:
-        item = items[manifest.nodes[node_id].work_item_id]
-        result[node_id] = preserved_amendment_budget(manifest, node_id, item)
-    assert result["authorization"]["effective_baseline"] == {
-        "worker": 0,
-        "review": 0,
-        "merge": 0,
-    }
-    assert result["authorization"]["consumed"] == {"worker": 1, "review": 1, "merge": 0}
-    assert result["extension-package"]["effective_baseline"] == {
-        "worker": 0,
-        "review": 4,
-        "merge": 0,
-    }
-    assert result["extension-package"]["consumed"] == {
-        "worker": 0,
-        "review": 0,
-        "merge": 0,
-    }
-    assert sum(n.status == "done" for n in manifest.nodes.values()) == 68
-    assert items == before
-    store.update_work_item_metadata.assert_not_called()
-
-
 def seed_authority(c, baseline, *, native=True, active=False):
     record = {
         "amendment_id": "amend-old",
@@ -618,3 +570,16 @@ def test_preserve_review_and_merge_recovery_does_not_renew_relative_budget(
     assert c.item.bounces == before
     assert consumed_bounces(m, "bootstrap", c.item, "worker") == 1
     assert consumed_bounces(m, "bootstrap", c.item, "review") == 1
+
+
+def test_effective_baseline_is_read_from_manifest_authority_without_writes(scenario):
+    from omac.core.retry_budget import preserved_amendment_budget
+
+    c = scenario
+    c.item.bounces.review = 5
+    seed_authority(c, {"worker": 0, "review": 4, "merge": 0})
+    before = deepcopy(c.item)
+    result = preserved_amendment_budget(load_manifest(c.path), "bootstrap", c.item)
+    assert result["effective_baseline"] == {"worker": 0, "review": 4, "merge": 0}
+    assert result["consumed"] == {"worker": 1, "review": 1, "merge": 0}
+    assert c.item == before

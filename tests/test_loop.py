@@ -460,8 +460,8 @@ def _loop_to_settle(store, runtime, manifest, path, max_rounds=50, max_parallel=
     return result
 
 
-def _legacy_convergence_handoff_case(tmp_path, aiteam_849_legacy_snapshot):
-    snapshot = aiteam_849_legacy_snapshot["work_item"]
+def _legacy_convergence_handoff_case(tmp_path, legacy_convergence_snapshot):
+    snapshot = legacy_convergence_snapshot["work_item"]
     engine = create_engine(
         "mock", _config(MOCK_AUTO_COMPLETE="false")
     )
@@ -472,7 +472,7 @@ def _legacy_convergence_handoff_case(tmp_path, aiteam_849_legacy_snapshot):
         contract=_contract(),
     )
     manifest = _manifest([node])
-    path = str(tmp_path / "open-agent-cluster.yaml")
+    path = str(tmp_path / "demo-project.yaml")
     save_manifest(manifest, path)
     item = engine.store.create_work_item(
         "ws",
@@ -498,10 +498,10 @@ def _legacy_convergence_handoff_case(tmp_path, aiteam_849_legacy_snapshot):
 
 
 def test_pending_legacy_review_handoff_is_blocked_before_assign_or_wake(
-    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+    tmp_path, monkeypatch, legacy_convergence_snapshot,
 ):
     engine, manifest, _path, node, _item = _legacy_convergence_handoff_case(
-        tmp_path, aiteam_849_legacy_snapshot,
+        tmp_path, legacy_convergence_snapshot,
     )
 
     writes = []
@@ -530,10 +530,10 @@ def test_pending_legacy_review_handoff_is_blocked_before_assign_or_wake(
 
 
 def test_runner_persists_legacy_convergence_decision_once_without_dispatch(
-    tmp_path, monkeypatch, aiteam_849_legacy_snapshot,
+    tmp_path, monkeypatch, legacy_convergence_snapshot,
 ):
     engine, manifest, path, node, item = _legacy_convergence_handoff_case(
-        tmp_path, aiteam_849_legacy_snapshot,
+        tmp_path, legacy_convergence_snapshot,
     )
     decision_writes = []
     original_update = engine.store.update_work_item_metadata
@@ -583,7 +583,7 @@ def test_runner_persists_legacy_convergence_decision_once_without_dispatch(
     assert engine.runtime.list_runs(item.id) == []
 
 
-def _aiteam_834_legacy_delivery(tmp_path):
+def _legacy_delivery(tmp_path):
     engine = create_engine(
         "mock", _config(MOCK_AUTO_COMPLETE="false"))
     contract = _contract()
@@ -593,7 +593,7 @@ def _aiteam_834_legacy_delivery(tmp_path):
         contract=contract,
     )
     manifest = _manifest([node])
-    path = str(tmp_path / "open-agent-cluster.yaml")
+    path = str(tmp_path / "demo-project.yaml")
     save_manifest(manifest, path)
 
     tick(engine.store, engine.runtime, manifest, path, max_parallel=1)
@@ -634,11 +634,11 @@ def _aiteam_834_legacy_delivery(tmp_path):
     return engine, manifest, path, node, item
 
 
-def test_aiteam_834_legacy_delivery_requires_explicit_node_retry(
+def test_legacy_delivery_requires_explicit_node_retry(
     tmp_path, monkeypatch,
 ):
     """缺 immutable delivery identity 的旧返工不得猜证据或触发任何 Run。"""
-    engine, manifest, path, node, item = _aiteam_834_legacy_delivery(tmp_path)
+    engine, manifest, path, node, item = _legacy_delivery(tmp_path)
 
     monkeypatch.setattr(
         engine.runtime, "wake",
@@ -670,7 +670,7 @@ def test_aiteam_834_legacy_delivery_requires_explicit_node_retry(
 def test_legacy_detection_waits_for_active_direct_run_without_writes(
     tmp_path, monkeypatch,
 ):
-    engine, manifest, path, node, item = _aiteam_834_legacy_delivery(tmp_path)
+    engine, manifest, path, node, item = _legacy_delivery(tmp_path)
     engine.store.assign_work_item(item.id, node.worker, "worker")
     assignments = len(engine.store.assign_log)
     runs = list(engine.runtime.list_runs(item.id))
@@ -709,7 +709,7 @@ def test_legacy_detection_propagates_run_observation_failure(
 ):
     from omac.errors import PlatformError
 
-    engine, manifest, path, _, item = _aiteam_834_legacy_delivery(tmp_path)
+    engine, manifest, path, _, item = _legacy_delivery(tmp_path)
     monkeypatch.setattr(
         engine.runtime, "list_runs",
         lambda _item_id: (_ for _ in ()).throw(PlatformError("runs unavailable")),
@@ -729,7 +729,7 @@ def test_legacy_detection_propagates_run_observation_failure(
 def test_legacy_decision_restart_does_not_duplicate_comment_or_dispatch(
     tmp_path, monkeypatch,
 ):
-    engine, manifest, path, node, item = _aiteam_834_legacy_delivery(tmp_path)
+    engine, manifest, path, node, item = _legacy_delivery(tmp_path)
     original_save = loop.save_manifest
     crashed = False
 
@@ -1473,7 +1473,7 @@ class TestHappyPath:
             "ws",
             target.title,
             "stale issue body",
-            dag_key="oac-release/release-artifact-tooling",
+            dag_key="demo-release/release-artifact-tooling",
             worker="alice",
             reviewer="bob",
             blocked_by=old_dependencies,
@@ -1500,7 +1500,7 @@ class TestHappyPath:
 
         manifest = _manifest([*dependency_nodes, target], meta={
             "workspace_id": "ws",
-            "dag_key": "oac-release",
+            "dag_key": "demo-release",
         })
         path = _tmp_manifest_path(manifest)
         events = []
@@ -3404,7 +3404,7 @@ def test_reviewer_no_submit_retry_crash_after_intent_fails_closed_on_restart(
 def test_legacy_review_projection_uses_delivery_time_not_issue_update_time(
     tmp_path, monkeypatch,
 ):
-    """AITEAM-826:issue 晚更新不能吞掉当前 reviewer Run。"""
+    """PROJ-826:issue 晚更新不能吞掉当前 reviewer Run。"""
     eng, manifest, path, item, reviewer_id = (
         _reviewer_runtime_failure_fixture(tmp_path))
     eng.store.update_work_item_metadata(item.id, reviewer_run_baseline={})
@@ -5990,7 +5990,7 @@ class TestEvidenceGateRegression:
         assert manifest.nodes["a"].status == "done"
 
 
-# ==================== AITEAM-354:reviewer reject 有界回退受 retry.review 控制 ====================
+# ==================== PROJ-354:reviewer reject 有界回退受 retry.review 控制 ====================
 
 class TestReviewerRejectBoundedFallback:
     """节点 reviewer reject 的「回到 worker」回退次数受 config.retry.review 控制。

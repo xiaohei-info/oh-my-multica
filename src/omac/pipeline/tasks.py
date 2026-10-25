@@ -1013,8 +1013,6 @@ def run_task(
     reuse_dag_key: bool = False,
     review_acceptance_doc: Any = None,
     review_amendment_manifest: Any = None,
-    before_review_dispatch: Optional[Callable[[WorkItem, str], None]] = None,
-    before_authoring_dispatch: Optional[Callable[[str, str], None]] = None,
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -1388,8 +1386,6 @@ def run_task(
 
     def _dispatch_authoring_and_wait() -> WorkItem:
         _verify_pristine_attempt_before_dispatch()
-        if before_authoring_dispatch is not None:
-            before_authoring_dispatch(item_id, "before")
         baseline = None
         if runtime.capabilities.stable_direct_run_identity:
             baseline = {
@@ -1398,8 +1394,6 @@ def run_task(
             }
         store.mark_in_progress(item_id)
         store.assign_work_item(item_id, assignee, "worker")
-        if before_authoring_dispatch is not None:
-            before_authoring_dispatch(item_id, "after-assignment")
         runtime.wake(item_id, assignee, "worker")
         log.info(
             logsetup.EVT_DISPATCH,
@@ -1701,8 +1695,6 @@ def run_task(
                     if run.kind == "direct"
                 }
             _raise_if_reviewer_dispatch_stopped(store, item_id, kind)
-            if before_review_dispatch is not None:
-                before_review_dispatch(store.get_work_item(item_id), reviewer)
             dispatched = runtime.dispatch_reviewer(store, item_id, reviewer)
             if not dispatched:
                 _raise_if_reviewer_dispatch_stopped(store, item_id, kind)
