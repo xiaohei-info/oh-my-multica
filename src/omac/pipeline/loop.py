@@ -43,8 +43,7 @@ from ..core.manifest import (
     set_node,
 )
 from ..pipeline.delivery import (
-    advance_delivery, block_unproven_merge_request,
-    run_merge_delivery,
+    advance_delivery, run_merge_delivery,
 )
 from ..core.workitem import (
     AgentRunObservation,
@@ -62,8 +61,10 @@ from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from ..errors import AuthError, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
-from .decide_review import VerdictPath, decide_verdict_path
-from .decide_worker import AfterCi, NoSubmit, decide_after_ci, decide_worker_no_submit
+from .decide_review import VerdictObservation, VerdictPath, decide_verdict_path
+from .decide_worker import (
+    AfterCi, AfterCiObservation, NoSubmit, NoSubmitObservation, decide_after_ci, decide_worker_no_submit,
+)
 from .decide_merge import merge_bounce_attempt, merge_request_state_is_valid
 from .convergence import (
     ConvergenceResolution, ResolutionState, persist_decision,
@@ -81,9 +82,12 @@ from ..core.taskmeta import (
     review_nits_feedback_is_complete, review_nits_acceptance_is_valid,
     current_review_ledger,
 )
-from .apply import Ports, apply, apply_one
+from .apply import ManifestState, Ports, apply, apply_one
+from .decide_loop import (
+    DoneDevelopObservation, decide_done_develop, plan_block, plan_done_non_develop, plan_evidence_gate_failed,
+    plan_return_to_worker_failed, plan_worker_failed,
+)
 from .decide_effects import (
-    AddComment,
     Assign,
     ClearAssignment,
     CreateWorkItem,
@@ -1504,12 +1508,8 @@ def _block_runtime_failure(
         "failure_class": failure_class,
         "next_action": retry,
     }
-    _mark_recovery_pending(manifest, key)
-    apply([
-        UpdateMetadata(item.id, {'decision_required': decision}),
-        UpdateStatus(item.id, WorkItemStatus.BLOCKED),
-    ], Ports(store=store))
-    set_node(manifest, key, status="blocked")
+    _apply_plan(Ports(store=store), manifest, plan_block(
+        key, item.id, decision=decision, mark=True, persist_marker=_recovery_path(manifest) is not None))
     return reason
 
 
@@ -1533,12 +1533,8 @@ def _block_reviewer(
     decision = _reviewer_recovery_decision(
         manifest_path, key, item, reason_code, run_id=run_id)
     manifest._recovery_manifest_path = manifest_path
-    _mark_recovery_pending(manifest, key)
-    apply([
-        UpdateMetadata(item.id, {'decision_required': decision}),
-        UpdateStatus(item.id, WorkItemStatus.BLOCKED),
-    ], Ports(store=store))
-    set_node(manifest, key, status="blocked")
+    _apply_plan(Ports(store=store), manifest, plan_block(
+        key, item.id, decision=decision, mark=True, persist_marker=True))
     return reason
 
 
@@ -1549,12 +1545,9 @@ def _block_existing_reviewer_decision(
     item,
 ) -> str:
     """Keep a persisted decision or blocked status authoritative."""
-    set_node(manifest, key, status="blocked")
-    _mark_recovery_pending(manifest, key)
-    if item.status != WorkItemStatus.BLOCKED:
-        apply([
-            UpdateStatus(item.id, WorkItemStatus.BLOCKED),
-        ], Ports(store=store))
+    _apply_plan(Ports(store=store), manifest, plan_block(
+        key, item.id, mark=True, persist_marker=_recovery_path(manifest) is not None,
+        write_status=item.status != WorkItemStatus.BLOCKED, blocked_first=True))
     return ui(
         "Reviewer dispatch is blocked by the existing decision or platform status.",
         "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
@@ -1619,18 +1612,10 @@ def _block_review_nits_acceptance(
         "verdict": "pass-with-nits",
         "next_action": f"omac node accept-nits {manifest_path} {key}",
     }
-    if item.decision_required != decision:
-        _mark_recovery_pending(manifest, key)
-        apply([
-            UpdateMetadata(item.id, {'decision_required': decision}),
-        ], Ports(store=store))
-    else:
-        _mark_recovery_pending(manifest, key)
-    if item.status != WorkItemStatus.BLOCKED:
-        apply([
-            UpdateStatus(item.id, WorkItemStatus.BLOCKED),
-        ], Ports(store=store))
-    set_node(manifest, key, status="blocked")
+    _apply_plan(Ports(store=store), manifest, plan_block(
+        key, item.id, decision=decision, write_decision=item.decision_required != decision, mark=True,
+        persist_marker=_recovery_path(manifest) is not None,
+        write_status=item.status != WorkItemStatus.BLOCKED))
     return ui(
         "Reviewer returned pass-with-nits; caller acceptance is required before merge. "
         f"Run `omac node accept-nits {manifest_path} {key}` to accept, or "
@@ -1669,16 +1654,11 @@ def _block_review_rework_budget(
         value = getattr(item, field, None)
         if isinstance(value, dict) and value:
             decision[field] = value
-    _mark_recovery_pending(manifest, key)
-    apply([
-        UpdateMetadata(item.id, {'decision_required': decision}),
-        UpdateStatus(item.id, WorkItemStatus.BLOCKED),
-        AddComment(item.id, ui(
-        f"Review retry limit ({budget.authorized_through_round}) exhausted: {reason}",
-        f"评审回退上界({budget.authorized_through_round})已耗尽: {reason}",
-    )),
-    ], Ports(store=store))
-    set_node(manifest, key, status="blocked")
+    _apply_plan(Ports(store=store), manifest, plan_block(
+        key, item.id, decision=decision, mark=True, persist_marker=_recovery_path(manifest) is not None,
+        comment=ui(
+            f"Review retry limit ({budget.authorized_through_round}) exhausted: {reason}",
+            f"评审回退上界({budget.authorized_through_round})已耗尽: {reason}")))
     log.info(
         logsetup.EVT_NEEDS_DECISION,
         kind=_DAG_KIND,
@@ -3359,6 +3339,16 @@ def _confirmed_merge_has_real_recovery(item) -> bool:
     return bool(baseline and item.status != WorkItemStatus.DONE)
 
 
+def _recovery_path(manifest: Manifest) -> str | None:
+    return getattr(manifest, "_recovery_manifest_path", None)
+
+
+def _apply_plan(ports: Ports, manifest: Manifest, plan) -> str | None:
+    """Apply a decide_loop plan; the recovery marker is saved only when the manifest path is known."""
+    apply(plan, ports, ManifestState(manifest, _recovery_path(manifest)))
+    return plan.outcome
+
+
 def _mark_recovery_pending(manifest: Manifest, key: str) -> None:
     """Persist the active-set hint before writing a recovery control fact.
 
@@ -3502,62 +3492,20 @@ def _reconcile_confirmed_merge(store: WorkItemStore, manifest: Manifest, key: st
 def _reconcile_done_develop(store: WorkItemStore, manifest: Manifest, manifest_path: str, key: str,
                             node, item, pull_requests: Dict[str, Any]) -> bool:
     """A historical `done` develop node must still prove a confirmed remote merge."""
-    if not _pull_request_url(item):
-        apply([
-            UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-            AddComment(node.work_item_id, ui(
-            "⚠️ Develop done requires a PR with confirmed remote merge facts.",
-            "⚠️ develop done 必须有带远端合入确认事实的 PR。")),
-        ], Ports(store=store))
-        set_node(manifest, key, status="blocked")
-        return True
-    if not merge_request_state_is_valid(node.merge_request_state):
-        block_unproven_merge_request(
-            node, item, store, manifest_path, key,
-            f"Historical merge request state {node.merge_request_state!r} is invalid.")
-        return True
-    if confirmed_merge_is_closed(node):
-        if item.status != WorkItemStatus.DONE:
-            apply([
-                UpdateStatus(node.work_item_id, WorkItemStatus.DONE),
-            ], Ports(store=store))
-        return False
-    pull_request = pull_requests[key]  # observed only for nodes that still need the merge proof
-    state = _pull_request_state(pull_request)
-    if state == PullRequestState.MERGED and getattr(pull_request, "merged_at", None):
-        node.merged = True
-        node.merged_at = pull_request.merged_at
-        node.merge_request_state = None
-        if item.status != WorkItemStatus.DONE:
-            apply([
-                UpdateStatus(node.work_item_id, WorkItemStatus.DONE),
-            ], Ports(store=store))
-        return True
-    if state in {PullRequestState.OPEN, PullRequestState.PENDING}:
-        apply([
-            UpdateStatus(node.work_item_id, WorkItemStatus.IN_REVIEW),
-        ], Ports(store=store))
-        if state == PullRequestState.PENDING:
-            node.merge_request_state = "requested"
-        set_node(manifest, key, status="merging")
-        return True
-    if state == PullRequestState.UNKNOWN:
-        apply([
-            UpdateStatus(node.work_item_id, WorkItemStatus.IN_REVIEW),
-        ], Ports(store=store))
-        set_node(manifest, key, status="merging")
-        return True
-    detail = getattr(pull_request, "detail", "") or ui(
-        "PR closed without merge or merge facts are unavailable",
-        "PR 未合入即关闭，或无法获得合入事实")
-    apply([
-        UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-        AddComment(node.work_item_id, ui(
-        f"⚠️ Historical done state lacks confirmed merge; refusing closure. {detail}",
-        f"⚠️ 历史 done 状态缺少已确认的合入事实；拒绝收口。{detail}")),
-    ], Ports(store=store))
-    set_node(manifest, key, status="blocked")
-    return True
+    has_pull_request = bool(_pull_request_url(item))
+    valid = merge_request_state_is_valid(node.merge_request_state)
+    closed = confirmed_merge_is_closed(node)
+    observed = None
+    if has_pull_request and valid and not closed:
+        observed = pull_requests[key]  # observed only for nodes that still need the merge proof
+    obs = DoneDevelopObservation(
+        node_key=key, item_id=node.work_item_id, item_status=item.status, has_pull_request=has_pull_request,
+        request_state=node.merge_request_state, request_state_valid=valid, merge_closed=closed,
+        pr_state=None if observed is None else _pull_request_state(observed),
+        merged_at=getattr(observed, "merged_at", None), detail=getattr(observed, "detail", "") or "")
+    plan = decide_done_develop(obs, manifest_path)
+    apply(plan, Ports(store=store), ManifestState(manifest, manifest_path))
+    return plan.outcome == "changed"
 
 
 def _reconcile_done_node(store: WorkItemStore, manifest: Manifest, manifest_path: str, key: str,
@@ -3572,14 +3520,7 @@ def _reconcile_done_node(store: WorkItemStore, manifest: Manifest, manifest_path
     if getattr(item, "kind", TaskKind.DEVELOP) == TaskKind.DEVELOP:
         return _reconcile_done_develop(
             store, manifest, manifest_path, key, node, item, pull_requests)
-    if item.review_verdict == "pass-with-nits":
-        apply([
-            ResetReview(node.work_item_id),
-        ], Ports(store=store))
-    if item.status != WorkItemStatus.DONE:
-        apply([
-            UpdateStatus(node.work_item_id, WorkItemStatus.DONE),
-        ], Ports(store=store))
+    apply(plan_done_non_develop(node.work_item_id, item.status, item.review_verdict), Ports(store=store))
     return False
 
 
@@ -3708,11 +3649,8 @@ def _collect_worker_blocker(c: _Collect, n: _Node) -> bool:
     key, node = n.key, n.node
     # Structured worker blockers are operator decisions, not no-submit failures.
     if n.item.phase == TaskPhase.AUTHORING and n.item.decision_required:
-        if n.item.status != WorkItemStatus.BLOCKED:
-            apply([
-                UpdateStatus(n.item.id, WorkItemStatus.BLOCKED),
-            ], Ports(store=c.store))
-        set_node(c.manifest, key, status="blocked")
+        _apply_plan(Ports(store=c.store), c.manifest, plan_block(
+            key, n.item.id, write_status=n.item.status != WorkItemStatus.BLOCKED))
         c.failures[key] = str(n.item.decision_required.get("reason_code", "worker-decision-required"))
         return True
     return False
@@ -3762,17 +3700,12 @@ def _collect_legacy_delivery(c: _Collect, n: _Node) -> bool:
             "gate": "delivery-identity", "resume_issue_id": node.work_item_id,
             "node_id": key, "next_action": retry,
         }
-        if n.item.decision_required != decision:
-            _mark_recovery_pending(c.manifest, key)
-            apply([
-                UpdateMetadata(node.work_item_id, {'decision_required': decision}),
-                AddComment(node.work_item_id, reason),
-            ], Ports(store=c.store))
-        if n.item.status != WorkItemStatus.BLOCKED:
-            apply([
-                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-            ], Ports(store=c.store))
-        set_node(c.manifest, key, status="blocked")
+        differs = n.item.decision_required != decision
+        _apply_plan(Ports(store=c.store), c.manifest, plan_block(
+            key, node.work_item_id, decision=decision, write_decision=differs, mark=differs,
+            persist_marker=_recovery_path(c.manifest) is not None,
+            comment=reason if differs else None, comment_before_status=True,
+            write_status=n.item.status != WorkItemStatus.BLOCKED))
         c.failures[key] = reason
         return True
     return False
@@ -3957,8 +3890,8 @@ def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
     key, node = n.key, n.node
     worker_limit = c.limits.get("worker", DEFAULT_RETRY["worker"])
     consumed = consumed_bounces(c.manifest, key, n.item, "worker")
-    outcome = decide_worker_no_submit(
-        has_handoff=n.item.worker_handoff is not None, limit=worker_limit, consumed=consumed)
+    outcome = decide_worker_no_submit(NoSubmitObservation(
+        has_handoff=n.item.worker_handoff is not None, limit=worker_limit, consumed=consumed))
     if outcome is NoSubmit.REQUIRE_RETRY_INTENT:
         retry = f"omac node retry {c.manifest_path} {key}"
         reason = ui(
@@ -3977,15 +3910,10 @@ def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
             "node_id": key,
             "next_action": retry,
         }
-        if n.item.decision_required != decision:
-            _mark_recovery_pending(c.manifest, key)
-            apply([
-                UpdateMetadata(node.work_item_id, {'decision_required': decision}),
-            ], Ports(store=c.store))
-        apply([
-            UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-        ], Ports(store=c.store))
-        set_node(c.manifest, key, status="blocked")
+        differs = n.item.decision_required != decision
+        _apply_plan(Ports(store=c.store), c.manifest, plan_block(
+            key, node.work_item_id, decision=decision, write_decision=differs, mark=differs,
+            persist_marker=_recovery_path(c.manifest) is not None))
         c.failures[key] = reason
         return True
     cur_bounce = n.item.bounces.worker
@@ -4002,15 +3930,12 @@ def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
         n.item, n.worker_gate_errors = late_delivery
         set_node(c.manifest, key, status="in_progress")
     elif limit_exhausted:
-        apply([
+        cleared = apply([
             ClearAssignment(node.work_item_id),
-        ], Ports(store=c.store))
-        cleared = apply_one(UpdateMetadata(node.work_item_id, {'worker_handoff': {}}), Ports(store=c.store))
+            UpdateMetadata(node.work_item_id, {'worker_handoff': {}}),
+        ], Ports(store=c.store))[-1]
         _clear_recovery_pending(c.manifest, key, cleared)
-        apply([
-            UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-        ], Ports(store=c.store))
-        set_node(c.manifest, key, status="blocked")
+        _apply_plan(Ports(store=c.store), c.manifest, plan_block(key, node.work_item_id))
         c.failures[key] = ui(
             f"Worker did not deliver; retry limit {worker_limit} exhausted: {reason}",
             f"worker 未交付(回退上界 {worker_limit} 已耗尽): {reason}")
@@ -4061,15 +3986,8 @@ def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
                          absolute_count=cur_bounce + 1,
                          limit=worker_limit))
         except PlatformError as exc:
-            apply([
-                UpdateMetadata(node.work_item_id, {'worker_bounce': cur_bounce}),
-                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-                AddComment(node.work_item_id, ui(
-                    f"Failed to return delivery to worker {node.worker}; retry count rolled back: {exc}",
-                    f"回退到 worker {node.worker} 继续交付失败"
-                    f"(已回滚回退计数): {exc}")),
-            ], Ports(store=c.store))
-            set_node(c.manifest, key, status="blocked")
+            _apply_plan(Ports(store=c.store), c.manifest, plan_return_to_worker_failed(
+                key, node.work_item_id, node.worker, cur_bounce, str(exc)))
             c.failures[key] = ui(
                 f"Failed to return delivery to worker {node.worker}: {exc}",
                 f"回退到 worker {node.worker} 继续交付失败: {exc}")
@@ -4093,12 +4011,8 @@ def _collect_in_progress(c: _Collect, n: _Node) -> None:
         )
         if gate_errors:
             reason = "; ".join(gate_errors)
-            apply([
-                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-                AddComment(node.work_item_id, ui(
-                f"Evidence gate failed: {reason}", f"证据门未通过: {reason}")),
-            ], Ports(store=c.store))
-            set_node(c.manifest, key, status="blocked")
+            _apply_plan(Ports(store=c.store), c.manifest, plan_evidence_gate_failed(
+                key, node.work_item_id, reason))
             c.failures[key] = ui(
                 f"Worker evidence gate failed: {reason}",
                 f"worker 证据门未通过: {reason}")
@@ -4114,9 +4028,9 @@ def _collect_in_progress(c: _Collect, n: _Node) -> None:
         ci_action = advance_delivery(
             c.config or {}, c.manifest, key, c.store, c.runtime, c.code_host, c.limits,
             project_root=_project_root_from_manifest_path(c.manifest_path))
-        after = decide_after_ci(
+        after = decide_after_ci(AfterCiObservation(
             ci_action=ci_action, review_passed=_current_delivery_passed_review(n.item),
-            has_reviewer=bool(node.reviewer))
+            has_reviewer=bool(node.reviewer)))
         if after is AfterCi.BOUNCE:
             c.failures[key] = ui(
                 "CI failed; returned to the worker for resubmission.",
@@ -4158,12 +4072,7 @@ def _collect_in_progress(c: _Collect, n: _Node) -> None:
                          id=node.work_item_id, reason=ui(
                              "Merge confirmation failed", "merge 确认失败"))
     elif n.item.status == WorkItemStatus.FAILED:
-        apply([
-            UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-            AddComment(node.work_item_id, ui(
-            "Worker execution failed", "worker 执行失败")),
-        ], Ports(store=c.store))
-        set_node(c.manifest, key, status="blocked")
+        _apply_plan(Ports(store=c.store), c.manifest, plan_worker_failed(key, node.work_item_id))
         c.failures[key] = ui("Worker execution failed", "worker 执行失败")
         log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
                  id=node.work_item_id, reason=ui(
@@ -4183,11 +4092,8 @@ def _review_blocked_by_decision(c: _Collect, n: _Node) -> bool:
     n.decision_class = _classify_reviewer_recovery_decision(
         c.manifest_path, key, n.item)
     if n.decision_class in {"other", "explicit-review-retry"}:
-        if n.item.status != WorkItemStatus.BLOCKED:
-            apply([
-                UpdateStatus(n.item.id, WorkItemStatus.BLOCKED),
-            ], Ports(store=c.store))
-        set_node(c.manifest, key, status="blocked")
+        _apply_plan(Ports(store=c.store), c.manifest, plan_block(
+            key, n.item.id, write_status=n.item.status != WorkItemStatus.BLOCKED))
         c.failures[key] = ui(
             "Reviewer recovery is blocked by the existing decision.",
             "reviewer 恢复被现有 decision 阻塞。",
@@ -4371,26 +4277,20 @@ def _review_without_verdict(c: _Collect, n: _Node) -> None:
                 )
                 return None
         except PlatformError as exc:
-            apply([
-                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-                AddComment(node.work_item_id, ui(
-                f"Failed to resume reviewer {node.reviewer}: {exc}",
-                f"恢复 reviewer {node.reviewer} 失败: {exc}")),
-            ], Ports(store=c.store))
-            set_node(c.manifest, key, status="blocked")
+            _apply_plan(Ports(store=c.store), c.manifest, plan_block(
+                key, node.work_item_id, comment=ui(
+                    f"Failed to resume reviewer {node.reviewer}: {exc}",
+                    f"恢复 reviewer {node.reviewer} 失败: {exc}")))
             c.failures[key] = ui(
                 f"Failed to resume reviewer {node.reviewer}: {exc}",
                 f"恢复 reviewer {node.reviewer} 失败: {exc}")
             return None
     # reviewer 已落终态但缺结构化 review_verdict → blocked(无证据不予通过)
     if n.item.status in (WorkItemStatus.DONE, WorkItemStatus.FAILED, WorkItemStatus.BLOCKED):
-        apply([
-            UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-            AddComment(node.work_item_id, ui(
+        _apply_plan(Ports(store=c.store), c.manifest, plan_block(
+            key, node.work_item_id, comment=ui(
                 f"Reviewer platform status is {n.item.status.value}, but structured review_verdict evidence is missing.",
-                f"reviewer 平台 {n.item.status.value} 但缺 review_verdict 结构化证据")),
-        ], Ports(store=c.store))
-        set_node(c.manifest, key, status="blocked")
+                f"reviewer 平台 {n.item.status.value} 但缺 review_verdict 结构化证据")))
         c.failures[key] = ui(
             "Reviewer is missing review_verdict", "reviewer 缺 review_verdict")
         log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
@@ -4409,11 +4309,8 @@ def _review_consume_baseline(c: _Collect, n: _Node) -> bool:
             require_target=True,
         )
         if marker_error is not None:
-            if n.item.status != WorkItemStatus.BLOCKED:
-                apply([
-                    UpdateStatus(n.item.id, WorkItemStatus.BLOCKED),
-                ], Ports(store=c.store))
-            set_node(c.manifest, key, status="blocked")
+            _apply_plan(Ports(store=c.store), c.manifest, plan_block(
+                key, n.item.id, write_status=n.item.status != WorkItemStatus.BLOCKED))
             c.failures[key] = ui(
                 f"Reviewer recovery is unsafe: {marker_error}.",
                 f"reviewer 恢复不安全：{marker_error}。",
@@ -4439,19 +4336,16 @@ def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
         "review", DEFAULT_RETRY["review"])
     rework_budget = review_rework_budget(
         c.manifest, key, n.item, configured_review_limit)
-    path = decide_verdict_path(verdict=verdict, has_evidence_errors=bool(gate_errors))
+    path = decide_verdict_path(VerdictObservation(verdict=verdict, has_evidence_errors=bool(gate_errors)))
     if path is VerdictPath.REJECT_CHECKS:
         boundary_conflicts = contract_boundary_conflicts(
             c.manifest, node, n.item)
         if boundary_conflicts:
             decision = build_contract_boundary_decision(
                 n.item, node, boundary_conflicts)
-            _mark_recovery_pending(c.manifest, key)
-            apply([
-                UpdateMetadata(node.work_item_id, {'decision_required': decision, 'phase': TaskPhase.REVIEW}),
-                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-            ], Ports(store=c.store))
-            set_node(c.manifest, key, status="blocked")
+            _apply_plan(Ports(store=c.store), c.manifest, plan_block(
+                key, node.work_item_id, decision=decision, phase=TaskPhase.REVIEW, mark=True,
+                persist_marker=_recovery_path(c.manifest) is not None))
             c.failures[key] = ui(
                 "Reviewer required inputs outside the typed node contract; "
                 "operator decision is required before rework.",
@@ -4849,13 +4743,9 @@ def _dispatch(
                 gate="explicit-dispatch",
             )
         except PlatformError as exc:
-            apply([
-                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-                AddComment(node.work_item_id, ui(
+            _apply_plan(Ports(store=store), manifest, plan_block(key, node.work_item_id, comment=ui(
                 f"Failed to wake worker {worker}: {exc}",
-                f"唤醒 worker {worker} 失败: {exc}")),
-            ], Ports(store=store))
-            set_node(manifest, key, status="blocked")
+                f"唤醒 worker {worker} 失败: {exc}")))
             manifest_changed = True
             log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, reason=ui(
@@ -4863,10 +4753,7 @@ def _dispatch(
             continue
 
         if handoff.state == "needs-decision":
-            apply([
-                UpdateStatus(node.work_item_id, WorkItemStatus.BLOCKED),
-            ], Ports(store=store))
-            set_node(manifest, key, status="blocked")
+            _apply_plan(Ports(store=store), manifest, plan_block(key, node.work_item_id))
             manifest_changed = True
             continue
 

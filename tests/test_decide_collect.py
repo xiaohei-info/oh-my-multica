@@ -1,8 +1,10 @@
 """Result-collection decisions as pure facts -> action tables."""
 import pytest
 
-from omac.pipeline.decide_review import VerdictPath as V, decide_verdict_path
-from omac.pipeline.decide_worker import AfterCi as A, NoSubmit as N, decide_after_ci, decide_worker_no_submit
+from omac.pipeline.decide_review import VerdictObservation, VerdictPath as V, decide_verdict_path
+from omac.pipeline.decide_worker import (
+    AfterCi as A, AfterCiObservation, NoSubmit as N, NoSubmitObservation, decide_after_ci, decide_worker_no_submit,
+)
 
 
 @pytest.mark.parametrize("has_handoff,limit,consumed,expected", [
@@ -14,7 +16,7 @@ from omac.pipeline.decide_worker import AfterCi as A, NoSubmit as N, decide_afte
     (True, 2, 1, N.RETRY),
 ])
 def test_worker_no_submit(has_handoff, limit, consumed, expected):
-    assert decide_worker_no_submit(has_handoff=has_handoff, limit=limit, consumed=consumed) is expected
+    assert decide_worker_no_submit(NoSubmitObservation(has_handoff, limit, consumed)) is expected
 
 
 @pytest.mark.parametrize("ci,passed,reviewer,expected", [
@@ -26,7 +28,7 @@ def test_worker_no_submit(has_handoff, limit, consumed, expected):
     ("pass", False, False, A.CONFIRM_MERGE),
 ])
 def test_after_ci(ci, passed, reviewer, expected):
-    assert decide_after_ci(ci_action=ci, review_passed=passed, has_reviewer=reviewer) is expected
+    assert decide_after_ci(AfterCiObservation(ci, passed, reviewer)) is expected
 
 
 @pytest.mark.parametrize("verdict,errors,expected", [
@@ -38,4 +40,4 @@ def test_after_ci(ci, passed, reviewer, expected):
     ("pass-with-nits", True, V.REWORK),
 ])
 def test_verdict_path(verdict, errors, expected):
-    assert decide_verdict_path(verdict=verdict, has_evidence_errors=errors) is expected
+    assert decide_verdict_path(VerdictObservation(verdict, errors)) is expected

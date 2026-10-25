@@ -47,7 +47,8 @@ from ..core.workitem import (
 )
 from ..engines.codehost import CodeHost
 from .decide_merge import (
-    MergeAfterRequest, MergePrecheck, MergeStep, auth_error_durable, auth_error_remote, block_no_pull_request,
+    AfterMergeRequest, MergeAfterRequest, MergeObserved, MergePrecheck, MergePrecheckObservation, MergeStep,
+    auth_error_durable, auth_error_remote, block_no_pull_request,
     block_unproven, decide_after_merge_request, decide_merge_observed, decide_merge_precheck,
     merge_bounce_attempt, plan_blocked_timed_out_open, plan_bounce_pending, plan_observed_step,
     plan_request_intent, plan_request_sent, plan_resume_bounce, plan_settle, tail_of,
@@ -245,8 +246,8 @@ def run_merge_delivery(
     pr_url = ""
     if isinstance(run.item.artifacts, dict):
         pr_url = run.item.artifacts.get("pr_url") or run.item.artifacts.get("pr") or ""
-    precheck = decide_merge_precheck(
-        request_state=node.merge_request_state, has_pull_request=bool(pr_url))
+    precheck = decide_merge_precheck(MergePrecheckObservation(
+        request_state=node.merge_request_state, has_pull_request=bool(pr_url)))
     if precheck is MergePrecheck.RESUME_BOUNCE:
         return run.bounce(merge_bounce_attempt(node.merge_request_state))
     if precheck is MergePrecheck.BLOCK_NO_PULL_REQUEST:
@@ -260,8 +261,8 @@ def run_merge_delivery(
         observation = _observe_pull_request(code_host, pr_url)
     except AuthError:
         return run.auth_blocked()
-    step = decide_merge_observed(
-        request_state=node.merge_request_state, pr_state=_observation_state(observation))
+    step = decide_merge_observed(MergeObserved(
+        request_state=node.merge_request_state, pr_state=_observation_state(observation)))
     if step is MergeStep.SETTLE:
         return run.settle(observation)
     if step is not MergeStep.REQUEST:
@@ -282,8 +283,8 @@ def _request_merge(run: "_MergeRun", merge: dict, pr_url: str) -> str:
     except AuthError:
         return run.auth_blocked()
     state = _observation_state(observation)
-    after = decide_after_merge_request(
-        timed_out=timed_out, succeeded=bool(result.succeeded), pr_state=state)
+    after = decide_after_merge_request(AfterMergeRequest(
+        timed_out=timed_out, succeeded=bool(result.succeeded), pr_state=state))
     if after is MergeAfterRequest.SETTLE:
         return run.settle(observation, command_output=result.output if state not in {
             PullRequestState.MERGED, PullRequestState.PENDING} else "")

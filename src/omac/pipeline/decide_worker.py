@@ -5,7 +5,10 @@ and ``loop._worker_finished_without_submit`` observe, call these, then apply the
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
+
+from .decide_effects import Observation
 
 
 class NoSubmit(Enum):
@@ -14,10 +17,17 @@ class NoSubmit(Enum):
     RETRY = "retry"                                # bounded return to the Worker
 
 
-def decide_worker_no_submit(*, has_handoff: bool, limit: int, consumed: int) -> NoSubmit:
-    if not has_handoff:
+@dataclass(frozen=True)
+class NoSubmitObservation(Observation):
+    has_handoff: bool
+    limit: int
+    consumed: int
+
+
+def decide_worker_no_submit(obs: NoSubmitObservation) -> NoSubmit:
+    if not obs.has_handoff:
         return NoSubmit.REQUIRE_RETRY_INTENT
-    if limit == 0 or consumed >= limit:
+    if obs.limit == 0 or obs.consumed >= obs.limit:
         return NoSubmit.BUDGET_EXHAUSTED
     return NoSubmit.RETRY
 
@@ -30,11 +40,18 @@ class AfterCi(Enum):
     CONFIRM_MERGE = "confirm-merge"    # no reviewer configured
 
 
-def decide_after_ci(*, ci_action: str, review_passed: bool, has_reviewer: bool) -> AfterCi:
-    if ci_action == "bounce":
+@dataclass(frozen=True)
+class AfterCiObservation(Observation):
+    ci_action: str
+    review_passed: bool
+    has_reviewer: bool
+
+
+def decide_after_ci(obs: AfterCiObservation) -> AfterCi:
+    if obs.ci_action == "bounce":
         return AfterCi.BOUNCE
-    if ci_action == "blocked":
+    if obs.ci_action == "blocked":
         return AfterCi.BLOCK
-    if review_passed:
+    if obs.review_passed:
         return AfterCi.MERGE_PASSED_REVIEW
-    return AfterCi.QUEUE_REVIEW if has_reviewer else AfterCi.CONFIRM_MERGE
+    return AfterCi.QUEUE_REVIEW if obs.has_reviewer else AfterCi.CONFIRM_MERGE

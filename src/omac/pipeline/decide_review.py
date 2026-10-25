@@ -5,7 +5,10 @@ nits-acceptance checks read the platform, so the shell runs them only on the pat
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
+
+from .decide_effects import Observation
 
 
 class VerdictPath(Enum):
@@ -15,9 +18,15 @@ class VerdictPath(Enum):
     REWORK = "rework"                # reject with invalid evidence, or any verdict with evidence errors
 
 
-def decide_verdict_path(*, verdict: str, has_evidence_errors: bool) -> VerdictPath:
-    if has_evidence_errors:
+@dataclass(frozen=True)
+class VerdictObservation(Observation):
+    verdict: str
+    has_evidence_errors: bool
+
+
+def decide_verdict_path(obs: VerdictObservation) -> VerdictPath:
+    if obs.has_evidence_errors:
         return VerdictPath.REWORK
-    if verdict == "reject":
+    if obs.verdict == "reject":
         return VerdictPath.REJECT_CHECKS
-    return VerdictPath.NITS_CHECK if verdict == "pass-with-nits" else VerdictPath.MERGE
+    return VerdictPath.NITS_CHECK if obs.verdict == "pass-with-nits" else VerdictPath.MERGE

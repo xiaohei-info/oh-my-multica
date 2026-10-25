@@ -11,12 +11,13 @@ An "intent" or "requested" marker is never followed by a second merge request.
 from __future__ import annotations
 
 import shlex
+from dataclasses import dataclass
 from enum import Enum
 
 from ..core.workitem import PullRequestState, WorkItemStatus
 from ..i18n import ui
 from .decide_effects import (
-    AddComment, Assign, Plan, ResetReview, SaveState, SetNode, UpdateMetadata, UpdateStatus, Wake,
+    AddComment, Assign, Observation, Plan, ResetReview, SaveState, SetNode, UpdateMetadata, UpdateStatus, Wake,
 )
 
 VALID_MERGE_REQUEST_STATES = {None, "intent", "requested"}
@@ -45,12 +46,18 @@ class MergePrecheck(Enum):
     OBSERVE = "observe"                      # read the remote pull request, then decide again
 
 
-def decide_merge_precheck(*, request_state: str | None, has_pull_request: bool) -> MergePrecheck:
-    if merge_bounce_attempt(request_state) is not None:
+@dataclass(frozen=True)
+class MergePrecheckObservation(Observation):
+    request_state: str | None
+    has_pull_request: bool
+
+
+def decide_merge_precheck(obs: MergePrecheckObservation) -> MergePrecheck:
+    if merge_bounce_attempt(obs.request_state) is not None:
         return MergePrecheck.RESUME_BOUNCE
-    if not has_pull_request:
+    if not obs.has_pull_request:
         return MergePrecheck.BLOCK_NO_PULL_REQUEST
-    if not merge_request_state_is_valid(request_state):
+    if not merge_request_state_is_valid(obs.request_state):
         return MergePrecheck.BLOCK_INVALID_MARKER
     return MergePrecheck.OBSERVE
 
@@ -63,16 +70,22 @@ class MergeStep(Enum):
     REQUEST = "request"                # write the intent marker, then send exactly one request
 
 
-def decide_merge_observed(*, request_state: str | None, pr_state: PullRequestState) -> MergeStep:
-    if pr_state == PullRequestState.MERGED:
+@dataclass(frozen=True)
+class MergeObserved(Observation):
+    request_state: str | None
+    pr_state: PullRequestState
+
+
+def decide_merge_observed(obs: MergeObserved) -> MergeStep:
+    if obs.pr_state == PullRequestState.MERGED:
         return MergeStep.SETTLE
-    if pr_state == PullRequestState.PENDING:
+    if obs.pr_state == PullRequestState.PENDING:
         return MergeStep.RECORD_PENDING
-    if pr_state != PullRequestState.OPEN:
+    if obs.pr_state != PullRequestState.OPEN:
         return MergeStep.SETTLE
-    if request_state == "intent":
+    if obs.request_state == "intent":
         return MergeStep.BLOCK_PRIOR_INTENT
-    if request_state == "requested":
+    if obs.request_state == "requested":
         return MergeStep.STAY_PENDING
     return MergeStep.REQUEST
 
@@ -84,15 +97,20 @@ class MergeAfterRequest(Enum):
     BOUNCE_OR_BLOCK = "bounce-or-block"  # the command failed: bounded return to the worker
 
 
-def decide_after_merge_request(
-    *, timed_out: bool, succeeded: bool, pr_state: PullRequestState,
-) -> MergeAfterRequest:
-    if pr_state in {PullRequestState.MERGED, PullRequestState.PENDING}:
+@dataclass(frozen=True)
+class AfterMergeRequest(Observation):
+    timed_out: bool
+    succeeded: bool
+    pr_state: PullRequestState
+
+
+def decide_after_merge_request(obs: AfterMergeRequest) -> MergeAfterRequest:
+    if obs.pr_state in {PullRequestState.MERGED, PullRequestState.PENDING}:
         return MergeAfterRequest.SETTLE
-    if pr_state == PullRequestState.OPEN:
-        if timed_out:
+    if obs.pr_state == PullRequestState.OPEN:
+        if obs.timed_out:
             return MergeAfterRequest.BLOCK_TIMED_OUT_OPEN
-        if succeeded:
+        if obs.succeeded:
             return MergeAfterRequest.PENDING
         return MergeAfterRequest.BOUNCE_OR_BLOCK
     return MergeAfterRequest.SETTLE

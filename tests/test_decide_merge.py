@@ -4,6 +4,7 @@ import pytest
 from omac.core.workitem import PullRequestState as S
 from omac.pipeline.decide_merge import (
     MergeAfterRequest as After, MergePrecheck as Pre, MergeStep as Step,
+    AfterMergeRequest, MergeObserved, MergePrecheckObservation,
     decide_after_merge_request, decide_merge_observed, decide_merge_precheck,
     merge_bounce_attempt, merge_request_state_is_valid,
 )
@@ -21,7 +22,7 @@ from omac.pipeline.decide_merge import (
     ("requested", True, Pre.OBSERVE),
 ])
 def test_precheck(state, has_pr, expected):
-    assert decide_merge_precheck(request_state=state, has_pull_request=has_pr) is expected
+    assert decide_merge_precheck(MergePrecheckObservation(state, has_pr)) is expected
 
 
 @pytest.mark.parametrize("state,pr,expected", [
@@ -38,13 +39,13 @@ def test_precheck(state, has_pr, expected):
     ("requested", S.OPEN, Step.STAY_PENDING),
 ])
 def test_observed_pull_request(state, pr, expected):
-    assert decide_merge_observed(request_state=state, pr_state=pr) is expected
+    assert decide_merge_observed(MergeObserved(state, pr)) is expected
 
 
 @pytest.mark.parametrize("state", ["intent", "requested"])
 @pytest.mark.parametrize("pr", list(S))
 def test_a_marked_request_is_never_sent_twice(state, pr):
-    assert decide_merge_observed(request_state=state, pr_state=pr) is not Step.REQUEST
+    assert decide_merge_observed(MergeObserved(state, pr)) is not Step.REQUEST
 
 
 @pytest.mark.parametrize("timed_out,succeeded,pr,expected", [
@@ -58,7 +59,7 @@ def test_a_marked_request_is_never_sent_twice(state, pr):
     (True, False, S.UNKNOWN, After.SETTLE),
 ])
 def test_after_merge_request(timed_out, succeeded, pr, expected):
-    assert decide_after_merge_request(timed_out=timed_out, succeeded=succeeded, pr_state=pr) is expected
+    assert decide_after_merge_request(AfterMergeRequest(timed_out, succeeded, pr)) is expected
 
 
 def test_marker_parsing():
