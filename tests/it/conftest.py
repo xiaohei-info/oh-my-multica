@@ -47,6 +47,7 @@ def engine(stack, cli_env) -> Engine:
 def store(engine):
     """The real store; every work item the test creates is cancelled afterwards."""
     real, created = engine.store, []
+    real.created_ids = created
     original = real.create_work_item
 
     def tracking(*args, **kwargs):
@@ -59,12 +60,21 @@ def store(engine):
         yield real
     finally:
         for item_id in created:
-            try:
-                real.cancel_work_item(item_id)
-            except Exception:
-                pass
+            for cleanup in (engine.runtime.cancel, real.cancel_work_item):
+                try:
+                    cleanup(item_id)
+                except Exception:
+                    pass
 
 
 @pytest.fixture()
 def project(stack, tmp_path) -> Project:
     return Project(tmp_path, stack)
+
+
+@pytest.fixture()
+def kit(stack, engine, store, tmp_path, monkeypatch):
+    """The Loop driven in-process against the private Multica: real store, runtime and gh shim (tests/_support/loopkit.py)."""
+    from _support.loopkit import Kit
+
+    return Kit(stack, engine, tmp_path, monkeypatch)
