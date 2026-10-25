@@ -1910,6 +1910,83 @@ def _dispatch_reviewer_for_current_subject(
             store, runtime, code_host, manifest, key)
 
 
+def _prepare_new_review_subject(store, manifest, key, item_id, current, subject_digest):
+    """New subject: drop the old assignment and reviewer facts, one guarded write at a time.
+
+    Returns the prepared work item, or None when a guard stopped the dispatch."""
+    def guard() -> bool:
+        return _guard_reviewer_dispatch_control(store, manifest, key, item_id) is not None
+
+    # Recheck before any reset that could clear the old Reviewer facts.
+    if guard():
+        return None
+    # 先解除旧 subject 的 assignment；若随后崩溃，reviewer metadata 为空，
+    # restart 不会把旧 active Run 误认成新 subject 已派发。
+    store.clear_assignment(item_id)
+    if guard():
+        return None
+    store.update_work_item_metadata(
+        item_id, review_obligations=build_review_obligations(current))
+    if guard():
+        return None
+    prepared = store.prepare_review_cycle(item_id, subject_digest)
+    if guard():
+        return None
+    return prepared
+
+
+def _new_reviewer_baseline(runtime, current, item_id, subject_digest, node, reviewer_id):
+    if not runtime.capabilities.stable_direct_run_identity:
+        raise PlatformError(
+            "Reviewer recovery requires stable direct Run identity support")
+    identity = _delivery_identity(current)
+    cutoff = (
+        _parse_platform_time(identity.verification_created_at)
+        if identity is not None else None
+    )
+    if identity is None or not identity.is_complete() or cutoff is None or cutoff.tzinfo is None:
+        raise PlatformError(
+            "Reviewer dispatch requires a sealed delivery verification time")
+    baseline_ids, _ = _bounded_direct_run_baseline(
+        runtime.list_runs(item_id),
+        gate_cutoff_created_at=identity.verification_created_at)
+    return ReviewerRunBaseline(
+        schema=REVIEWER_RUN_BASELINE_SCHEMA,
+        subject_digest=subject_digest,
+        target_reviewer=node.reviewer,
+        target_agent_id=reviewer_id,
+        cutoff_created_at=identity.verification_created_at,
+        generation=f"review-{secrets.token_hex(8)}",
+        baseline_direct_run_ids=baseline_ids,
+    )
+
+
+def _observe_prepared_reviewer_assignment(store, runtime, item_id, reviewer_id, baseline) -> None:
+    """A persisted assignment must resolve to exactly one observable Run, or fail closed."""
+    for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
+        runs = runtime.list_runs(item_id)
+        observed = _observe_direct_run_attempt(
+            runs, reviewer_id,
+            baseline_direct_run_ids=baseline.baseline_direct_run_ids,
+            cutoff_created_at=baseline.cutoff_created_at,
+            attempt=baseline.attempt,
+        )
+        if observed.state in {"active", "terminal"}:
+            _target, target_error = _formal_dispatch_target(runs, observed)
+            if target_error is not None:
+                raise _ReviewerDispatchUnresolved(target_error)
+            store.update_work_item_metadata(
+                item_id, reviewer_run_baseline=replace(
+                    baseline, target_run_id=observed.target_run_id))
+            return
+        if observed.state == "unexpected":
+            raise _ReviewerDispatchUnresolved(observed.detail)
+        if attempt + 1 < _HANDOFF_OBSERVATION_ATTEMPTS:
+            time.sleep(_HANDOFF_OBSERVATION_INTERVAL)
+    raise _ReviewerDispatchUnresolved(
+        "persisted reviewer assignment has no uniquely observable target Run")
+
+
 def _dispatch_reviewer_for_current_subject_locked(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -1924,30 +2001,12 @@ def _dispatch_reviewer_for_current_subject_locked(
         _block_existing_reviewer_decision(store, manifest, key, current)
         return False
     _validate_controller_sealed_delivery(store, code_host, current)
-    subject_digest = _review_subject_for_current_delivery(
-        manifest, key, current)
+    subject_digest = _review_subject_for_current_delivery(manifest, key, current)
     subject_changed = current.review_subject_digest != subject_digest
     if subject_changed:
-        # Recheck before any reset that could clear the old Reviewer facts.
-        if _guard_reviewer_dispatch_control(
-            store, manifest, key, item_id) is not None:
-            return False
-        # 先解除旧 subject 的 assignment；若随后崩溃，reviewer metadata 为空，
-        # restart 不会把旧 active Run 误认成新 subject 已派发。
-        store.clear_assignment(item_id)
-        if _guard_reviewer_dispatch_control(
-            store, manifest, key, item_id) is not None:
-            return False
-        store.update_work_item_metadata(
-            item_id,
-            review_obligations=build_review_obligations(current),
-        )
-        if _guard_reviewer_dispatch_control(
-            store, manifest, key, item_id) is not None:
-            return False
-        current = store.prepare_review_cycle(item_id, subject_digest)
-        if _guard_reviewer_dispatch_control(
-            store, manifest, key, item_id) is not None:
+        current = _prepare_new_review_subject(
+            store, manifest, key, item_id, current, subject_digest)
+        if current is None:
             return False
 
     reviewer_id = store.resolve_agent_id(node.reviewer)
@@ -1962,94 +2021,46 @@ def _dispatch_reviewer_for_current_subject_locked(
         or baseline.target_reviewer != node.reviewer
         or baseline.target_agent_id != reviewer_id
     ):
-        if not runtime.capabilities.stable_direct_run_identity:
-            raise PlatformError(
-                "Reviewer recovery requires stable direct Run identity support")
-        identity = _delivery_identity(current)
-        cutoff = (
-            _parse_platform_time(identity.verification_created_at)
-            if identity is not None else None
-        )
-        if (
-            identity is None
-            or not identity.is_complete()
-            or cutoff is None
-            or cutoff.tzinfo is None
-        ):
-            raise PlatformError(
-                "Reviewer dispatch requires a sealed delivery verification time")
-        baseline_ids, _ = _bounded_direct_run_baseline(
-            runtime.list_runs(item_id),
-            gate_cutoff_created_at=identity.verification_created_at)
-        baseline = ReviewerRunBaseline(
-            schema=REVIEWER_RUN_BASELINE_SCHEMA,
-            subject_digest=subject_digest,
-            target_reviewer=node.reviewer,
-            target_agent_id=reviewer_id,
-            cutoff_created_at=identity.verification_created_at,
-            generation=f"review-{secrets.token_hex(8)}",
-            baseline_direct_run_ids=baseline_ids,
-        )
+        baseline = _new_reviewer_baseline(
+            runtime, current, item_id, subject_digest, node, reviewer_id)
         baseline_created = True
         _mark_recovery_pending(manifest, key)
-        if _guard_reviewer_dispatch_control(
-            store, manifest, key, item_id) is not None:
+        if _guard_reviewer_dispatch_control(store, manifest, key, item_id) is not None:
             return False
         store.update_work_item_metadata(item_id, reviewer_run_baseline=baseline)
-        if _guard_reviewer_dispatch_control(
-            store, manifest, key, item_id) is not None:
+        if _guard_reviewer_dispatch_control(store, manifest, key, item_id) is not None:
             return False
         current = store.get_work_item(item_id)
 
-    if (
-        not subject_changed
-        and baseline.target_run_id is not None
-        and current.phase == TaskPhase.REVIEW
-        and current.status == WorkItemStatus.IN_REVIEW
-        and current.reviewer == node.reviewer
-        and runtime.is_active(item_id)
-    ):
-        return False
-
-    assignment_prepared = (
-        not subject_changed
-        and not baseline_created
-        and baseline.target_run_id is None
-        and current.phase == TaskPhase.REVIEW
+    in_review_for_node = (
+        current.phase == TaskPhase.REVIEW
         and current.status == WorkItemStatus.IN_REVIEW
         and current.reviewer == node.reviewer
     )
-    if assignment_prepared:
-        for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
-            runs = runtime.list_runs(item_id)
-            observed = _observe_direct_run_attempt(
-                runs, reviewer_id,
-                baseline_direct_run_ids=baseline.baseline_direct_run_ids,
-                cutoff_created_at=baseline.cutoff_created_at,
-                attempt=baseline.attempt,
-            )
-            if observed.state in {"active", "terminal"}:
-                _target, target_error = _formal_dispatch_target(
-                    runs, observed)
-                if target_error is not None:
-                    raise _ReviewerDispatchUnresolved(target_error)
-                store.update_work_item_metadata(
-                    item_id, reviewer_run_baseline=replace(
-                        baseline, target_run_id=observed.target_run_id))
-                return False
-            if observed.state == "unexpected":
-                raise _ReviewerDispatchUnresolved(observed.detail)
-            if attempt + 1 < _HANDOFF_OBSERVATION_ATTEMPTS:
-                time.sleep(_HANDOFF_OBSERVATION_INTERVAL)
-        raise _ReviewerDispatchUnresolved(
-            "persisted reviewer assignment has no uniquely observable target Run")
+    if (
+        not subject_changed
+        and baseline.target_run_id is not None
+        and in_review_for_node
+        and runtime.is_active(item_id)
+    ):
+        return False
+    if (
+        not subject_changed and not baseline_created
+        and baseline.target_run_id is None and in_review_for_node
+    ):
+        _observe_prepared_reviewer_assignment(store, runtime, item_id, reviewer_id, baseline)
+        return False
+    return _dispatch_prepared_reviewer(
+        store, runtime, code_host, manifest, key, node, item_id, current, subject_digest, baseline)
 
+
+def _dispatch_prepared_reviewer(store, runtime, code_host, manifest, key, node, item_id, current,
+                                subject_digest, baseline) -> bool:
     assignment = (current.reviewer, current.platform_assignee_id)
     _, body_metadata = _develop_issue_body_metadata(store, manifest, key, phase=TaskPhase.REVIEW)
     _refresh_develop_issue_body(store, manifest, key, phase=TaskPhase.REVIEW)
     store.update_status(item_id, WorkItemStatus.IN_REVIEW)
-    if _guard_reviewer_dispatch_control(
-        store, manifest, key, item_id) is not None:
+    if _guard_reviewer_dispatch_control(store, manifest, key, item_id) is not None:
         return False
     current = store.get_work_item(item_id)
     _validate_controller_sealed_delivery(store, code_host, current)
@@ -2061,8 +2072,7 @@ def _dispatch_reviewer_for_current_subject_locked(
         or (current.reviewer, current.platform_assignee_id) != assignment
     ):
         raise PlatformError("Reviewer source or Run baseline changed before dispatch")
-    dispatched = runtime.dispatch_reviewer(store, item_id, node.reviewer)
-    if not dispatched:
+    if not runtime.dispatch_reviewer(store, item_id, node.reviewer):
         _guard_reviewer_dispatch_control(store, manifest, key, item_id)
         return False
     return True
