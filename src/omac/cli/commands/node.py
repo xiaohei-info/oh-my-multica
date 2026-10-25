@@ -248,9 +248,8 @@ def _recover_delayed_reviewer_submission(
     from ...pipeline.loop import (
         _classify_reviewer_recovery_decision,
         _delayed_reviewer_recovery_marker_error,
-        _formal_dispatch_target,
-        _observe_direct_run_attempt,
     )
+    from ...pipeline.decide_runs import formal_dispatch_target, observe_direct_run_attempt
 
     decision_class = _classify_reviewer_recovery_decision(
         manifest_path, node_key, current)
@@ -313,7 +312,7 @@ def _recover_delayed_reviewer_submission(
         raise unsafe(marker_error)
 
     runs = engine.runtime.list_runs(current.id)
-    observed = _observe_direct_run_attempt(
+    observed = observe_direct_run_attempt(
         runs,
         reviewer_id,
         baseline_direct_run_ids=baseline.baseline_direct_run_ids,
@@ -321,7 +320,7 @@ def _recover_delayed_reviewer_submission(
         target_run_id=baseline.target_run_id,
         attempt=baseline.attempt,
     )
-    _target, target_error = _formal_dispatch_target(runs, observed)
+    _target, target_error = formal_dispatch_target(runs, observed)
     if target_error is not None:
         if has_submitted_review:
             raise unsafe(target_error)
@@ -439,7 +438,7 @@ def _retry_baseline_head(current, prior_handoff):
 
 def _retry_rework_handoff(args, node, engine, current, facts: _RetryFacts, recovered_context: dict):
     """Build the operator-retry handoff that carries the prior review feedback into authoring."""
-    from ...pipeline.loop import _bounded_direct_run_baseline
+    from ...pipeline.decide_runs import bounded_direct_run_baseline
 
     prior_handoff = facts.prior_handoff
     source_review_feedback = _operator_retry_feedback(current, prior_handoff, recovered_context)
@@ -452,7 +451,7 @@ def _retry_rework_handoff(args, node, engine, current, facts: _RetryFacts, recov
         retained_subject or current.review_subject_digest
         or recovered_context.get("subject_digest")
         or stage_recovery_subject(node, current))
-    baseline_direct_run_ids, baseline_cutoff_created_at = _bounded_direct_run_baseline(
+    baseline_direct_run_ids, baseline_cutoff_created_at = bounded_direct_run_baseline(
         engine.runtime.list_runs(current.id))
     source_review_verdict = (
         current.review_verdict if current.review_verdict in {"reject", "pass-with-nits"}

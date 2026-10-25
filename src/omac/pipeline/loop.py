@@ -87,6 +87,11 @@ from .decide_loop import (
     DoneDevelopObservation, decide_done_develop, plan_block, plan_done_non_develop, plan_evidence_gate_failed,
     plan_return_to_worker_failed, plan_worker_failed,
 )
+from .decide_runs import (
+    TRANSIENT_RUNTIME_MAX_RUNS, ExpectedTerminalRun, RunFailure,
+    bounded_direct_run_baseline, formal_dispatch_target, is_retryable_transient_run_failure,
+    observe_direct_run_attempt, parse_baseline_cutoff, parse_platform_time, run_created_within_baseline,
+)
 from .decide_effects import (
     AcknowledgeAssignment,
     Assign,
@@ -122,13 +127,9 @@ _PLATFORM_TO_MANIFEST: Dict[str, str] = {
     "blocked": "blocked",
 }
 _MISSING_WORK_ITEM = object()
-# Multica 限制单 issue metadata 为 8KB;direct Run 基线封顶保留最近 N 个,
-# 避免高 bounce 节点的 handoff 写入确定性超限(gap #13)。
-_BASELINE_MAX_DIRECT_RUN_IDS = 20
 _HANDOFF_OBSERVATION_ATTEMPTS = 3
 _HANDOFF_OBSERVATION_INTERVAL = 0.5
 _HANDOFF_TERMINAL_GRACE_SECONDS = 30
-_TRANSIENT_RUNTIME_MAX_RUNS = 2
 _TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS = 1.0
 _WORKER_DELIVERY_PAYLOADS = frozenset({
     WorkItemPayload.VERIFICATION,
@@ -263,138 +264,19 @@ class _HandoffPreparationResult:
     projection: WorkItemControlProjection | None = None
 
 
-@dataclass(frozen=True)
-class _RunFailure:
-    run: AgentRunObservation
-    classification: str
-    consecutive_runs: int
-
-    @property
-    def exhausted(self) -> bool:
-        return (
-            self.classification == "transient"
-            and self.consecutive_runs >= _TRANSIENT_RUNTIME_MAX_RUNS
-        )
 
 
-@dataclass(frozen=True)
-class _ExpectedTerminalRun:
-    """Latest terminal direct Run for one causally bounded agent dispatch."""
-
-    run: AgentRunObservation
-    outcome: str
-    consecutive_runs: int
 
 
-@dataclass(frozen=True)
-class _DirectRunAttempt:
-    state: str
-    target_run_id: str | None = None
-    terminal: _ExpectedTerminalRun | None = None
-    detail: str = ""
 
 
-# Cloudflare 524 is an origin response timeout, so it shares 504 semantics.
-_RETRYABLE_RUN_HTTP_STATUS_PATTERN = (
-    r"(?:429(?:\s+too many requests)?|502(?:\s+bad gateway)?|"
-    r"503(?:\s+service unavailable)?|504(?:\s+gateway timeout)?|"
-    r"524(?:\s+a timeout occurred)?)"
-)
-
-# Codex transport errors spell out both the status and its canonical reason.
-_RETRYABLE_CODEX_HTTP_STATUS_PATTERN = (
-    r"(?:429 too many requests|502 bad gateway|503 service unavailable|"
-    r"504 gateway timeout|524 a timeout occurred)"
-)
-_RETRYABLE_CODEX_PROVIDER_URL_PATTERN = (
-    r"https?://"
-    r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)*"
-    r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
-    r"(?::\d{1,5})?(?:/[^\s,\r\n]*)?"
-)
 
 
-_RETRYABLE_RUN_ERROR_SIGNATURES = (
-    re.compile(
-        r"unexpected status "
-        + _RETRYABLE_CODEX_HTTP_STATUS_PATTERN
-        + r":[^\r\n]+?,\s*url:\s*"
-        + _RETRYABLE_CODEX_PROVIDER_URL_PATTERN
-        + r"(?:,\s*[^\r\n]+)?",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"selected model is at capacity\. please try a different model\.?",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:hermes provider error:\s*)?our servers are currently overloaded"
-        r"(?:\.|\. please try again later\.?)?",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:(?:provider|runtime|transport) (?:error|status)|"
-        r"hermes provider error):\s*(?:http\s+)?"
-        + _RETRYABLE_RUN_HTTP_STATUS_PATTERN
-        + r"(?:\.?|:\s*\{[\s\S]*\})",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"hermes provider error:\s*(?:⚠️?\s*)?api call failed\s*"
-        r"\(attempt\s+[1-9]\d*/[1-9]\d*\):\s*"
-        r"[a-z][a-z0-9_]*error\s*\[http\s+"
-        + _RETRYABLE_RUN_HTTP_STATUS_PATTERN
-        + r"\]\.?",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:(?:provider|runtime|transport) (?:error|status)|"
-        r"hermes provider error):\s*"
-        r"(?:connection timeout(?: while opening provider stream)?|"
-        r"connect timeout|read timeout(?: while waiting for provider response)?)\.?",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:provider|runtime|transport) "
-        r"(?:connection|connect|read) timeout\.?",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"connection timeout while opening provider stream\.?",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"read timeout while waiting for provider response\.?",
-        re.IGNORECASE,
-    ),
-)
 
 
-def _is_retryable_transient_run_failure(run: AgentRunObservation) -> bool:
-    """Classify only explicit provider/transport failures as retryable."""
-    if run.status != "failed" or not run.error:
-        return False
-    error = run.error.strip()
-    return any(
-        signature.fullmatch(error)
-        for signature in _RETRYABLE_RUN_ERROR_SIGNATURES
-    )
 
 
-def _ordered_direct_runs(
-    runs: List[AgentRunObservation],
-) -> List[AgentRunObservation]:
-    indexed = [
-        (index, run) for index, run in enumerate(runs)
-        if run.kind == "direct"
-    ]
-    indexed.sort(
-        key=lambda pair: (
-            pair[1].created_at or pair[1].updated_at or "", -pair[0]
-        ),
-        reverse=True,
-    )
-    return [run for _index, run in indexed]
+
 
 
 def _latest_run_failure(
@@ -406,9 +288,9 @@ def _latest_run_failure(
     baseline_cutoff_created_at: str | None = None,
     target_run_id: str | None = None,
     attempt: int = 1,
-) -> _RunFailure | None:
+) -> RunFailure | None:
     """Return the latest expected failed Run and its derived classification."""
-    observed = _observe_direct_run_attempt(
+    observed = observe_direct_run_attempt(
         runtime.list_runs(item_id),
         agent_id,
         baseline_direct_run_ids=baseline_direct_run_ids,
@@ -424,193 +306,18 @@ def _latest_run_failure(
         if terminal.outcome == "transient-failure"
         else "nonretryable"
     )
-    return _RunFailure(
+    return RunFailure(
         terminal.run, classification, terminal.consecutive_runs)
 
 
-def _bounded_direct_run_baseline(
-    runs: List[AgentRunObservation],
-    *,
-    gate_cutoff_created_at: str | None = None,
-) -> tuple[Tuple[str, ...], str | None]:
-    """Cap the direct-Run baseline at the most recent N Runs (gap #13).
-
-    Returns ``(baseline ids, cutoff_created_at)`` keeping the existing
-    sorted-by-ID order semantics. Uncapped baselines return ``None`` cutoff so
-    consumers keep pure ID-membership semantics. When capped, the returned
-    cutoff is the newest retained Run's creation time: consumers treat Runs
-    created at or before it as baseline-internal, Runs after it stay
-    fail-closed. With ``gate_cutoff_created_at`` the caller already owns a
-    consumer-side timestamp gate; then only Runs at or before that gate may be
-    dropped, the returned cutoff stays ``None``, and anything unsafe fails
-    closed.
-    """
-    direct = [run for run in runs if run.kind == "direct"]
-    if len(direct) <= _BASELINE_MAX_DIRECT_RUN_IDS:
-        return tuple(sorted(run.id for run in direct)), None
-    timed = []
-    for run in direct:
-        created = _parse_platform_time(run.created_at)
-        if created is None or created.tzinfo is None:
-            raise PlatformError(
-                f"Run {run.id} has no usable creation time; cannot bound the "
-                "direct Run baseline safely")
-        timed.append((created, run))
-    timed.sort(key=lambda pair: (pair[0], pair[1].id))
-    keep = timed[-_BASELINE_MAX_DIRECT_RUN_IDS:]
-    dropped = timed[:-_BASELINE_MAX_DIRECT_RUN_IDS]
-    kept_ids = tuple(sorted(run.id for _created, run in keep))
-    if gate_cutoff_created_at is not None:
-        gate = _parse_platform_time(gate_cutoff_created_at)
-        if gate is None or gate.tzinfo is None:
-            raise PlatformError(
-                "Direct Run baseline cannot be bounded: unusable gate cutoff")
-        if any(created > gate for created, _run in dropped):
-            raise PlatformError(
-                "Direct Run baseline cannot be bounded safely: Runs after "
-                "the gate cutoff exceed the baseline limit")
-        return kept_ids, None
-    return kept_ids, keep[-1][1].created_at
 
 
-def _run_created_within_baseline(
-    run: AgentRunObservation, cutoff: datetime | None,
-) -> bool:
-    """Whether a Run predates the baseline cutoff and is baseline-internal."""
-    if cutoff is None:
-        return False
-    created = _parse_platform_time(run.created_at)
-    if created is None or created.tzinfo is None:
-        return False
-    return created <= cutoff
 
 
-def _parse_baseline_cutoff(intent) -> datetime | None:
-    """Parse a persisted baseline cutoff or fail closed when unusable."""
-    raw = getattr(intent, "baseline_cutoff_created_at", None)
-    if not raw:
-        return None
-    cutoff = _parse_platform_time(raw)
-    if cutoff is None or cutoff.tzinfo is None:
-        raise PlatformError(
-            "Direct Run baseline cutoff is unusable; refusing to observe")
-    return cutoff
 
 
-def _observe_direct_run_attempt(
-    runs: List[AgentRunObservation],
-    agent_id: str,
-    *,
-    baseline_direct_run_ids: Tuple[str, ...] = (),
-    cutoff_created_at: str | None = None,
-    target_run_id: str | None = None,
-    attempt: int = 1,
-) -> _DirectRunAttempt:
-    """Bind and classify one causal direct-Run attempt."""
-    baseline = set(baseline_direct_run_ids)
-    cutoff = _parse_platform_time(cutoff_created_at)
-    expected = []
-    for run in _ordered_direct_runs(runs):
-        if run.agent_id != agent_id or run.id in baseline:
-            continue
-        if cutoff_created_at:
-            created = _parse_platform_time(run.created_at)
-            if created is None or created.tzinfo is None:
-                return _DirectRunAttempt(
-                    "unexpected", detail=f"Run {run.id} has no usable creation time")
-            if cutoff is None or cutoff.tzinfo is None:
-                return _DirectRunAttempt("unexpected", detail="invalid Run cutoff")
-            if created <= cutoff:
-                continue
-        expected.append(run)
-    if target_run_id:
-        by_id = {run.id: run for run in expected}
-        if len(by_id) != len(expected):
-            return _DirectRunAttempt("unexpected", detail="ambiguous target Run")
-        latest = by_id.get(target_run_id)
-        if latest is None:
-            return _DirectRunAttempt("missing", target_run_id)
-        target_index = expected.index(latest)
-        if target_index:
-            chain_ids = {latest.id}
-            while True:
-                children = [
-                    run for run in expected[:target_index]
-                    if run.retry_of_run_id == latest.id
-                ]
-                if not children:
-                    break
-                if len(children) != 1 or not latest.terminal:
-                    return _DirectRunAttempt(
-                        "unexpected", detail="ambiguous target Run")
-                latest = children[0]
-                if latest.id in chain_ids:
-                    return _DirectRunAttempt(
-                        "unexpected", detail="ambiguous target Run")
-                chain_ids.add(latest.id)
-            if (
-                len(chain_ids) != target_index + 1
-                or expected[0].id != latest.id
-            ):
-                return _DirectRunAttempt(
-                    "unexpected", detail="ambiguous target Run")
-            target_run_id = latest.id
-        if any(run.id != target_run_id and not run.terminal for run in expected):
-            return _DirectRunAttempt("unexpected", detail="ambiguous target Run")
-    else:
-        if len(expected) > 1:
-            return _DirectRunAttempt("unexpected", detail="ambiguous post-baseline Runs")
-        if not expected:
-            return _DirectRunAttempt("missing")
-        latest = expected[0]
-        target_run_id = latest.id
-    if latest.active:
-        return _DirectRunAttempt("active", target_run_id)
-    if not latest.terminal:
-        return _DirectRunAttempt("missing", target_run_id)
-    if latest.status == "failed":
-        outcome = (
-            "transient-failure"
-            if _is_retryable_transient_run_failure(latest)
-            else "nonretryable-failure"
-        )
-    else:
-        outcome = "finished-without-submit"
-
-    consecutive = 0
-    for run in expected:
-        if not run.terminal:
-            break
-        if outcome == "transient-failure":
-            matches = _is_retryable_transient_run_failure(run)
-        elif outcome == "nonretryable-failure":
-            matches = (
-                run.status == "failed"
-                and not _is_retryable_transient_run_failure(run)
-            )
-        else:
-            matches = run.status in {"completed", "cancelled"}
-        if not matches:
-            break
-        consecutive += 1
-    terminal = _ExpectedTerminalRun(latest, outcome, max(consecutive, attempt))
-    return _DirectRunAttempt("terminal", target_run_id, terminal)
 
 
-def _formal_dispatch_target(
-    runs: List[AgentRunObservation],
-    observed: _DirectRunAttempt,
-) -> tuple[AgentRunObservation | None, str | None]:
-    """Return the one formal assignment/rerun dispatch shared by recovery paths."""
-    if observed.state not in {"active", "terminal"}:
-        return None, observed.detail or "no uniquely observable target Run"
-    target = next(
-        (run for run in runs if run.id == observed.target_run_id),
-        None,
-    )
-    if target is None or not target.formal:
-        return None, "post-baseline Run is not a formal assignment/rerun dispatch"
-    return target, None
 
 
 def _resolved_worker_handoff_dispatch(
@@ -1472,7 +1179,7 @@ def _block_runtime_failure(
     key: str,
     item,
     role: str,
-    failure: _RunFailure,
+    failure: RunFailure,
 ) -> str:
     """Stop in the current business stage without consuming business bounce."""
     retry = _node_retry_action(manifest_path, key, item.phase)
@@ -1482,10 +1189,10 @@ def _block_runtime_failure(
         failure_class = "transient-provider-or-transport"
         reason = ui(
             f"{role.title()} infrastructure retry limit "
-            f"({_TRANSIENT_RUNTIME_MAX_RUNS} Runs) exhausted for Run "
+            f"({TRANSIENT_RUNTIME_MAX_RUNS} Runs) exhausted for Run "
             f"{failure.run.id}. Run `{retry}` after the provider recovers.",
             f"{role} 执行基础设施瞬时失败已达到上限"
-            f"({_TRANSIENT_RUNTIME_MAX_RUNS} 个 Run)，最新 Run 为 "
+            f"({TRANSIENT_RUNTIME_MAX_RUNS} 个 Run)，最新 Run 为 "
             f"{failure.run.id}。请在 provider 恢复后执行 `{retry}`。",
         )
     else:
@@ -1713,7 +1420,7 @@ def _reviewer_no_submit_grace_state(
     runtime: AgentRuntime,
     item,
     baseline: ReviewerRunBaseline,
-    terminal: _ExpectedTerminalRun,
+    terminal: ExpectedTerminalRun,
 ) -> str:
     """Return submitted, waiting, elapsed, or unavailable without mutating runs."""
     observed = terminal
@@ -1724,7 +1431,7 @@ def _reviewer_no_submit_grace_state(
         if fresh.review_verdict:
             return "submitted"
 
-        ended_at = _parse_platform_time(observed.run.updated_at)
+        ended_at = parse_platform_time(observed.run.updated_at)
         if observed.run.updated_at and (
             ended_at is None or ended_at.tzinfo is None
         ):
@@ -1742,7 +1449,7 @@ def _reviewer_no_submit_grace_state(
         if attempt + 1 >= _HANDOFF_OBSERVATION_ATTEMPTS:
             break
         time.sleep(_HANDOFF_OBSERVATION_INTERVAL)
-        refreshed = _observe_direct_run_attempt(
+        refreshed = observe_direct_run_attempt(
             runtime.list_runs(item.id),
             baseline.target_agent_id,
             baseline_direct_run_ids=baseline.baseline_direct_run_ids,
@@ -1775,7 +1482,7 @@ def _reviewer_run_baseline_for_observation(
         ):
             identity = _delivery_identity(item)
             identity_cutoff = (
-                _parse_platform_time(identity.verification_created_at)
+                parse_platform_time(identity.verification_created_at)
                 if identity is not None and identity.is_complete() else None
             )
             if identity_cutoff is None or identity_cutoff.tzinfo is None:
@@ -1789,7 +1496,7 @@ def _reviewer_run_baseline_for_observation(
                 apply([
                     UpdateMetadata(item.id, {'reviewer_run_baseline': baseline}),
                 ], Ports(store=store))
-            cutoff = _parse_platform_time(baseline.cutoff_created_at)
+            cutoff = parse_platform_time(baseline.cutoff_created_at)
             if cutoff is None or cutoff.tzinfo is None or cutoff != identity_cutoff:
                 return None, (
                     "the persisted reviewer Run cutoff is unusable or mismatched")
@@ -1801,7 +1508,7 @@ def _reviewer_run_baseline_for_observation(
     identity = _delivery_identity(item)
     if identity is None or not identity.is_complete():
         return None, "the current delivery identity is missing or incomplete"
-    cutoff = _parse_platform_time(identity.verification_created_at)
+    cutoff = parse_platform_time(identity.verification_created_at)
     if (
         not item.review_subject_digest
         or cutoff is None
@@ -1818,13 +1525,13 @@ def _reviewer_run_baseline_for_observation(
     ]
     historical_runs = []
     for run in direct_runs:
-        created_at = _parse_platform_time(run.created_at)
+        created_at = parse_platform_time(run.created_at)
         if created_at is None or created_at.tzinfo is None:
             return None, f"Reviewer Run {run.id} has no usable creation time"
         if created_at <= cutoff:
             historical_runs.append(run)
     try:
-        historical_ids, _ = _bounded_direct_run_baseline(
+        historical_ids, _ = bounded_direct_run_baseline(
             historical_runs,
             gate_cutoff_created_at=identity.verification_created_at)
     except PlatformError as exc:
@@ -1854,7 +1561,7 @@ def _retry_reviewer_attempt(
             return "reviewer dispatch is blocked by existing control"
     runs = runtime.list_runs(item.id)
     try:
-        bounded_ids, _ = _bounded_direct_run_baseline(
+        bounded_ids, _ = bounded_direct_run_baseline(
             [run for run in runs if run.kind == "direct"],
             gate_cutoff_created_at=baseline.cutoff_created_at)
     except PlatformError as exc:
@@ -1882,7 +1589,7 @@ def _retry_reviewer_attempt(
     except PlatformError as exc:
         wake_error = str(exc)
     for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
-        observed = _observe_direct_run_attempt(
+        observed = observe_direct_run_attempt(
             runtime.list_runs(item.id), retry.target_agent_id,
             baseline_direct_run_ids=retry.baseline_direct_run_ids,
             cutoff_created_at=retry.cutoff_created_at,
@@ -1947,13 +1654,13 @@ def _new_reviewer_baseline(runtime, current, item_id, subject_digest, node, revi
             "Reviewer recovery requires stable direct Run identity support")
     identity = _delivery_identity(current)
     cutoff = (
-        _parse_platform_time(identity.verification_created_at)
+        parse_platform_time(identity.verification_created_at)
         if identity is not None else None
     )
     if identity is None or not identity.is_complete() or cutoff is None or cutoff.tzinfo is None:
         raise PlatformError(
             "Reviewer dispatch requires a sealed delivery verification time")
-    baseline_ids, _ = _bounded_direct_run_baseline(
+    baseline_ids, _ = bounded_direct_run_baseline(
         runtime.list_runs(item_id),
         gate_cutoff_created_at=identity.verification_created_at)
     return ReviewerRunBaseline(
@@ -1971,14 +1678,14 @@ def _observe_prepared_reviewer_assignment(store, runtime, item_id, reviewer_id, 
     """A persisted assignment must resolve to exactly one observable Run, or fail closed."""
     for attempt in range(_HANDOFF_OBSERVATION_ATTEMPTS):
         runs = runtime.list_runs(item_id)
-        observed = _observe_direct_run_attempt(
+        observed = observe_direct_run_attempt(
             runs, reviewer_id,
             baseline_direct_run_ids=baseline.baseline_direct_run_ids,
             cutoff_created_at=baseline.cutoff_created_at,
             attempt=baseline.attempt,
         )
         if observed.state in {"active", "terminal"}:
-            _target, target_error = _formal_dispatch_target(runs, observed)
+            _target, target_error = formal_dispatch_target(runs, observed)
             if target_error is not None:
                 raise _ReviewerDispatchUnresolved(target_error)
             apply([
@@ -2256,7 +1963,7 @@ def _new_handoff_intent(run: _HandoffRun, review_bounce: int | None, gate: str |
         raise PlatformError("Worker handoff requires stable direct Run identity support")
     try:
         target_agent_id = run.store.resolve_agent_id(node.worker)
-        baseline_run_ids, baseline_cutoff = _bounded_direct_run_baseline(
+        baseline_run_ids, baseline_cutoff = bounded_direct_run_baseline(
             run.runtime.list_runs(item_id))
     except PlatformError as exc:
         if run.store.is_transient_transport_error(exc):
@@ -2658,13 +2365,13 @@ def _next_worker_handoff_attempt(
     if any(run.active for run in direct_runs):
         raise PlatformError(
             f"Worker handoff still has an active Run for work item {item.id}")
-    cutoff = _parse_baseline_cutoff(intent)
+    cutoff = parse_baseline_cutoff(intent)
     allowed_run_ids = set(intent.baseline_direct_run_ids)
     if intent.target_run_id:
         allowed_run_ids.add(intent.target_run_id)
     if any(
         run.id not in allowed_run_ids
-        and not _run_created_within_baseline(run, cutoff)
+        and not run_created_within_baseline(run, cutoff)
         for run in direct_runs
     ):
         raise PlatformError(
@@ -2673,7 +2380,7 @@ def _next_worker_handoff_attempt(
     verification_ref = (
         item.verification_ref if isinstance(item.verification_ref, dict) else {}
     )
-    bounded_ids, bounded_cutoff = _bounded_direct_run_baseline(direct_runs)
+    bounded_ids, bounded_cutoff = bounded_direct_run_baseline(direct_runs)
     return replace(
         intent,
         generation=f"handoff-{secrets.token_hex(8)}",
@@ -2696,13 +2403,6 @@ def _delivery_identity(item) -> DeliveryIdentity | None:
     return parse_delivery_identity(getattr(item, "delivery_identity", None))
 
 
-def _parse_platform_time(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def _utcnow() -> datetime:
@@ -2714,7 +2414,7 @@ def _observe_terminal_without_submit(
     item_id: str,
     intent: WorkerHandoffIntent,
 ) -> tuple[str, WorkerHandoffIntent]:
-    observed_at = _parse_platform_time(intent.terminal_observed_at)
+    observed_at = parse_platform_time(intent.terminal_observed_at)
     if (
         intent.terminal_observed_at
         and (observed_at is None or observed_at.tzinfo is None)
@@ -2743,9 +2443,9 @@ def _attachment_is_causal_for_run(observation, run, agent_id: str) -> bool:
                 or observation.uploader_id == agent_id
             )
         )
-    created = _parse_platform_time(observation.created_at)
-    run_started = _parse_platform_time(run.created_at)
-    run_ended = _parse_platform_time(run.updated_at)
+    created = parse_platform_time(observation.created_at)
+    run_started = parse_platform_time(run.created_at)
+    run_ended = parse_platform_time(run.updated_at)
     return bool(
         observation.uploader_type == "agent"
         and observation.uploader_id == agent_id
@@ -3083,7 +2783,7 @@ def _observe_worker_handoff(
     baseline = set(intent.baseline_direct_run_ids)
     # 封顶基线的时间戳门控:cutoff 之前创建的 Run 视为基线内,cutoff 之后的
     # 未知 Run 仍 fail-closed(gap #13)。无 cutoff 的旧 intent 保持纯成员语义。
-    cutoff = _parse_baseline_cutoff(intent)
+    cutoff = parse_baseline_cutoff(intent)
 
     if not intent.is_causally_bound():
         raise PlatformError(
@@ -3092,12 +2792,12 @@ def _observe_worker_handoff(
     if any(
         run.kind == "direct" and run.id not in baseline
         and run.agent_id != intent.target_agent_id
-        and not _run_created_within_baseline(run, cutoff)
+        and not run_created_within_baseline(run, cutoff)
         for run in runs
     ):
         raise PlatformError(
             f"Worker handoff observed non-causal direct Runs for work item {item_id}")
-    observed = _observe_direct_run_attempt(
+    observed = observe_direct_run_attempt(
         runs, intent.target_agent_id,
         baseline_direct_run_ids=intent.baseline_direct_run_ids,
         cutoff_created_at=intent.baseline_cutoff_created_at,
@@ -3116,7 +2816,7 @@ def _observe_worker_handoff(
         if target_run.status == "failed":
             state = (
                 "transient-failure"
-                if _is_retryable_transient_run_failure(target_run)
+                if is_retryable_transient_run_failure(target_run)
                 else "nonretryable-failure"
             )
             return _WorkerHandoffResult(
@@ -3186,7 +2886,7 @@ def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path):
     worker_id = store.resolve_agent_id(node.worker)
     wrong_actor = any(
         run.kind == "direct" and run.agent_id != worker_id for run in runs)
-    observed = _observe_direct_run_attempt(
+    observed = observe_direct_run_attempt(
         runs, worker_id, cutoff_created_at=item.created_at)
     if not wrong_actor and observed.state == "active":
         return item, None
@@ -4137,7 +3837,7 @@ def _observe_reviewer_run(c: _Collect, n: _Node) -> bool:
             c.store, c.manifest, c.manifest_path, key, n.item,
             "reviewer-run-baseline-unavailable", baseline_error)
         return True
-    observed = _observe_direct_run_attempt(
+    observed = observe_direct_run_attempt(
         c.runtime.list_runs(node.work_item_id), reviewer_id,
         baseline_direct_run_ids=baseline.baseline_direct_run_ids,
         cutoff_created_at=baseline.cutoff_created_at,
@@ -4187,7 +3887,7 @@ def _observe_reviewer_run(c: _Collect, n: _Node) -> bool:
             c.failures[key] = dispatch_block
             return True
     if reviewer_terminal and reviewer_terminal.outcome != "finished-without-submit":
-        reviewer_failure = _RunFailure(
+        reviewer_failure = RunFailure(
             reviewer_terminal.run,
             (
                 "transient"
@@ -4586,7 +4286,7 @@ def collect_results(
     c = _Collect(
         store, runtime, code_host, manifest, manifest_path, limits, config,
         # reviewer no-submit 续跑预算(config.retry.no_submit_runs,缺省 2)。
-        # 与基础设施瞬时失败预算 _TRANSIENT_RUNTIME_MAX_RUNS 语义不同,后者固定。
+        # 与基础设施瞬时失败预算 TRANSIENT_RUNTIME_MAX_RUNS 语义不同,后者固定。
         resolve_no_submit_runs(config or {}))
     for key, node in manifest.nodes.items():
         if node.status not in RUNNING_STATUSES or not node.work_item_id:
@@ -4879,7 +4579,7 @@ def _active_formal_run_nodes(
                 and intent.target_worker == node.worker
             ):
                 runs = runtime.list_runs(item.id)
-                attempt = _observe_direct_run_attempt(
+                attempt = observe_direct_run_attempt(
                     runs,
                     intent.target_agent_id,
                     baseline_direct_run_ids=intent.baseline_direct_run_ids,
@@ -4895,7 +4595,7 @@ def _active_formal_run_nodes(
                 and baseline.target_reviewer == node.reviewer
             ):
                 runs = runtime.list_runs(item.id)
-                attempt = _observe_direct_run_attempt(
+                attempt = observe_direct_run_attempt(
                     runs,
                     baseline.target_agent_id,
                     baseline_direct_run_ids=baseline.baseline_direct_run_ids,
@@ -4905,7 +4605,7 @@ def _active_formal_run_nodes(
                 )
         if attempt is None or runs is None or attempt.state != "active":
             continue
-        _target, target_error = _formal_dispatch_target(runs, attempt)
+        _target, target_error = formal_dispatch_target(runs, attempt)
         if target_error is None:
             active.append(key)
     return active

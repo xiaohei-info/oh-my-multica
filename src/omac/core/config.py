@@ -172,7 +172,7 @@ def resolve_no_submit_runs(config: dict) -> int:
     (fail-closed,报错即教学):必须为整数且 ≥ 1;0/负数/非整数/retry 块
     非映射均在「校验期」报 ValidationError(→ exit 5),不静默回退缺省。
     该预算只约束 reviewer「结束但未提交裁决」的续跑;基础设施瞬时失败
-    预算(loop._TRANSIENT_RUNTIME_MAX_RUNS)不读此值。
+    预算(decide_runs.TRANSIENT_RUNTIME_MAX_RUNS)不读此值。
     """
     raw = get_value(config, "retry")
     if raw is None:

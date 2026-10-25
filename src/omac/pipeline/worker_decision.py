@@ -181,10 +181,10 @@ def report_decision(store, runtime, issue_id, report):
                 report=item.decision_required,
             )
         if item.decision_required != decision:
-            from .loop import _observe_direct_run_attempt
+            from .decide_runs import observe_direct_run_attempt
 
             runs = runtime.list_runs(issue_id)
-            observed = _observe_direct_run_attempt(
+            observed = observe_direct_run_attempt(
                 runs,
                 intent.target_agent_id,
                 baseline_direct_run_ids=intent.baseline_direct_run_ids,

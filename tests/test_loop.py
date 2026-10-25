@@ -53,7 +53,7 @@ from omac.core.workitem import (
     WorkItemStatus,
 )
 from omac.errors import PlatformError, ValidationError
-from omac.pipeline import loop
+from omac.pipeline import decide_runs, loop
 from omac.pipeline.dispatch import build_show_output, submit as submit_work
 from omac.pipeline.loop import TickResult, tick
 
@@ -97,7 +97,7 @@ def _engine(**extra):
 
 
 def test_direct_run_observation_follows_one_platform_retry_chain():
-    observed = loop._observe_direct_run_attempt(
+    observed = decide_runs.observe_direct_run_attempt(
         [
             AgentRunObservation(
                 id="run-3", kind="direct", status="completed",
@@ -125,7 +125,7 @@ def test_direct_run_observation_follows_one_platform_retry_chain():
 
 
 def test_direct_run_observation_rejects_retry_chain_forks():
-    observed = loop._observe_direct_run_attempt(
+    observed = decide_runs.observe_direct_run_attempt(
         [
             AgentRunObservation(
                 id="run-3a", kind="direct", status="completed",
@@ -678,7 +678,7 @@ def _transient_worker_handoff_fixture(tmp_path):
     "Hermes provider error: connect timeout",
 ])
 def test_transient_runtime_failure_allowlist(error):
-    assert loop._is_retryable_transient_run_failure(AgentRunObservation(
+    assert decide_runs.is_retryable_transient_run_failure(AgentRunObservation(
         id="run-1", kind="direct", status="failed", error=error))
 
 
@@ -719,7 +719,7 @@ def test_transient_runtime_failure_allowlist(error):
     ),
 ])
 def test_transient_runtime_failure_allows_codex_http_status_wrapper(error):
-    assert loop._is_retryable_transient_run_failure(AgentRunObservation(
+    assert decide_runs.is_retryable_transient_run_failure(AgentRunObservation(
         id="run-1", kind="direct", status="failed", error=error))
 
 
@@ -778,7 +778,7 @@ def test_transient_runtime_failure_allows_codex_http_status_wrapper(error):
     ),
 ])
 def test_transient_runtime_failure_rejects_non_codex_http_status_wrapper(error):
-    assert not loop._is_retryable_transient_run_failure(AgentRunObservation(
+    assert not decide_runs.is_retryable_transient_run_failure(AgentRunObservation(
         id="run-1", kind="direct", status="failed", error=error))
 
 
@@ -823,7 +823,7 @@ def test_transient_runtime_failure_rejects_non_codex_http_status_wrapper(error):
     "documentation for the HTTP API mentions 429 responses",
 ])
 def test_transient_runtime_failure_rejects_non_allowlisted_errors(error):
-    assert not loop._is_retryable_transient_run_failure(AgentRunObservation(
+    assert not decide_runs.is_retryable_transient_run_failure(AgentRunObservation(
         id="run-1", kind="direct", status="failed", error=error))
 
 
@@ -835,7 +835,7 @@ def test_transient_runtime_failure_rejects_non_allowlisted_errors(error):
     "connection timeout",
 ])
 def test_transient_runtime_failure_requires_provider_transport_context(error):
-    assert not loop._is_retryable_transient_run_failure(AgentRunObservation(
+    assert not decide_runs.is_retryable_transient_run_failure(AgentRunObservation(
         id="run-1", kind="direct", status="failed", error=error))
 
 
@@ -8722,7 +8722,7 @@ class TestReviewerRejectBoundedFallback:
         real_list_runs = eng.runtime.list_runs
         ordered = sorted(
             history + real_list_runs(item.id),
-            key=lambda run: loop._parse_platform_time(run.created_at))
+            key=lambda run: decide_runs.parse_platform_time(run.created_at))
         expected_ids = tuple(sorted(run.id for run in ordered[-20:]))
         expected_cutoff = ordered[-1].created_at
         monkeypatch.setattr(
@@ -8879,7 +8879,7 @@ def _baseline_history_runs(count, worker_id, reviewer_id):
 
 def test_bounded_direct_run_baseline_keeps_small_lists_uncapped():
     runs = _baseline_history_runs(5, "agent-worker", "agent-reviewer")
-    ids, cutoff = loop._bounded_direct_run_baseline(
+    ids, cutoff = decide_runs.bounded_direct_run_baseline(
         runs + [AgentRunObservation(id="run-child", kind="child", status="completed")])
     assert ids == tuple(sorted(run.id for run in runs))
     assert cutoff is None
@@ -8887,7 +8887,7 @@ def test_bounded_direct_run_baseline_keeps_small_lists_uncapped():
 
 def test_bounded_direct_run_baseline_caps_to_latest_20_with_cutoff():
     runs = _baseline_history_runs(45, "agent-worker", "agent-reviewer")
-    ids, cutoff = loop._bounded_direct_run_baseline(runs)
+    ids, cutoff = decide_runs.bounded_direct_run_baseline(runs)
     assert len(ids) == 20
     assert ids == tuple(sorted(run.id for run in runs[-20:]))
     assert cutoff == runs[-1].created_at
@@ -8897,19 +8897,19 @@ def test_bounded_direct_run_baseline_fails_closed_without_creation_time():
     runs = _baseline_history_runs(25, "agent-worker", "agent-reviewer")
     runs[0] = replace(runs[0], created_at=None)
     with pytest.raises(PlatformError):
-        loop._bounded_direct_run_baseline(runs)
+        decide_runs.bounded_direct_run_baseline(runs)
 
 
 def test_bounded_direct_run_baseline_gate_drops_only_pre_cutoff_runs():
     runs = _baseline_history_runs(45, "agent-worker", "agent-reviewer")
     # 门控 cutoff 覆盖全部被裁 Run → 安全封顶,沿用调用方自己的门控。
-    ids, cutoff = loop._bounded_direct_run_baseline(
+    ids, cutoff = decide_runs.bounded_direct_run_baseline(
         runs, gate_cutoff_created_at=runs[24].created_at)
     assert ids == tuple(sorted(run.id for run in runs[-20:]))
     assert cutoff is None
     # 被裁 Run 晚于门控 cutoff → 无法安全封顶,fail-closed。
     with pytest.raises(PlatformError):
-        loop._bounded_direct_run_baseline(
+        decide_runs.bounded_direct_run_baseline(
             runs, gate_cutoff_created_at=runs[10].created_at)
 
 
