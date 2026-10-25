@@ -381,32 +381,7 @@ def _operator_retry_context(item: Any) -> Optional[Dict[str, Any]]:
         "previous_verification_is_baseline_only": True,
     }
 
-def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[str, Any]:
-    """构建 work show 的 Agent-first 完整事实包。
-
-    参数:
-        item: WorkItem(来自 store.get_work_item)
-        identity: 当前 agent 的身份描述(如 "worker:alice" 或 "reviewer:bob")
-
-    返回 dict:
-        task: 任务标识(kind/phase/status/dag_key/issue_id/title/worker/reviewer)
-        context: 完整上下文(contract 全量 or 评审对象 + env_setup)
-        protocol: 该 kind×phase 的执行协议
-        submit: 精确的 submit 命令模板
-        authority: 冲突时的内容权威顺序
-        guide_refs: 当前任务所需的最小静态知识集合
-    """
-    kind: TaskKind = item.kind
-    phase: TaskPhase = _resolve_phase(item, item.phase)
-    ledger = current_review_ledger(item)
-    historical = item.status == WorkItemStatus.DONE
-    if historical:
-        resolution = ConvergenceResolution(ResolutionState.VALID)
-        ledger = None
-    else:
-        resolution = resolve_convergence(item, node_id=getattr(item, "dag_key", None))
-    resolution.raise_if_invalid(ValidationError, item.id)
-
+def _show_task(item: Any, kind: TaskKind, phase: TaskPhase, identity: str) -> Dict[str, Any]:
     task = {
         "kind": kind.value,
         "phase": phase.value,
@@ -433,8 +408,17 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     bounce_budget = bounce_budget_projection(item)
     if bounce_budget is not None:
         task["bounce_budget"] = bounce_budget
+    return task
 
-    # 完整上下文:authoring 给 contract 全量;review 给评审对象 + env_setup
+
+# Optional item attributes copied into the show context verbatim when present.
+_SHOW_PASSTHROUGH = (
+    "contract_ref", "decision_required", "review_nits_acceptance", "review_continuation",
+    "amendment_attempt",
+)
+
+
+def _show_base_context(item: Any, kind: TaskKind, historical: bool) -> Dict[str, Any]:
     contract = getattr(item, "contract", None)
     if isinstance(contract, dict):
         contract_payload = contract
@@ -452,107 +436,150 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
             value = getattr(item, field, None)
             if value is not None:
                 context[field] = value
-    if historical and getattr(item, "review_ledger", None) is not None:
-        context["review_history"] = {
-            "ledger": deepcopy(item.review_ledger),
-            "ledger_ref": getattr(item, "review_ledger_ref", None),
-            "validation": "unverified-history",
-            "active_convergence_evidence": False,
-        }
+        if getattr(item, "review_ledger", None) is not None:
+            context["review_history"] = {
+                "ledger": deepcopy(item.review_ledger),
+                "ledger_ref": getattr(item, "review_ledger_ref", None),
+                "validation": "unverified-history",
+                "active_convergence_evidence": False,
+            }
     responsibility = responsibility_summary(contract)
     if responsibility is not None:
         context["responsibility"] = responsibility
     if kind in {TaskKind.DECOMPOSE, TaskKind.AMENDMENT}:
         context["contract_boundary_schema"] = deepcopy(CONTRACT_BOUNDARY_SCHEMA)
-    contract_ref = getattr(item, "contract_ref", None)
-    if contract_ref is not None:
-        context["contract_ref"] = contract_ref
-    decision_required = getattr(item, "decision_required", None)
-    if decision_required is not None:
-        context["decision_required"] = decision_required
-    review_nits_acceptance = getattr(item, "review_nits_acceptance", None)
-    if review_nits_acceptance is not None:
-        context["review_nits_acceptance"] = review_nits_acceptance
+    for field in _SHOW_PASSTHROUGH:
+        value = getattr(item, field, None)
+        if value is not None:
+            context[field] = value
     machine_feedback = getattr(item, "machine_feedback", None)
     if machine_feedback is not None:
         context["machine_feedback"] = machine_feedback
         machine_feedback_ref = getattr(item, "machine_feedback_ref", None)
         if machine_feedback_ref is not None:
             context["machine_feedback_ref"] = machine_feedback_ref
-    review_continuation = getattr(item, "review_continuation", None)
-    if review_continuation is not None:
-        context["review_continuation"] = review_continuation
-    amendment_attempt = getattr(item, "amendment_attempt", None)
-    if amendment_attempt is not None:
-        context["amendment_attempt"] = amendment_attempt
+    return context
 
-    retry = None
+
+def _show_authoring_context(item: Any, context: Dict[str, Any], retry: Any, ledger: Any,
+                            resolution: Any) -> None:
+    if retry is not None:
+        context["retry"] = retry
+    previous_review = _previous_review_context(item)
+    if previous_review is not None:
+        context["previous_review"] = previous_review
+    if isinstance(ledger, dict):
+        context["review_state"] = resolution.review_state(ledger)
+        closures = required_closures(ledger)
+        if closures:
+            context["required_closures"] = closures
+        ledger_ref = getattr(item, "review_ledger_ref", None)
+        if ledger_ref:
+            context["review_ledger_ref"] = ledger_ref
+
+
+_REVIEWER_ROLE_GUARD = {
+    "role": "reviewer-only",
+    "reviewer_only": True,
+    "allowed_actions": [
+        "inspect current facts and declared verification",
+        "generate a structured review report",
+        (
+            "omac work submit <issue-id> --verdict "
+            "<pass|pass-with-nits|reject> --report-file <report-file>"
+        ),
+    ],
+    "forbidden_actions": [
+        "omac dag amend propose",
+        "omac dag amend accept",
+        "modify the manifest",
+        "modify platform state",
+        "modify platform metadata, assignee, rerun, or cancel",
+        "perform operator recovery",
+        "perform operator retry",
+    ],
+}
+
+
+def _show_review_context(item: Any, context: Dict[str, Any], ledger: Any, resolution: Any) -> None:
+    """review 阶段:评审对象(deliverable) + contract + worker 的 env_setup。"""
+    context["reviewer_role_guard"] = deepcopy(_REVIEWER_ROLE_GUARD)
+    context["deliverable"] = item.deliverable
+    for key in (
+        "deliverable_ref",
+        "project_rules",
+        "project_rules_ref",
+        "artifacts",
+        "verification",
+        "verification_ref",
+    ):
+        value = getattr(item, key, None)
+        if value is not None:
+            context[key] = value
+    env_setup = _env_setup_checklist(item)
+    if env_setup is not None:
+        context["env_setup"] = env_setup
+    obligations = getattr(item, "review_obligations", None)
+    if obligations:
+        context["review_protocol"] = REVIEW_PROTOCOL_VERSION
+        context["review_obligations"] = list(obligations)
+        obligations_ref = getattr(item, "review_obligations_ref", None)
+        if obligations_ref:
+            context["review_obligations_ref"] = obligations_ref
+        context["prior_open_blockers"] = open_blockers(ledger)
+        context["review_state"] = resolution.review_state(ledger)
+        ledger_ref = getattr(item, "review_ledger_ref", None)
+        if ledger_ref:
+            context["review_ledger_ref"] = ledger_ref
+
+
+def _show_blocker_control(item: Any, kind: TaskKind, phase: TaskPhase, control: Dict[str, Any]) -> None:
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
-        retry = _operator_retry_context(item)
-    if phase == TaskPhase.AUTHORING:
-        if retry is not None:
-            context["retry"] = retry
-        previous_review = _previous_review_context(item)
-        if previous_review is not None:
-            context["previous_review"] = previous_review
-        if isinstance(ledger, dict):
-            context["review_state"] = resolution.review_state(ledger)
-            closures = required_closures(ledger)
-            if closures:
-                context["required_closures"] = closures
-            ledger_ref = getattr(item, "review_ledger_ref", None)
-            if ledger_ref:
-                context["review_ledger_ref"] = ledger_ref
+        control["report_blocker"] = f"omac work block {item.id} --report-file <blocker.yaml>"
+        from .worker_decision import blocker_template
+        template = blocker_template(item)
+        if template is not None:
+            control["blocker_report_template"] = template
+    elif kind == TaskKind.AMENDMENT and phase == TaskPhase.AUTHORING:
+        from .amendment_scope_gap import scope_gap_template
+        control["report_blocker"] = f"omac work block {item.id} --report-file <scope-gap.yaml>"
+        control["blocker_report_template"] = scope_gap_template(item)
+
+
+def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[str, Any]:
+    """构建 work show 的 Agent-first 完整事实包。
+
+    参数:
+        item: WorkItem(来自 store.get_work_item)
+        identity: 当前 agent 的身份描述(如 "worker:alice" 或 "reviewer:bob")
+
+    返回 dict:
+        task: 任务标识(kind/phase/status/dag_key/issue_id/title/worker/reviewer)
+        context: 完整上下文(contract 全量 or 评审对象 + env_setup)
+        protocol: 该 kind×phase 的执行协议
+        submit: 精确的 submit 命令模板
+        authority: 冲突时的内容权威顺序
+        guide_refs: 当前任务所需的最小静态知识集合
+    """
+    kind: TaskKind = item.kind
+    phase: TaskPhase = _resolve_phase(item, item.phase)
+    ledger = current_review_ledger(item)
+    historical = item.status == WorkItemStatus.DONE
+    if historical:
+        resolution = ConvergenceResolution(ResolutionState.VALID)
+        ledger = None
     else:
-        # review 阶段:评审对象(deliverable) + contract + worker 的 env_setup
-        context["reviewer_role_guard"] = {
-            "role": "reviewer-only",
-            "reviewer_only": True,
-            "allowed_actions": [
-                "inspect current facts and declared verification",
-                "generate a structured review report",
-                (
-                    "omac work submit <issue-id> --verdict "
-                    "<pass|pass-with-nits|reject> --report-file <report-file>"
-                ),
-            ],
-            "forbidden_actions": [
-                "omac dag amend propose",
-                "omac dag amend accept",
-                "modify the manifest",
-                "modify platform state",
-                "modify platform metadata, assignee, rerun, or cancel",
-                "perform operator recovery",
-                "perform operator retry",
-            ],
-        }
-        context["deliverable"] = item.deliverable
-        for key in (
-            "deliverable_ref",
-            "project_rules",
-            "project_rules_ref",
-            "artifacts",
-            "verification",
-            "verification_ref",
-        ):
-            value = getattr(item, key, None)
-            if value is not None:
-                context[key] = value
-        env_setup = _env_setup_checklist(item)
-        if env_setup is not None:
-            context["env_setup"] = env_setup
-        obligations = getattr(item, "review_obligations", None)
-        if obligations:
-            context["review_protocol"] = REVIEW_PROTOCOL_VERSION
-            context["review_obligations"] = list(obligations)
-            obligations_ref = getattr(item, "review_obligations_ref", None)
-            if obligations_ref:
-                context["review_obligations_ref"] = obligations_ref
-            context["prior_open_blockers"] = open_blockers(ledger)
-            context["review_state"] = resolution.review_state(ledger)
-            ledger_ref = getattr(item, "review_ledger_ref", None)
-            if ledger_ref:
-                context["review_ledger_ref"] = ledger_ref
+        resolution = resolve_convergence(item, node_id=getattr(item, "dag_key", None))
+    resolution.raise_if_invalid(ValidationError, item.id)
+
+    context = _show_base_context(item, kind, historical)
+    retry = None
+    if phase == TaskPhase.AUTHORING:
+        if kind == TaskKind.DEVELOP:
+            retry = _operator_retry_context(item)
+        _show_authoring_context(item, context, retry, ledger, resolution)
+    else:
+        _show_review_context(item, context, ledger, resolution)
 
     source_refs = normalize_source_refs(getattr(item, "source_refs", None))
     if source_refs:
@@ -566,10 +593,9 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
     if retry is not None:
         protocol += "\n" + t(
             "work.protocol.operator_retry", language=language)
-    submit = submit_template_for(kind, phase, item.id)
 
     output = {
-        "task": task,
+        "task": _show_task(item, kind, phase, identity),
         "context": context,
         "protocol": protocol,
         "control": {
@@ -578,20 +604,12 @@ def build_show_output(item: Any, identity: str, *, language: str = EN) -> Dict[s
             "post_submit_actions": [],
             "submit_confirmation": deepcopy(SUBMIT_CONFIRMATION),
         },
-        "submit": submit,
+        "submit": submit_template_for(kind, phase, item.id),
         "authority": authority_order(language),
         "guide_refs": guide_refs_for(kind, phase),
     }
-    if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING and not historical:
-        output["control"]["report_blocker"] = f"omac work block {item.id} --report-file <blocker.yaml>"
-        from .worker_decision import blocker_template
-        template = blocker_template(item)
-        if template is not None:
-            output["control"]["blocker_report_template"] = template
-    if kind == TaskKind.AMENDMENT and phase == TaskPhase.AUTHORING and not historical:
-        from .amendment_scope_gap import scope_gap_template
-        output["control"]["report_blocker"] = f"omac work block {item.id} --report-file <scope-gap.yaml>"
-        output["control"]["blocker_report_template"] = scope_gap_template(item)
+    if not historical:
+        _show_blocker_control(item, kind, phase, output["control"])
     resolution.apply_to_show(output, context)
     if historical:
         output["submit"] = None
