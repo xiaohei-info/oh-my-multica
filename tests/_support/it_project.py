@@ -46,10 +46,10 @@ class Project:
         save_literal(path, {"meta": {"name": name}, "nodes": nodes})
         return str(path)
 
-    def omac(self, *args: str, env: dict | None = None, server_url: str | None = None):
+    def omac(self, *args: str, env: dict | None = None, server_url: str | None = None, timeout: float = 180):
         full = {**os.environ, **self.stack.cli_env(server_url), **self.stack.omac_env(), **(env or {})}
         return subprocess.run([sys.executable, "-m", "omac", *args], cwd=self.work, env=full,
-                              capture_output=True, text=True, timeout=180)
+                              capture_output=True, text=True, timeout=timeout)
 
 
 def contract(**extra) -> dict:

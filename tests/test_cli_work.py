@@ -1393,7 +1393,7 @@ class _SelectiveSubmitStore:
         WorkItemPayload.REVIEW_OBLIGATIONS,
         WorkItemPayload.REVIEW_LEDGER,
     }),
-    (TaskKind.DECOMPOSE, TaskPhase.AUTHORING, set()),
+    (TaskKind.DECOMPOSE, TaskPhase.AUTHORING, {WorkItemPayload.CONTRACT}),   # an incremental decomposition is linted against its base manifest
     (TaskKind.DECOMPOSE, TaskPhase.REVIEW, {
         WorkItemPayload.CONTRACT,
         WorkItemPayload.DELIVERABLE,

@@ -33,7 +33,7 @@ from ..core.config import (
 )
 from ..core.evidence import validate_acceptance_results
 from ..core.lint import lint_increment
-from ..core.manifest import Manifest, Node, _dump_contract, merge_increment, save_manifest
+from ..core.manifest import Manifest, Node, _dump_contract, loads_manifest, merge_increment, save_manifest
 from ..core.taskmeta import TaskKind, make_dag_key
 from ..core.workitem import WorkItemStatus
 from ..engines.store import WorkItemStore
@@ -544,33 +544,10 @@ def _read_increment(store: WorkItemStore, item_id: str) -> Optional[Manifest]:
     if not deliverable or not isinstance(deliverable, str):
         return None
     try:
-        raw = yaml.safe_load(deliverable)
-    except yaml.YAMLError:
+        increment = loads_manifest(deliverable)       # the whole node (contract, title, reviewer...), not just its id and worker
+    except (yaml.YAMLError, ValueError, TypeError, AttributeError):
         return None
-    if not isinstance(raw, dict):
-        return None
-    nodes_raw = raw.get("nodes")
-    if not isinstance(nodes_raw, list) or not nodes_raw:
-        return None
-    nodes = {}
-    for n in nodes_raw:
-        if not isinstance(n, dict):
-            continue
-        n_id = n.get("id")
-        n_worker = n.get("worker")
-        if not isinstance(n_id, str) or not n_id:
-            continue
-        if not isinstance(n_worker, str) or not n_worker:
-            continue
-        nodes[n_id] = Node(
-            id=n_id, worker=n_worker,
-            blocked_by=list(n.get("blocked_by", []) or []),
-            status=n.get("status", "todo"),
-            work_item_id=n.get("work_item_id"),
-        )
-    if not nodes:
-        return None
-    return Manifest(meta=raw.get("meta") or {}, nodes=nodes)
+    return increment if increment.nodes else None
 
 
 def _dump_manifest(manifest: Manifest) -> Dict[str, Any]:

@@ -1275,7 +1275,7 @@ class MulticaStore(WorkItemStore):
             return None
         repos: List[str] = []
         for r in (p.get("resources") or []):
-            if not isinstance(r, dict) or r.get("type") not in (None, "github_repo"):
+            if not isinstance(r, dict) or (r.get("type") or r.get("resource_type")) not in (None, "github_repo"):
                 continue
             ref = r.get("resource_ref") if isinstance(r.get("resource_ref"), dict) else {}
             url = r.get("url") or ref.get("url")
@@ -1295,6 +1295,10 @@ class MulticaStore(WorkItemStore):
         infos: List[ProjectInfo] = []
         for p in items:
             if isinstance(p, dict):
+                if "resources" not in p and p.get("id") and (p.get("resource_count") or 0) > 0:
+                    # The list answers with a count only; the resources (repositories) are a separate read.
+                    resources = self._run_multica(["project", "resource", "list", str(p["id"]), "--output", "json"])
+                    p = {**p, "resources": resources if isinstance(resources, list) else []}
                 info = self._project_to_info(p)
                 if info:
                     infos.append(info)

@@ -25,7 +25,7 @@ from omac.core.contract_boundaries import (
     responsibility_summary,
 )
 from omac.core.lint import lint as lint_manifest, lint_increment
-from omac.core.manifest import Contract, _dump_contract, _load_contract, load_manifest
+from omac.core.manifest import Contract, _dump_contract, _load_contract, load_manifest, loads_manifest
 from omac.core.project_rules import END_MARKER, START_MARKER
 from omac.core.retry_budget import bounce_budget_projection
 from omac.core.review_convergence import (
@@ -182,7 +182,7 @@ SUBMIT_HYDRATION_BY_KIND_PHASE = {
     (TaskKind.ACCEPTANCE, TaskPhase.REVIEW): _REVIEW_BASIS | frozenset({
         WorkItemPayload.DELIVERABLE,
     }),
-    (TaskKind.DECOMPOSE, TaskPhase.AUTHORING): frozenset(),
+    (TaskKind.DECOMPOSE, TaskPhase.AUTHORING): frozenset({WorkItemPayload.CONTRACT}),   # an incremental decomposition is linted against its base manifest
     (TaskKind.DECOMPOSE, TaskPhase.REVIEW): _REVIEW_BASIS | frozenset({
         WorkItemPayload.DELIVERABLE,
     }),
@@ -1289,9 +1289,18 @@ def _submit_acceptance(store, issue_id, item, kind, phase, a: _SubmitArgs) -> Su
         next_phase=TaskPhase.REVIEW, message=_authoring_done_message())
 
 
+def _incremental_base_manifest(item) -> Any:
+    """The manifest an incremental decomposition extends: the issue's own contract carries it (None for a first decomposition)."""
+    contract = item.contract if isinstance(item.contract, dict) else {}
+    base = contract.get("manifest")
+    if contract.get("mode") != "incremental" or not isinstance(base, dict):
+        return None
+    return loads_manifest(yaml.safe_dump(base, sort_keys=False, allow_unicode=True))
+
+
 def _submit_decompose(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
     content = _validate_decompose_authoring(
-        a.manifest_file, a.pool, base_manifest=a.base_manifest)
+        a.manifest_file, a.pool, base_manifest=a.base_manifest or _incremental_base_manifest(item))
     _advance_authoring_to_review(store, issue_id, deliverable=content)
     return SubmitResult(
         kind, phase, "manifest", WorkItemStatus.IN_REVIEW,

@@ -4,6 +4,7 @@ from typing import Optional
 
 import argparse
 import os
+from dataclasses import replace
 import time
 
 from .. import exit_codes
@@ -606,10 +607,10 @@ def _emit(result, manifest, args) -> None:
     print_table(headers, rows)
 
 
-def _maybe_acceptance(args, engine, config, manifest) -> Optional[int]:
+def _maybe_acceptance(args, engine, config, manifest):
     """内层 loop 收敛后:如有验收文档且未禁用,跑总控验收外层循环。
 
-    返回退出码(0 全 pass / 20 耗尽仍 fail)或 None(无验收/禁用,由调用方 exit 0)。
+    返回 AcceptanceOutcome(exit_code 0 全 pass / 20 耗尽仍 fail)或 None(无验收/禁用,由调用方 exit 0)。
     """
     manifest_path = args.manifest
     doc_path = _configured_acceptance_path(manifest, manifest_path)
@@ -640,7 +641,7 @@ def _maybe_acceptance(args, engine, config, manifest) -> Optional[int]:
         engine, manifest, manifest_path, doc, config, no_acceptance=False,
         poll=lambda: _time.sleep(config.get("defaults", {}).get("poll_interval", 0)),
     )
-    return outcome.exit_code
+    return outcome
 
 
 def _configured_acceptance_path(manifest, manifest_path: str) -> str:
@@ -739,17 +740,32 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
         rounds += 1
 
         if last_result.state == "converged":
-            acceptance_exit = _maybe_acceptance(
+            acceptance = _maybe_acceptance(
                 args, engine, config, manifest)
-            if acceptance_exit is not None:
+            if acceptance is not None:
                 # 验收外层循环可能已并入 fix 节点并收敛;重新 tick 一次
                 # (幂等:全部 done 时不派发)拿到最新 done 列表再 emit,
                 # 否则 emit 反映的是验收前的 3 节点,用户看不到增量节点。
                 last_result = _scheduled_tick(
                     engine, manifest, args.manifest,
                     max_parallel=max_parallel, retry_limits=retry_limits, config=config)
+                if acceptance.exit_code != exit_codes.OK:
+                    # One result document, in the shape of every other needs_decision: the report says which items still fail.
+                    report = {"acceptance": {
+                        "rounds": acceptance.rounds, "failed_items": acceptance.failed_items,
+                        "reports": acceptance.reports}}
+                    _emit(replace(last_result, state="needs_decision", report=report), manifest, args)
+                    raise NeedsDecision(
+                        ui(
+                            f"Final acceptance still fails after {acceptance.rounds} round(s): "
+                            f"{', '.join(acceptance.failed_items)}. Fix them or raise acceptance.max_rounds, "
+                            f"then rerun `omac dag run {args.manifest}`.",
+                            f"最终验收经过 {acceptance.rounds} 轮仍未通过: {'、'.join(acceptance.failed_items)}。"
+                            f"修复后或调大 acceptance.max_rounds,再运行 `omac dag run {args.manifest}`。"),
+                        report=report,
+                    )
                 _emit(last_result, manifest, args)
-                return acceptance_exit
+                return acceptance.exit_code
             _emit(last_result, manifest, args)
             return exit_codes.OK
 
