@@ -6,7 +6,9 @@ tests/test_architecture.py); ``loop`` and ``omac node retry`` call these.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from ..core.manifest import Manifest, _dump_contract
 from ..core.stage_recovery import stage_recovery_subject, validate_stage_recovery
@@ -15,6 +17,7 @@ from ..core.review_convergence import review_subject_digest
 from ..core.workitem import WorkItemControlProjection, WorkItemHydrationPlan, WorkItemPayload
 from ..errors import PlatformError
 from ..i18n import ui
+from .decide_runs import formal_dispatch_target, observe_direct_run_attempt
 
 
 def current_review_subject(item) -> str:
@@ -275,6 +278,71 @@ def delayed_reviewer_recovery_marker_error(
     if item_contract != node_contract:
         return "the manifest and persisted node contracts do not match"
     return None
+
+
+@dataclass(frozen=True)
+class DelayedReviewerRecovery:
+    """What ``omac node retry --stage review`` does about a Reviewer Run that became visible late.
+
+    ``ordinary``: nothing to bind, the review stage is reset as usual. ``adopt``: bind ``target_run_id`` and restore the
+    stage without a new dispatch. ``refuse``: the Run causality is not unique; ``detail`` says why.
+    """
+
+    action: str
+    target_run_id: str | None = None
+    detail: str = ""
+
+
+def plan_delayed_reviewer_recovery(
+    manifest: Manifest,
+    manifest_path: str,
+    key: str,
+    item,
+    reviewer: str,
+    *,
+    agent_id_of: Callable[[str], str],
+    list_runs: Callable[[], list],
+    stable_run_identity: bool,
+) -> DelayedReviewerRecovery:
+    """Decide how an explicit review retry treats a Reviewer result whose Run was not visible when it was observed.
+
+    The two callables are read lazily: an ordinary retry never looks at the Runs.
+    """
+    decision_class = classify_reviewer_recovery_decision(manifest_path, key, item)
+    if decision_class == "other":
+        return DelayedReviewerRecovery("refuse", detail="the persisted recovery decision does not identify this review")
+    if decision_class != "canonical-baseline-unavailable":
+        return DelayedReviewerRecovery("ordinary")
+
+    has_submitted_review = bool(
+        item.review_verdict in {"pass", "pass-with-nits", "reject"}
+        and isinstance(item.review_report, dict) and item.review_report
+        and isinstance(item.review_report_ref, dict) and item.review_report_ref)
+    decision = item.decision_required if isinstance(item.decision_required, dict) else {}
+    dispatch_unresolved = decision.get("reason_code") == "reviewer-run-dispatch-unresolved"
+    # A submitted review always needs its causal Run proven before replay. An unresolved continuation dispatch may
+    # additionally own a delayed Run that became visible after the observation window; adopting it avoids a duplicate
+    # Reviewer dispatch. Every other unsubmitted shape stays an ordinary stage reset.
+    if not has_submitted_review and not dispatch_unresolved:
+        return DelayedReviewerRecovery("ordinary")
+
+    if not stable_run_identity:
+        return DelayedReviewerRecovery("refuse", detail="stable direct Run identity is unavailable")
+    marker_error = delayed_reviewer_recovery_marker_error(
+        manifest, manifest_path, key, item, reviewer, agent_id_of(reviewer), require_target=False)
+    if marker_error is not None:
+        return DelayedReviewerRecovery("refuse", detail=marker_error)
+
+    baseline, runs = item.reviewer_run_baseline, list_runs()
+    observed = observe_direct_run_attempt(
+        runs, baseline.target_agent_id,
+        baseline_direct_run_ids=baseline.baseline_direct_run_ids, cutoff_created_at=baseline.cutoff_created_at,
+        target_run_id=baseline.target_run_id, attempt=baseline.attempt)
+    _target, target_error = formal_dispatch_target(runs, observed)
+    if target_error is not None:
+        # An unresolved continuation that never materialised as a provable Run leaves nothing to preserve.
+        return DelayedReviewerRecovery("refuse", detail=target_error) if has_submitted_review else DelayedReviewerRecovery("ordinary")
+    return DelayedReviewerRecovery("adopt", target_run_id=observed.target_run_id)
 
 
 STRUCTURED_RECOVERY_PAYLOADS = (
