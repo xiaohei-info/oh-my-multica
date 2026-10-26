@@ -127,3 +127,10 @@ def plan_done_non_develop(item_id: str, item_status: WorkItemStatus, verdict: st
     if item_status != WorkItemStatus.DONE:
         effects.append(UpdateStatus(item_id, WorkItemStatus.DONE))
     return Plan(tuple(effects), "unchanged")
+
+
+def decide_tick_state(*, running: bool, failed: bool, full_scan: bool, audit_complete: bool) -> str:
+    """Running work wins; an unfinished full audit is neither a failure nor convergence, so the runner keeps advancing."""
+    if running or (full_scan and not audit_complete):
+        return "running"
+    return "needs_decision" if failed else "converged"

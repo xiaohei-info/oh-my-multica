@@ -62,6 +62,7 @@ from ..errors import AuthError, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from .decide_review import VerdictObservation, VerdictPath, decide_verdict_path
 from .decide_worker import (
+    handoff_has_new_delivery,
     AfterCi, AfterCiObservation, NoSubmit, NoSubmitObservation, decide_after_ci, decide_worker_no_submit,
 )
 from .decide_merge import merge_bounce_attempt, merge_request_state_is_valid
@@ -84,7 +85,7 @@ from ..core.taskmeta import (
 from .apply import ManifestState, Ports, apply, apply_one
 from .decide_loop import (
     DoneDevelopObservation, decide_done_develop, plan_block, plan_done_non_develop, plan_evidence_gate_failed,
-    plan_return_to_worker_failed, plan_worker_failed,
+    decide_tick_state, plan_return_to_worker_failed, plan_worker_failed,
 )
 from .decide_recovery import (
     validate_structured_recovery_payloads,
@@ -427,7 +428,7 @@ def _has_unreviewed_worker_delivery(node, item) -> bool:
         and phase == TaskPhase.AUTHORING
         and item.worker_handoff is not None
         and not item.requires_decision
-        and _worker_handoff_has_new_delivery(
+        and handoff_has_new_delivery(
             item, item.worker_handoff)
     )
     return bool(
@@ -518,64 +519,6 @@ def _control_matches_delivery_identity(item) -> bool:
     )
 
 
-def _worker_handoff_has_new_delivery(item, intent: WorkerHandoffIntent) -> bool:
-    """Return whether control facts prove a new Worker submission exists."""
-    artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
-    verification_ref = (
-        item.verification_ref if isinstance(item.verification_ref, dict) else {}
-    )
-    attachment_id = str(
-        verification_ref.get("attachment_id") or "").strip()
-    status_can_hold_delivery = item.status == WorkItemStatus.DONE or (
-        item.status == WorkItemStatus.BLOCKED
-        and item.phase == TaskPhase.AUTHORING
-        and item.worker_handoff is not None
-        and not item.requires_decision
-        and item.worker_handoff.generation == intent.generation
-    )
-    if not (
-        status_can_hold_delivery
-        and artifacts
-        and attachment_id
-        and attachment_id != intent.baseline_verification_attachment_id
-    ):
-        return False
-
-    baseline_head = intent.baseline_pr_head_sha
-    current_head = str(artifacts.get("head_sha") or "").strip()
-    if not current_head:
-        return False
-    if (
-        intent.gate == "explicit-dispatch"
-        and intent.source_review_verdict is None
-        and intent.source_review_feedback is None
-    ):
-        # An explicit authoring dispatch has no rejected code obligation. Its
-        # attachment baseline prevents reusing the old submission, not the code
-        # head. Run/attachment provenance and remote HEAD are still checked by
-        # _seal_worker_delivery before any candidate becomes a sealed delivery.
-        return True
-    if not baseline_head:
-        # Legacy explicit dispatches had no rejected head to compare. A plain
-        # operator retry is different: absent a captured baseline it cannot
-        # prove that the new submit changed the rejected delivery. Keep the
-        # pass-with-nits compatibility path, but fail closed for unknown or
-        # rejected operator-retry provenance.
-        if intent.gate == "operator-retry":
-            return intent.source_review_verdict == "pass-with-nits"
-        if (
-            intent.gate == "explicit-dispatch"
-            and intent.baseline_verification_attachment_id
-        ):
-            return intent.source_review_verdict == "pass-with-nits"
-        return intent.source_review_verdict != "reject"
-    if current_head != baseline_head:
-        return True
-    # pass-with-nits is an explicit non-blocking review path: a new verification
-    # attachment may legitimately reuse the same code head.
-    return intent.source_review_verdict == "pass-with-nits"
-
-
 def _build_work_item_hydration_plan(
     node, projection: WorkItemControlProjection,
 ) -> WorkItemHydrationPlan:
@@ -598,7 +541,7 @@ def _build_work_item_hydration_plan(
                 item.status == WorkItemStatus.BLOCKED
                 and item.worker_handoff is not None
                 and not item.requires_decision
-                and _worker_handoff_has_new_delivery(
+                and handoff_has_new_delivery(
                     item, item.worker_handoff)
             )
         )
@@ -635,7 +578,7 @@ def _build_work_item_hydration_plan(
 
     if (
         item.worker_handoff is not None
-        and _worker_handoff_has_new_delivery(item, item.worker_handoff)
+        and handoff_has_new_delivery(item, item.worker_handoff)
     ):
         # Handoff observation reads the verification attachment once together
         # with its causal comment/Run facts.  Reconcile only preloads the other
@@ -1654,7 +1597,7 @@ def _retire_source_identity(run: _HandoffRun) -> _WorkerHandoffResult | None:
     if not (
         current.delivery_identity is not None
         and current.delivery_identity.handoff_generation != intent.generation
-        and not _worker_handoff_has_new_delivery(current, intent)
+        and not handoff_has_new_delivery(current, intent)
     ):
         return None
     run.projection = _hydrate_work_item_payloads(
@@ -2254,7 +2197,7 @@ def _control_matches_handoff_candidate(
     )
     return bool(
         same_causal_intent
-        and _worker_handoff_has_new_delivery(item, intent)
+        and handoff_has_new_delivery(item, intent)
         and identity.pr_url == (artifacts.get("pr_url") or artifacts.get("pr"))
         and identity.pr_head_sha == artifacts.get("head_sha")
         and identity.verification_attachment_id
@@ -2464,7 +2407,7 @@ def _observe_worker_handoff(
         ):
             return _WorkerHandoffResult(
                 "complete-unsealed", intent, projection)
-        if not _worker_handoff_has_new_delivery(current, intent):
+        if not handoff_has_new_delivery(current, intent):
             state, intent = _observe_terminal_without_submit(
                 store, item_id, intent)
             return _WorkerHandoffResult(state, intent, projection)
@@ -4405,19 +4348,14 @@ def tick(
 
     # 状态判定:running 优先(有正式运行继续协调),其次 needs_decision(有失败),
     # 最后 converged(全部 done)
-    if running or (full_scan and not reconcile_result.audit_complete):
-        # A static full-audit read with no authoritative fact is neither a
-        # business failure nor convergence. Keep the runner advancing so the
-        # next audit can retry without claiming a cross-machine sync that was
-        # never observed.
-        state = "running"
-    elif failed_keys:
-        state = "needs_decision"
+    state = decide_tick_state(
+        running=bool(running), failed=bool(failed_keys),
+        full_scan=full_scan, audit_complete=reconcile_result.audit_complete)
+    if state == "needs_decision":
         log.info(logsetup.EVT_NEEDS_DECISION, kind=_DAG_KIND,
                  failed=sorted(failed_keys), done=len(done),
                  total=len(manifest.nodes))
-    else:
-        state = "converged"
+    elif state == "converged":
         log.info(logsetup.EVT_CONVERGED, kind=_DAG_KIND,
                  done=len(done), total=len(manifest.nodes))
 

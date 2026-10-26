@@ -5,7 +5,7 @@ from omac.core.taskmeta import TaskPhase
 from omac.core.workitem import PullRequestState as PR, WorkItemStatus as S
 from omac.pipeline.decide_effects import AddComment, ResetReview, SaveState, SetNode, UpdateMetadata, UpdateStatus
 from omac.pipeline.decide_loop import (
-    DoneDevelopObservation, decide_done_develop, plan_block, plan_done_non_develop, plan_evidence_gate_failed,
+    DoneDevelopObservation, decide_done_develop, decide_tick_state, plan_block, plan_done_non_develop, plan_evidence_gate_failed,
     plan_return_to_worker_failed, plan_worker_failed,
 )
 
@@ -88,3 +88,16 @@ def test_closed_unmerged_comment_carries_the_observed_detail():
 ])
 def test_done_non_develop_repairs_projection(status, verdict, expected):
     assert names(plan_done_non_develop("i", status, verdict)) == expected
+
+
+@pytest.mark.parametrize(("running", "failed", "full_scan", "audit_complete", "state"), [
+    pytest.param(True, True, False, True, "running", id="running-work-wins-over-a-failure"),
+    pytest.param(False, True, False, True, "needs_decision", id="a-failure-needs-a-decision"),
+    pytest.param(False, False, False, True, "converged", id="nothing-left"),
+    pytest.param(False, False, True, True, "converged", id="complete-audit-converges"),
+    pytest.param(False, False, True, False, "running", id="incomplete-audit-cannot-report-converged"),
+    pytest.param(False, True, True, False, "running", id="incomplete-audit-does-not-hide-behind-a-failure"),
+    pytest.param(False, False, False, False, "converged", id="incomplete-audit-only-matters-for-a-full-scan"),
+])
+def test_the_tick_state_never_reports_convergence_from_an_unfinished_audit(running, failed, full_scan, audit_complete, state):
+    assert decide_tick_state(running=running, failed=failed, full_scan=full_scan, audit_complete=audit_complete) == state

@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from ..core.taskmeta import TaskPhase, WorkerHandoffIntent
+from ..core.workitem import WorkItemStatus
 from .decide_effects import Observation
 
 
@@ -55,3 +57,61 @@ def decide_after_ci(obs: AfterCiObservation) -> AfterCi:
     if obs.review_passed:
         return AfterCi.MERGE_PASSED_REVIEW
     return AfterCi.QUEUE_REVIEW if obs.has_reviewer else AfterCi.CONFIRM_MERGE
+
+
+def handoff_has_new_delivery(item, intent: WorkerHandoffIntent) -> bool:
+    """Return whether control facts prove a new Worker submission exists."""
+    artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
+    verification_ref = (
+        item.verification_ref if isinstance(item.verification_ref, dict) else {}
+    )
+    attachment_id = str(
+        verification_ref.get("attachment_id") or "").strip()
+    status_can_hold_delivery = item.status == WorkItemStatus.DONE or (
+        item.status == WorkItemStatus.BLOCKED
+        and item.phase == TaskPhase.AUTHORING
+        and item.worker_handoff is not None
+        and not item.requires_decision
+        and item.worker_handoff.generation == intent.generation
+    )
+    if not (
+        status_can_hold_delivery
+        and artifacts
+        and attachment_id
+        and attachment_id != intent.baseline_verification_attachment_id
+    ):
+        return False
+
+    baseline_head = intent.baseline_pr_head_sha
+    current_head = str(artifacts.get("head_sha") or "").strip()
+    if not current_head:
+        return False
+    if (
+        intent.gate == "explicit-dispatch"
+        and intent.source_review_verdict is None
+        and intent.source_review_feedback is None
+    ):
+        # An explicit authoring dispatch has no rejected code obligation. Its
+        # attachment baseline prevents reusing the old submission, not the code
+        # head. Run/attachment provenance and remote HEAD are still checked by
+        # _seal_worker_delivery before any candidate becomes a sealed delivery.
+        return True
+    if not baseline_head:
+        # Legacy explicit dispatches had no rejected head to compare. A plain
+        # operator retry is different: absent a captured baseline it cannot
+        # prove that the new submit changed the rejected delivery. Keep the
+        # pass-with-nits compatibility path, but fail closed for unknown or
+        # rejected operator-retry provenance.
+        if intent.gate == "operator-retry":
+            return intent.source_review_verdict == "pass-with-nits"
+        if (
+            intent.gate == "explicit-dispatch"
+            and intent.baseline_verification_attachment_id
+        ):
+            return intent.source_review_verdict == "pass-with-nits"
+        return intent.source_review_verdict != "reject"
+    if current_head != baseline_head:
+        return True
+    # pass-with-nits is an explicit non-blocking review path: a new verification
+    # attachment may legitimately reuse the same code head.
+    return intent.source_review_verdict == "pass-with-nits"
