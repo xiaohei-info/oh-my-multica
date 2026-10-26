@@ -268,6 +268,27 @@ class Kit:
         self.monkeypatch.setattr(target, name, wrapper)
         return state
 
+    def fail_first_read(self, item_id: str, error: Exception) -> dict:
+        """The first read of ``item_id`` through the Store, by whichever read method the code under test uses, raises ``error``."""
+        state = {"fired": False, "reads": 0}
+
+        def guard(name):
+            original = getattr(self.store, name)
+
+            def wrapper(target, *args, **kw):
+                ids = [target] if isinstance(target, str) else list(target)
+                if item_id in ids:
+                    state["reads"] += 1
+                    if not state["fired"]:
+                        state["fired"] = True
+                        raise error
+                return original(target, *args, **kw)
+            self.monkeypatch.setattr(self.store, name, wrapper)
+
+        for name in ("get_work_item", "observe_work_item_control", "observe_work_item_controls"):
+            guard(name)
+        return state
+
     def forbid(self, target, *names) -> None:
         import pytest
 

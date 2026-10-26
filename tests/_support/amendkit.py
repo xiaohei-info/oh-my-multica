@@ -259,3 +259,124 @@ def bootstrap(kit, tmp_path, status=None, name="dag"):
     item = kit.store.create_work_item(kit.workspace, "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
     kit.store.update_status(item.id, status or WorkItemStatus.BLOCKED)
     return dag_manifest(tmp_path, {"bootstrap": item.id}, name), kit.store.get_work_item(item.id)
+
+
+def pass_with_nits_amendment_fixture(kit, tmp_path):
+    """A blocked `bootstrap` node and a reviewed amendment issue that passed with nits, plus the amendment file."""
+    import yaml
+
+    from omac.core.amendment import build_reviewed_amendment
+    from omac.core.review_convergence import review_subject_digest
+    from omac.core.taskmeta import TaskKind, TaskPhase
+    from omac.core.workitem import WorkItemStatus
+
+    path, target = bootstrap(kit, tmp_path)
+    issue = kit.store.create_work_item(kit.workspace, "amendment", "desc", "amend-pass-with-nits", "alice", reviewer="bob",
+                                       kind=TaskKind.AMENDMENT)
+    amendment = proposal(contract_update())
+    report = {"full_review_completed": True, "blockers": [], "nits": ["tighten the operator guide", "add one regression example"]}
+    ledger = {"schema": "omac.review-ledger/v1", "rounds": [], "blockers": []}
+    kit.store.update_work_item_metadata(
+        issue.id, deliverable=yaml.safe_dump(amendment, sort_keys=False), review_report=report,
+        review_report_source=yaml.safe_dump(report, sort_keys=False), review_ledger=ledger,
+        review_ledger_source=yaml.safe_dump(ledger, sort_keys=False), review_verdict="pass-with-nits", phase=TaskPhase.CONFIRMATION)
+    issue = kit.store.get_work_item(issue.id)
+    kit.store.update_work_item_metadata(issue.id, review_subject_digest=review_subject_digest(issue, 1))
+    kit.store.update_status(issue.id, WorkItemStatus.IN_REVIEW)
+    seal_review_fixture(kit.store, target.id)
+    reviewed = build_reviewed_amendment(load_manifest(str(path)), amendment, kit.store, issue_id=issue.id,
+                                        reviewer_verdict="pass-with-nits")
+    amendment_file = tmp_path / "pass-with-nits.amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    return path, issue, amendment_file, reviewed
+
+
+def seed_legacy_convergence_review_control(store, item, snapshot):
+    """The control facts a node carries after a legacy convergence block: ledger, decision, continuation and Worker handoff."""
+    import yaml
+
+    from omac.core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskPhase
+
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA, "reason_code": "review-convergence-ledger-unverifiable", "kind": "develop",
+        "phase": "review", "gate": "review-convergence", "rounds": 3, "resume_issue_id": item.id, "node_id": snapshot["dag_key"],
+        "verdict": "reject", "recommended_action": "dag-amendment",
+        "convergence": {"schema": "omac.review-convergence-decision/v1", "mode": "unverifiable-legacy-ledger",
+                        "reason_code": "review-convergence-ledger-unverifiable", "cycle_count": 3}}
+    store.update_work_item_metadata(
+        item.id, phase=TaskPhase.REVIEW, worker_bounce=15, review_bounce=3, review_verdict="reject",
+        review_report={"blockers": ["legacy convergence audit"]}, review_report_source="blockers:\n  - legacy convergence audit\n",
+        review_subject_digest="subject-round-3", review_ledger=snapshot["review_ledger"],
+        review_ledger_source=yaml.safe_dump(snapshot["review_ledger"], sort_keys=False),
+        review_continuation={"schema": "omac.review-continuation/v1", "authorized_through_round": 6},
+        decision_required=decision, worker_handoff=snapshot["worker_handoff"])
+
+
+def stage_amendment_with_handoff(kit, tmp_path, stage):
+    """A blocked `bootstrap` node with an old Worker handoff and exhausted budgets, and the reviewed amendment that resumes ``stage``."""
+    from omac.core.amendment import build_reviewed_amendment
+    from omac.core.workitem import WorkItemStatus
+
+    item = kit.store.create_work_item(kit.workspace, "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    path = dag_manifest(tmp_path, {"bootstrap": item.id})
+    kit.store.update_work_item_metadata(
+        item.id, artifacts={"pr_url": "https://example.test/pr/1", "head_sha": "abc"},
+        verification={"subject_digest": "verify-1", "commands": []}, review_verdict="pass", worker_bounce=3, review_bounce=4,
+        merge_bounce=5, worker_handoff=old_worker_handoff())
+    kit.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    seal_review_fixture(kit.store, item.id)
+    reviewed = build_reviewed_amendment(load_manifest(str(path)), proposal(responsibility_update(resume_stage=stage)), kit.store,
+                                        issue_id=f"amendment-{stage}", reviewer_verdict="pass",
+                                        acceptance=responsibility_acceptance_doc())
+    return path, item, reviewed
+
+
+def apply_exhausted_stage_amendment(kit, tmp_path, stage):
+    from omac.core.amendment import apply_amendment
+
+    path, item, reviewed = stage_amendment_with_handoff(kit, tmp_path, stage)
+    apply_amendment(str(path), reviewed, kit.store, POOL, acceptance=responsibility_acceptance_doc())
+    return path, item
+
+
+def legacy_synced_authoring_accept_fixture(kit, tmp_path, legacy_convergence_snapshot):
+    """An authoring amendment applied by an older OMAC: its ledger entry says `synced`, but the issue still has the old projection."""
+    import yaml
+
+    from omac.core.amendment import apply_amendment, build_reviewed_amendment
+    from omac.core.taskmeta import TaskKind, TaskPhase
+    from omac.core.workitem import WorkItemStatus
+
+    snapshot = legacy_convergence_snapshot["work_item"]
+    target = kit.store.create_work_item(kit.workspace, "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
+    path = dag_manifest(tmp_path, {"bootstrap": target.id})
+    kit.store.set_node_contract(target.id, load_manifest(str(path)).nodes["bootstrap"].contract)
+    seed_legacy_convergence_review_control(kit.store, target, snapshot)
+    kit.store.update_work_item_metadata(target.id, worker_bounce=14)
+    kit.store.update_status(target.id, WorkItemStatus.BLOCKED)
+    amendment_issue = kit.store.create_work_item(kit.workspace, "amendment", "desc", "amend-proj-850", "alice", reviewer="bob",
+                                                 kind=TaskKind.AMENDMENT)
+    kit.store.update_work_item_metadata(amendment_issue.id, phase=TaskPhase.CONFIRMATION, review_verdict="pass")
+    reviewed = build_reviewed_amendment(load_manifest(str(path)), proposal(responsibility_update(resume_stage="authoring")), kit.store,
+                                        issue_id=amendment_issue.id, reviewer_verdict="pass",
+                                        acceptance=responsibility_acceptance_doc())
+    apply_amendment(str(path), reviewed, kit.store, POOL, acceptance=responsibility_acceptance_doc())
+    legacy = load_manifest(str(path))
+    entry = legacy.meta["amendment_apply"]["nodes"]["bootstrap"]
+    entry.pop("expected_review_generation", None)
+    entry.pop("observed", None)
+    entry["state"] = "synced"
+    save_manifest(legacy, str(path))
+
+    seed_legacy_convergence_review_control(kit.store, target, snapshot)
+    for key, empty in (("review_generation", ""), ("review_ledger_generation", ""), ("bounce_baseline", "{}")):
+        kit.stack.multica("issue", "metadata", "set", target.id, "--key", key, "--value", empty)
+    kit.store.update_work_item_metadata(target.id, phase=TaskPhase.AUTHORING, worker_bounce=17)
+    kit.store.update_status(target.id, WorkItemStatus.IN_PROGRESS)
+
+    reviewed["human_confirmation"] = "applied"
+    reviewed["apply_result"] = {"legacy": True}
+    amendment_file = tmp_path / "proj-850.amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    kit.store.update_status(amendment_issue.id, WorkItemStatus.DONE)
+    return path, amendment_file, target, reviewed

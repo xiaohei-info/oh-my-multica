@@ -75,7 +75,7 @@ def test_a_tick_collects_a_delivery_that_was_persisted_after_its_reconcile_snaps
 
     def worker_submits(_projection, observed_id):   # the Worker's submit lands right after the Loop looked at the issue
         gate.write_text("open")
-        kit.wait_for(lambda: kit.store.get_work_item(observed_id).artifacts, what="the Worker's submit")
+        kit.wait_runs_ended(observed_id)   # the Run ends once the Worker's `omac work submit` has finished every one of its writes
     kit.after(kit.store, "observe_work_item_control", worker_submits)
 
     result = kit.tick(manifest, path, max_parallel=1)
