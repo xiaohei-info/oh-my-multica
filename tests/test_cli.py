@@ -332,7 +332,7 @@ def test_guide_rejects_old_flat_role_topics(capsys):
 
 def test_config_set_get_roundtrip(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    assert main(["config", "set", "engine", "mock"]) == exit_codes.OK
+    assert main(["config", "set", "engine", "multica"]) == exit_codes.OK
     assert main(["config", "set", "defaults.max_parallel", "8"]) == exit_codes.OK
     capsys.readouterr()
 
@@ -353,11 +353,4 @@ def test_init_check_reports_problems(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     assert main(["init", "--check"]) == exit_codes.VALIDATION
     err = capsys.readouterr().err
-    assert "config.yaml" in err
-
-    main(["config", "set", "engine", "mock"])
-    main(["config", "set", "workspace", "mock-workspace"])
-    main(["config", "set", "roles.workers", '["alice"]'])
-    capsys.readouterr()
-    assert main(["init", "--check"]) == exit_codes.OK
-    assert "Health check passed" in capsys.readouterr().out
+    assert "config.yaml" in err  # a passing check needs the server's workspace and agent pool: tests/it/test_it_init.py

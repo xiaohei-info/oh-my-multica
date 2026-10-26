@@ -1,5 +1,5 @@
 import hashlib
-from _support.fake_platform import MockCodeHost
+from omac.engines.github import GitHubCodeHost
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,7 +16,7 @@ from omac.core.taskmeta import (
     REVIEW_SUBJECT_DIGEST_KEY, TaskKind, TaskPhase,
 )
 from omac.engines.models import EngineConfig
-from omac.core.workitem import AgentRunObservation, PullRequestReadinessFailure, PullRequestState
+from omac.core.workitem import AgentRunObservation
 from omac.core.workitem import WorkItemStatus
 from omac.engines.metadata_policy import encode_metadata_value
 from omac.engines.multica import MulticaRuntime, MulticaStore
@@ -2377,7 +2377,7 @@ def test_submit_fails_closed_when_deferred_multica_contract_body_is_missing(
         call = lambda: dispatch_mod.submit(
             store,
             "issue-1",
-            code_host=MockCodeHost(), pr_url="https://example.test/pr/42",
+            code_host=GitHubCodeHost(), pr_url="https://example.test/pr/42",
             verification_file=str(verification),
         )
     else:
@@ -2386,7 +2386,7 @@ def test_submit_fails_closed_when_deferred_multica_contract_body_is_missing(
         call = lambda: dispatch_mod.submit(
             store,
             "issue-1",
-            code_host=MockCodeHost(), verdict="pass",
+            code_host=GitHubCodeHost(), verdict="pass",
             report_file=str(report),
         )
 

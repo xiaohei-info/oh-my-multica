@@ -1,7 +1,7 @@
 # P1 e2e 复用/改造自旧 smoke_test_manifest.yaml,添加 contract 以走通集成门。
 # 3 节点线性 DAG: smoke-A → smoke-B → smoke-C。
 meta:
-  workspace_id: mock-workspace
+  workspace_id: workspace-1
   title: "P1 e2e smoke manifest"
   description: "3-node linear DAG reused from old smoke fixture"
 

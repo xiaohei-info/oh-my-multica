@@ -257,7 +257,7 @@ def orch(tmp_path):
     d.mkdir()
     with open(d / "config.yaml", "w") as f:
         yaml.dump({
-            "engine": "mock", "workspace": "ws",
+            "engine": "multica", "workspace": "ws",
             "defaults": {"poll_interval": 2, "max_parallel": 2},
             "roles": {"workers": ["alice", "bob"]},
         }, f)

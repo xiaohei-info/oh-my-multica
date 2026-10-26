@@ -30,16 +30,16 @@ class TestSyncEnabled:
         monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
         assert sync_enabled("multica") is True
 
-    def test_mock_default_off(self, monkeypatch):
-        """未设时:mock 默认关——本地跑不碰业务仓库 git。"""
+    def test_other_engines_default_off(self, monkeypatch):
+        """未设时:非 multica 引擎默认关——本地跑不碰业务仓库 git。"""
         monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
-        assert sync_enabled("mock") is False
+        assert sync_enabled("another-engine") is False
         assert sync_enabled(None) is False
 
     def test_env_truthy_forces_on(self, monkeypatch):
-        """OMAC_GIT_SYNC=1 覆盖:即便 mock 也开(测试/特殊场景)。"""
+        """OMAC_GIT_SYNC=1 覆盖:即便非 multica 引擎也开(测试/特殊场景)。"""
         monkeypatch.setenv("OMAC_GIT_SYNC", "1")
-        assert sync_enabled("mock") is True
+        assert sync_enabled("another-engine") is True
 
     def test_env_falsy_forces_off(self, monkeypatch):
         """OMAC_GIT_SYNC=0 覆盖:即便 multica 也关(逃生阀)。"""
@@ -176,7 +176,7 @@ class TestEnsureConfigSynced:
         work = _make_repo(tmp_path)
         _write_config(work)
         ensure_config_synced(".omac/config.yaml", repo_root=str(work),
-                             engine_type="mock")
+                             engine_type="another-engine")
         assert _dirty(work, ".omac/config.yaml")  # 没被动过
 
     def test_push_rejected_raises(self, tmp_path):
@@ -313,7 +313,7 @@ class TestCommitManifest:
         (work / ".omac" / "m.yaml").write_text("nodes: {}\n")
         # mock 引擎不 sync:返回 False,不 commit
         assert commit_manifest(".omac/m.yaml", "msg", repo_root=str(work),
-                               engine_type="mock") is False
+                               engine_type="another-engine") is False
 
     def test_multica_commits_and_pushes(self, tmp_path, monkeypatch):
         monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)

@@ -8,9 +8,6 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from _support import budget  # noqa: E402
-from _support import fake_platform  # noqa: E402
-
-fake_platform.install()  # before test modules do `from omac.engines import create_engine`
 
 _session_tmp_bytes = 0
 
@@ -78,17 +75,6 @@ def _no_disk_flush(monkeypatch, request):
     leaves only whole files, which is what tests/test_manifest*.py check)."""
     if "tests/it" not in str(request.fspath):
         monkeypatch.setattr(os, "fsync", lambda _fd: None)
-
-
-@pytest.fixture(autouse=True)
-def _reset_mock_state():
-    """每个测试前重置 MockStore 的模块级共享状态,保证隔离。"""
-    fake_platform.MockStore.reset()
-    # 测试默认 0 延迟:auto-complete 在首次 wake 即收敛,避免真实等待。
-    # 通过 env 传播到所有 in-process main() MockStore 实例
-    # (MockStore.__init__ 会按 config.extra 重设全局 delay,而 extra 取自 env)。
-    os.environ["MOCK_AUTO_COMPLETE_DELAY"] = "0"
-    yield
 
 
 @pytest.fixture

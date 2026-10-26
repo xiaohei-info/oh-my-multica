@@ -87,7 +87,7 @@ def test_scope_gap_public_command_returns_twenty_and_blocks_submit(tmp_path, mon
                     phase=TaskPhase.AUTHORING, status=WorkItemStatus.IN_PROGRESS,
                     worker="planner", contract={"objective": "scope"})
     store = Mock()
-    store.config = SimpleNamespace(engine_type="mock", workspace_id="ws")
+    store.config = SimpleNamespace(engine_type="multica", workspace_id="ws")
     store.worker_control_lock.side_effect = lambda _: nullcontext()
     store.get_work_item.side_effect = lambda _: deepcopy(item)
     def update(_, **kw):
