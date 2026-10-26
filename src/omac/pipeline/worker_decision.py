@@ -126,6 +126,70 @@ def _read_context(store, issue_id):
     return item
 
 
+def binding_is_stale(report, item, binding) -> bool:
+    """True when the report or the item no longer matches the causally bound Worker handoff."""
+    intent = item.worker_handoff
+    return bool(
+        item.kind != TaskKind.DEVELOP
+        or item.phase != TaskPhase.AUTHORING
+        or item.status not in {WorkItemStatus.IN_PROGRESS, WorkItemStatus.BLOCKED}
+        or intent is None
+        or not intent.is_causally_bound()
+        or intent.review_context_binding != binding
+        or report["issue_id"] != item.id
+        or report["review_context_binding"] != binding
+        or report["handoff_generation"] != intent.generation
+        or report["worker"] != intent.target_worker
+        or item.worker != intent.target_worker
+    )
+
+
+def known_contract_ref(report, contract) -> bool:
+    """``contract_ref`` must name an existing top-level field of the contract."""
+    return report["contract_ref"] in (contract or {})
+
+
+def target_run_problem(runs, intent, run_id):
+    """None when ``run_id`` is the one running, formal, direct Run of the handoff's Worker; else why it is refused."""
+    from .decide_runs import observe_direct_run_attempt
+
+    observed = observe_direct_run_attempt(
+        runs,
+        intent.target_agent_id,
+        baseline_direct_run_ids=intent.baseline_direct_run_ids,
+        cutoff_created_at=intent.baseline_cutoff_created_at,
+        target_run_id=intent.target_run_id,
+    )
+    if any(run.kind == "direct" and run.active and run.agent_id != intent.target_agent_id for run in runs):
+        return "ambiguous"
+    target = next((run for run in runs if run.id == run_id), None)
+    if (
+        observed.state != "active"
+        or observed.target_run_id != run_id
+        or target is None
+        or target.kind != "direct"
+        or not target.formal
+        or target.status != "running"
+    ):
+        return "not-current"
+    return None
+
+
+def decision_record(item, binding, report) -> dict:
+    """The decision_required value a Worker request persists (bounded: it is also a metadata write)."""
+    return {
+        "schema": DECISION_REQUIRED_SCHEMA,
+        "reason_code": "worker-decision-required",
+        "kind": item.kind.value,
+        "phase": TaskPhase.AUTHORING.value,
+        "gate": "worker",
+        "resume_issue_id": item.id,
+        "review_context_binding": binding,
+        "blocker": deepcopy(report),
+        "next_action": f"Resolve the reported decision, then explicitly run omac node retry <manifest> {item.dag_key}",
+    }
+
+
 def report_decision(store, runtime, issue_id, report):
     _validate(report, issue_id)
     if runtime is None:
@@ -136,19 +200,7 @@ def report_decision(store, runtime, issue_id, report):
         item = _read_context(store, issue_id)
         intent = item.worker_handoff
         binding = review_context_binding(item)
-        if (
-            item.kind != TaskKind.DEVELOP
-            or item.phase != TaskPhase.AUTHORING
-            or item.status not in {WorkItemStatus.IN_PROGRESS, WorkItemStatus.BLOCKED}
-            or intent is None
-            or not intent.is_causally_bound()
-            or intent.review_context_binding != binding
-            or report["issue_id"] != item.id
-            or report["review_context_binding"] != binding
-            or report["handoff_generation"] != intent.generation
-            or report["worker"] != intent.target_worker
-            or item.worker != intent.target_worker
-        ):
+        if binding_is_stale(report, item, binding):
             raise ValidationError(
                 f"Stale worker decision binding; run `omac work show {issue_id} --output json` before reporting"
             )
@@ -159,21 +211,11 @@ def report_decision(store, runtime, issue_id, report):
             if isinstance(item.contract, dict)
             else _dump_contract(item.contract)
         )
-        if report["contract_ref"] not in (contract or {}):
+        if not known_contract_ref(report, contract):
             raise ValidationError(
                 "contract_ref must name an existing top-level field in context.contract"
             )
-        decision = {
-            "schema": DECISION_REQUIRED_SCHEMA,
-            "reason_code": "worker-decision-required",
-            "kind": item.kind.value,
-            "phase": TaskPhase.AUTHORING.value,
-            "gate": "worker",
-            "resume_issue_id": item.id,
-            "review_context_binding": binding,
-            "blocker": deepcopy(report),
-            "next_action": f"Resolve the reported decision, then explicitly run omac node retry <manifest> {item.dag_key}",
-        }
+        decision = decision_record(item, binding, report)
         # An exact persisted request remains idempotent after its Run finishes.
         if item.decision_required not in (None, {}, decision):
             raise NeedsDecision(
@@ -181,34 +223,12 @@ def report_decision(store, runtime, issue_id, report):
                 report=item.decision_required,
             )
         if item.decision_required != decision:
-            from .decide_runs import observe_direct_run_attempt
-
-            runs = runtime.list_runs(issue_id)
-            observed = observe_direct_run_attempt(
-                runs,
-                intent.target_agent_id,
-                baseline_direct_run_ids=intent.baseline_direct_run_ids,
-                cutoff_created_at=intent.baseline_cutoff_created_at,
-                target_run_id=intent.target_run_id,
-            )
-            if any(
-                run.kind == "direct"
-                and run.active
-                and run.agent_id != intent.target_agent_id
-                for run in runs
-            ):
+            problem = target_run_problem(runtime.list_runs(issue_id), intent, report["run_id"])
+            if problem == "ambiguous":
                 raise ValidationError(
                     "Another direct Agent Run is active; do not report for an ambiguous execution"
                 )
-            target = next((run for run in runs if run.id == report["run_id"]), None)
-            if (
-                observed.state != "active"
-                or observed.target_run_id != report["run_id"]
-                or target is None
-                or target.kind != "direct"
-                or not target.formal
-                or target.status != "running"
-            ):
+            if problem:
                 raise ValidationError(
                     f"Worker decision requires the current running direct Worker Run; run `omac work show {issue_id} --output json`"
                 )

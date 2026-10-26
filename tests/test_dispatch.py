@@ -7,74 +7,24 @@
 - 可选字段(pr_base/non_goals/scope_paths)缺省时相应段落省略
 - render_review_rollout_comment 覆盖 pass / pass-with-nits / reject:
   阶段说明 + 定位 + reject 时含 review_goals/blockers/nits
-- mock e2e:关闭 auto-complete,手动扮演 worker(review 提交)→ reviewer(pass)
-  驱动一个节点走完 develop→review→done,证明 Agent-first 闭环在接口层成立
+- 派发到真实 Multica 的 issue(真实 id 回填、retry 刷新、worker→reviewer→done 交接):
+  tests/it/test_it_dispatch_body.py
 """
-import os
-import hashlib
-import tempfile
 from types import SimpleNamespace
 
 import pytest
-import yaml
 
-from omac.core.manifest import (
-    Contract,
-    EvidenceMode,
-    Manifest,
-    Node,
-    ProducedArtifact,
-    load_manifest,
-    save_manifest,
-)
-from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, open_blockers
+from omac.core.manifest import Contract, EvidenceMode, Node, ProducedArtifact
 from omac.core.taskmeta import TaskKind, TaskPhase
-from omac.engines import create_engine
-from omac.engines.models import EngineConfig
-from omac.core.workitem import WorkItemStatus
 from omac.pipeline.dispatch import (
-    KIND_GUIDE,
     KIND_LABEL,
     KIND_ROLE,
     render_issue_body,
     render_review_rollout_comment,
 )
-from omac.pipeline.loop import tick
 
 
 # ==================== helpers ====================
-
-@pytest.fixture(autouse=True)
-def _default_gh_merge_succeeds_in_dispatch_tests(monkeypatch):
-    import subprocess
-
-    real_run = subprocess.run
-
-    def fake_run(command, *args, **kwargs):
-        if isinstance(command, str) and command.startswith("gh pr merge "):
-            class Proc:
-                returncode = 0
-                stdout = "merged"
-                stderr = ""
-
-            return Proc()
-        return real_run(command, *args, **kwargs)
-
-    monkeypatch.setattr("_support.fake_platform.subprocess.run", fake_run)
-
-
-def _config(**extra):
-    base = {
-        "MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0",
-        "MOCK_AUTO_MERGE_ON_SUCCESS": "true",
-    }
-    base.update(extra)
-    return EngineConfig(engine_type="mock", workspace_id="ws", extra=base)
-
-
-def _engine(**extra):
-    return create_engine("mock", _config(**extra))
-
 
 def _full_contract():
     return Contract(
@@ -99,36 +49,6 @@ def _full_contract():
     )
 
 
-def _tmp_manifest_path(manifest):
-    fd, path = tempfile.mkstemp(suffix=".yaml", prefix="omac_test_")
-    os.close(fd)
-    save_manifest(manifest, path)
-    return path
-
-
-def _with_current_review_protocol(item, report):
-    if not item.review_obligations:
-        return report
-    report.update({
-        "review_protocol": REVIEW_PROTOCOL_VERSION,
-        "obligation_results": [
-            {
-                "obligation_id": obligation["obligation_id"],
-                "status": "pass",
-                "evidence": "independently verified",
-            }
-            for obligation in item.review_obligations
-        ],
-        "prior_blocker_results": [
-            {
-                "blocker_id": blocker["blocker_id"],
-                "status": "fixed",
-                "evidence": "rework verified",
-            }
-            for blocker in open_blockers(item.review_ledger)
-        ],
-    })
-    return report
 
 
 def test_final_acceptance_body_reads_mapping_contract_and_repositories():
@@ -601,185 +521,3 @@ class TestRenderReviewRolloutComment:
         assert "命名修正" in c
         assert "ITEM-1" in c  # 定位评审对象
         assert "朝评审目标修" in c or "目标修" in c
-
-
-# ==================== loop 集成:e2e worker→reviewer→done ====================
-
-class TestDispatchLoopIntegration:
-
-    def test_dispatch_backfills_real_issue_id_into_body(self):
-        """_dispatch 创建工单后回填真实 id,issue body 即含可直接执行的命令。"""
-        eng = _engine()
-        manifest = Manifest(meta={"workspace_id": "ws"}, nodes={
-            "a": Node(id="a", worker="alice", title="Add login",
-                     reviewer="bob", contract=_full_contract()),
-        })
-        path = _tmp_manifest_path(manifest)
-        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
-        item = eng.store.get_work_item(manifest.nodes["a"].work_item_id)
-        assert item.id in item.description
-        assert f"omac work show {item.id} --output json" in item.description
-        assert "## Task summary" in item.description
-        assert "硬约束" not in item.description
-
-    def test_retry_existing_issue_refreshes_body_without_recreating_issue(self):
-        """node retry 复用旧 issue 时同步最新 scope 文案,避免旧硬白名单继续阻塞。"""
-        eng = _engine(MOCK_AUTO_COMPLETE="false")
-        contract = _full_contract()
-        contract.scope_paths = ["src/auth/**"]
-        manifest = Manifest(meta={"workspace_id": "ws"}, nodes={
-            "a": Node(id="a", worker="alice", title="Add login",
-                      reviewer="bob", contract=contract),
-        })
-        path = _tmp_manifest_path(manifest)
-
-        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
-        item_id = manifest.nodes["a"].work_item_id
-        first_body = eng.store.get_work_item(item_id).description
-        assert "package.json" not in first_body
-        eng.store.update_work_item_metadata(
-            item_id,
-            verification={"schema": "legacy-manual-verification"},
-            delivery_identity={},
-        )
-
-        manifest.nodes["a"].contract.scope_paths.append("package.json")
-        manifest.nodes["a"].status = "todo"
-        eng.store.update_status(item_id, WorkItemStatus.DONE)
-        eng.store.clear_assignment(item_id)
-        eng.store.update_work_item_metadata(item_id, worker_handoff={})
-        eng.store.update_status(item_id, WorkItemStatus.BLOCKED)
-        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
-
-        refreshed = eng.store.get_work_item(item_id)
-        assert manifest.nodes["a"].work_item_id == item_id
-        assert "package.json" in refreshed.description
-        assert "Primary code ownership" in refreshed.description
-        first_screen = refreshed.description.split("# Add login", 1)[0]
-        assert "first action" in first_screen or "第一动作" in first_screen
-        assert "multica issue metadata" in first_screen
-        assert "delivery_identity" in first_screen
-        assert refreshed.delivery_identity is None
-        assert refreshed.status == WorkItemStatus.IN_PROGRESS
-
-    def test_worker_submit_assigns_reviewer_without_handoff_comment(self):
-        """worker 完成交付后靠 assign + metadata 交接,不发评论触发第二次 run。"""
-        eng = _engine()
-        manifest = Manifest(meta={"workspace_id": "ws"}, nodes={
-            "a": Node(id="a", worker="alice", reviewer="bob",
-                     contract=_full_contract()),
-        })
-        path = _tmp_manifest_path(manifest)
-        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
-        item_id = manifest.nodes["a"].work_item_id
-        eng.store.update_status(item_id, WorkItemStatus.DONE)
-        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
-        assert eng.store.get_work_item(item_id).status == WorkItemStatus.IN_REVIEW
-        assert eng.store.get_work_item(item_id).reviewer == "bob"
-        comments = eng.store.get_comments(item_id)
-        assert not any("阶段变更" in c and "reviewer" in c for c in comments)
-
-    def test_e2e_worker_to_reviewer_to_done_manual_submit(self):
-        """零 skill 闭环:关闭自动完成,手动扮演 worker+reviewer 走完 develop→review→done。"""
-        # 关闭 auto-complete,由我们手动写入结构化证据(模拟 work submit)
-        eng = _engine(MOCK_AUTO_COMPLETE="false")
-        contract = Contract(
-            objective="登录", acceptance=["可登录"],
-            verification_commands=["pytest -q"],
-            integration_gates=[{
-                "name": "login-gate", "layer": "L1",
-                "delivery_goal": "端到端登录",
-                "source_of_truth": ["docs/login.md"], "covers": ["route"],
-                "acceptance_refs": ["可登录"], "commands": ["pytest -q"],
-                "required_metrics": {"route_coverage": 100},
-                "artifacts": ["coverage.xml"],
-            }],
-            pr_base="feature/v1", coverage_gate=90,
-        )
-        manifest = Manifest(meta={"workspace_id": "ws"}, nodes={
-            "a": Node(id="a", worker="alice", reviewer="bob", contract=contract),
-        })
-        path = _tmp_manifest_path(manifest)
-
-        # 1) 派发 → 工单进入 in_progress,body 含真实 id
-        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
-        item_id = manifest.nodes["a"].work_item_id
-        item = eng.store.get_work_item(item_id)
-        assert item.status == WorkItemStatus.IN_PROGRESS
-        assert f"omac work show {item_id} --output json" in item.description
-
-        # 2) 手动扮演 worker:写入可通过证据门的 verification
-        verification = {
-            "commands": [{"cmd": "pytest -q", "exit_code": 0,
-                          "summary": "pass",
-                          "business_tests": [{
-                              "acceptance": "可登录",
-                              "test": "tests/test_login.py::test_user_can_login",
-                          }]}],
-            "integration_gates": [{
-                "name": "login-gate",
-                "commands": [{"cmd": "pytest -q", "exit_code": 0,
-                              "summary": "pass"}],
-                "metrics": {"route_coverage": 100},
-                "artifacts": ["coverage.xml"],
-                "source_of_truth": ["docs/login.md"],
-                "delivery_goal": "端到端登录",
-            }],
-            "pr_base": "feature/v1",
-            "coverage": 95,
-            "env_setup": ["Mock env: login-gate"],
-        }
-        pr_url = "https://mock.example.com/pr/1"
-        eng.store.update_work_item_metadata(
-            item_id,
-            artifacts={
-                "pr_url": pr_url,
-                "head_sha": hashlib.sha256(pr_url.encode("utf-8")).hexdigest(),
-            },
-            verification=verification,
-            verification_source=yaml.safe_dump(verification),
-        )
-        eng.store.update_status(item_id, WorkItemStatus.DONE)
-        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
-        assert eng.store.get_work_item(item_id).status == WorkItemStatus.IN_REVIEW
-
-        # reviewer 接手靠 assign + metadata,正常路径不发阶段变更评论。
-        handoff = eng.store.get_work_item(item_id)
-        assert handoff.reviewer == "bob"
-        assert not any("阶段变更" in c for c in eng.store.get_comments(item_id))
-
-        # 3) 手动扮演 reviewer:提交 pass verdict 与结构化报告
-        review_item = eng.store.get_work_item(item_id)
-        eng.store.update_work_item_metadata(
-            item_id,
-            review_verdict="pass",
-            review_report=_with_current_review_protocol(review_item, {
-                "review_goals": ["验收映射全覆盖"],
-                "diff_reviewed": True,
-                "tests_rerun": True,
-                "integration_tests_rerun": True,
-                "coverage_checked": True,
-                "full_review_completed": True,
-                "acceptance_mapping": [
-                    {"acceptance": "可登录", "evidence": "rerun pass",
-                     "status": "pass"},
-                ],
-                "integration_gate_mapping": [{
-                    "gate": "login-gate", "status": "pass",
-                    "evidence": "rerun pass",
-                    "commands": [{"cmd": "pytest -q", "exit_code": 0,
-                                  "summary": "pass"}],
-                    "metrics": {"route_coverage": 100},
-                    "artifacts": ["coverage.xml"],
-                    "source_of_truth": ["docs/login.md"],
-                    "delivery_goal": "端到端登录",
-                }],
-                "blockers": [],
-                "nits": [],
-            }),
-        )
-        tick(eng.store, eng.runtime, eng.code_host, manifest, path, max_parallel=4)
-
-        item = eng.store.get_work_item(item_id)
-        assert item.status == WorkItemStatus.DONE
-        assert manifest.nodes["a"].status == "done"

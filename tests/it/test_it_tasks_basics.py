@@ -1,9 +1,11 @@
 """run_task on a real Multica: one authoring pass, the issue body it renders, and resuming an authoring issue in place."""
 import pytest
+from structlog.testing import capture_logs
 
 import omac.pipeline.tasks as tasks_module
 from _support.tasksworld import World, payload
 from _support.taskkit import decompose_manifest
+from omac.core import logsetup
 from omac.core.manifest import Contract
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.core.workitem import WorkItemStatus
@@ -94,8 +96,11 @@ def test_one_pass_without_reviewers_finishes_on_the_same_issue(world):
     kit = world.kit
     world.author(world.plan())
 
-    res = world.run(TaskKind.PLAN, payload(), "alice")
+    with capture_logs() as events:
+        res = world.run(TaskKind.PLAN, payload(), "alice")
 
+    dispatched = next(event for event in events if event["event"] == logsetup.EVT_DISPATCH)
+    assert dispatched["worker"] == "alice" and logsetup.EVT_NODE_DONE in [event["event"] for event in events]
     item = kit.store.get_work_item(res["item_id"])
     assert res["delivery"] == {"plan": "计划正文", "project_rules": "## Rules\n"} and (res["rounds"], res["verdict"], res["kind"]) == (0, "pass", "plan")
     assert item.status == WorkItemStatus.DONE

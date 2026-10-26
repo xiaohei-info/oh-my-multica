@@ -1,7 +1,9 @@
 """Dispatch and convergence of the Loop against a real Multica: what a tick creates, links, assigns and wakes."""
 import pytest
+from structlog.testing import capture_logs
 
 from _support.loopkit import contract
+from omac.core import logsetup
 from omac.core.manifest import load_manifest
 from omac.core.taskmeta import TaskPhase, WorkerHandoffIntent
 from omac.core.workitem import WorkItemStatus
@@ -18,8 +20,15 @@ def test_dag_with_linear_and_parallel_dependencies_converges(kit, stack):
     manifest = kit.manifest(nodes)
     path = kit.save(manifest)
 
-    result = kit.settle(manifest, path)
+    with capture_logs() as events:
+        result = kit.settle(manifest, path)
 
+    names = [event["event"] for event in events]
+    converged = next(event for event in events if event["event"] == logsetup.EVT_CONVERGED)
+    assert names.count(logsetup.EVT_DISPATCH) == 4 and names.count(logsetup.EVT_NODE_DONE) == 4       # each node dispatched and done once
+    assert (converged["total"], converged["done"]) == (4, 4)
+    dispatched = next(event for event in events if event["event"] == logsetup.EVT_DISPATCH)
+    assert dispatched["worker"] in {"alice", "bob"} and dispatched["node"] in {"a", "b", "c", "d"}
     assert result.state == "converged"
     assert sorted(result.done) == ["a", "b", "c", "d"]
     assert result.failed == [] and result.running == []

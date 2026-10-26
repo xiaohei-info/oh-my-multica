@@ -1,11 +1,13 @@
 """run_task review loops on a real Multica: rejects and rework, budgets and continuations, the human gate, and amendment tasks."""
 import pytest
 import yaml
+from structlog.testing import capture_logs
 
 from _support import ledgers
 from _support.amendkit import contract_update, proposal, responsibility_acceptance_doc
 from _support.taskkit import decompose_manifest
 from _support.tasksworld import World, payload, review_report
+from omac.core import logsetup
 from omac.core.amendment import build_reviewed_amendment, historical_work_item_evidence_digest
 from omac.core.manifest import Contract, Manifest, Node
 from omac.core.taskmeta import TaskKind, TaskPhase
@@ -104,8 +106,12 @@ def test_two_rejects_then_a_pass_end_on_the_same_issue(world):
     world.review("reject", "reject", "pass")
     before = {i.id for i in kit.store.list_work_items(kit.workspace)}
 
-    res = world.run(TaskKind.PLAN, payload(), "alice", reviewers=["bob"], max_revisions=3)
+    with capture_logs() as events:
+        res = world.run(TaskKind.PLAN, payload(), "alice", reviewers=["bob"], max_revisions=3)
 
+    names = [event["event"] for event in events]
+    assert names.count(logsetup.EVT_VERDICT) >= 3 and logsetup.EVT_NODE_DONE in names       # two rejects and the pass
+    assert any(event["event"] == logsetup.EVT_REVISION and event.get("gate") == "review" for event in events)
     item = kit.store.get_work_item(res["item_id"])
     assert (res["rounds"], res["verdict"]) == (3, "pass") and item.status == WorkItemStatus.DONE and item.bounces.review == 2
     assert {i.id for i in kit.store.list_work_items(kit.workspace)} - before == {item.id}   # one new issue for the whole task
@@ -148,8 +154,10 @@ def test_the_human_gate_waits_until_somebody_confirms(world):
         if len(polls) > 12:
             raise TimeoutError("not confirmed")
 
-    with pytest.raises(TimeoutError):
+    with capture_logs() as events, pytest.raises(TimeoutError):
         world.run(TaskKind.PLAN, payload(title="human-gate-waits"), "alice", reviewers=["bob"], confirm=True, poll=bounded_poll)
+
+    assert logsetup.EVT_HUMAN_GATE_WAIT in [event["event"] for event in events]
 
     item = next(i for i in world.store.list_work_items(world.kit.workspace) if i.title.endswith("human-gate-waits"))
     assert (item.review_verdict, item.phase.value) == ("pass", "confirmation") and not item.reviewer
@@ -238,9 +246,10 @@ def test_an_exhausted_amendment_review_budget_projects_a_decision_and_the_same_i
     world.author(world.amendment(amendment_text()))
     world.review("reject")
 
-    with pytest.raises(NeedsDecision) as raised:
+    with capture_logs() as events, pytest.raises(NeedsDecision) as raised:
         world.run(TaskKind.AMENDMENT, payload(title="budget-exhaustion"), "alice", reviewers=["bob"], max_revisions=3)
 
+    assert logsetup.EVT_NEEDS_DECISION in [event["event"] for event in events]
     report = raised.value.report
     item = kit.store.get_work_item(report["item_id"])
     assert report["rounds"] == 3 and report["last_opinion"] and (report["kind"], report["phase"], report["gate"]) == ("amendment", "review", "review")

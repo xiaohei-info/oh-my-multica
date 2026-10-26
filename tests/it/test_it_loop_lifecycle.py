@@ -3,9 +3,11 @@ import uuid
 
 import pytest
 import yaml
+from structlog.testing import capture_logs
 
 from _support.deliveries import verification_for
 from _support.loopkit import contract, fails
+from omac.core import logsetup
 from omac.core.manifest import load_manifest, set_node
 from omac.core.taskmeta import TaskPhase
 from omac.core.workitem import WorkItemStatus
@@ -32,8 +34,12 @@ def failing_dag(kit):
 def test_a_failed_node_blocks_its_dependents_but_not_independent_work(kit):
     manifest, path = failing_dag(kit)
 
-    result = kit.settle(manifest, path)
+    with capture_logs() as events:
+        result = kit.settle(manifest, path)
 
+    names = [event["event"] for event in events]
+    assert {logsetup.EVT_NODE_FAILED, logsetup.EVT_CASCADE_BLOCKED, logsetup.EVT_NEEDS_DECISION} <= set(names)
+    assert set(next(e for e in events if e["event"] == logsetup.EVT_CASCADE_BLOCKED)["ids"]) & {"b", "c"}
     assert result.state == "needs_decision"
     assert sorted(result.failed) == ["a", "b", "c"] and result.done == ["d"]
     assert [n["key"] for n in result.report["failed_nodes"]] == sorted(result.failed)

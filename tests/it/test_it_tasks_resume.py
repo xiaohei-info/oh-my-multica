@@ -5,8 +5,10 @@ from dataclasses import replace
 
 import pytest
 import yaml
+from structlog.testing import capture_logs
 
 import omac.pipeline.tasks as tasks_module
+from omac.core import logsetup
 from _support.tasksworld import World, payload, review_report
 from omac.core.manifest import Contract
 from omac.core.taskmeta import TaskKind, TaskPhase
@@ -128,9 +130,12 @@ def test_an_in_review_amendment_with_nits_enters_confirmation_without_dispatchin
     item = amendment_in_review_with_nits(world)
     log = untouched(world)
 
-    result = run_task(kit.engine, TaskKind.AMENDMENT, payload(contract=amendment_contract(item)), "alice", reviewers=["bob"], confirm=True,
-                      pause_at_confirmation=True, poll=no_poll("a resume must not poll a new Run"), resume_item_id=item.id)
+    with capture_logs() as events:
+        result = run_task(kit.engine, TaskKind.AMENDMENT, payload(contract=amendment_contract(item)), "alice", reviewers=["bob"], confirm=True,
+                          pause_at_confirmation=True, poll=no_poll("a resume must not poll a new Run"), resume_item_id=item.id)
 
+    names = [event["event"] for event in events]
+    assert logsetup.EVT_DISPATCH not in names and logsetup.EVT_HUMAN_GATE_WAIT in names     # resuming a confirmation dispatches nothing
     resumed = kit.store.get_work_item(item.id)
     assert result["item_id"] == item.id and result["verdict"] == "pass-with-nits" and result["pending_confirmation"] is True
     assert (resumed.phase, resumed.review_verdict) == (TaskPhase.CONFIRMATION, "pass-with-nits") and nothing_happened(log)
