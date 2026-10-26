@@ -220,7 +220,7 @@ class Kit:
         bob = self.store.resolve_agent_id("bob")
         return [r for r in self.runtime.list_runs(item_id) if r.agent_id == bob]
 
-    def dispatched(self, *errors, reviewer="bob", delivery=None):
+    def dispatched(self, *errors, reviewer="bob", delivery=None, wait=True):
         """Dispatch node `a`; the Worker's Runs fail with ``errors`` in order, then hang.
         ``delivery``: verification metadata the issue already carries before the handoff starts."""
         self.agents([*[fails(e) for e in errors], *HANG], names=("alice",))
@@ -233,7 +233,8 @@ class Kit:
         path = self.save(manifest)
         self.tick(manifest, path, max_parallel=1)
         item = self.store.get_work_item(manifest.nodes["a"].work_item_id)
-        self.wait_runs_ended(item.id)
+        if wait:
+            self.wait_runs_ended(item.id)
         return manifest, path, item
 
     def in_review(self, *reviewer_runs):

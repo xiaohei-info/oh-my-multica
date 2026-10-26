@@ -87,6 +87,7 @@ from .decide_loop import (
     plan_return_to_worker_failed, plan_worker_failed,
 )
 from .decide_recovery import (
+    validate_structured_recovery_payloads,
     classify_reviewer_recovery_decision, current_review_subject,
     delayed_reviewer_recovery_marker_error, node_retry_action,
     provisional_reviewer_recovery_marker_error, review_subject_for_current_delivery,
@@ -97,6 +98,7 @@ from .decide_reviewer import (
     decide_dispatch_baseline, decide_no_submit, decide_reviewer_run, no_submit_grace,
 )
 from .decide_runs import (
+    is_active_formal_run,
     TRANSIENT_RUNTIME_MAX_RUNS, ExpectedTerminalRun, RunFailure,
     bounded_direct_run_baseline, formal_dispatch_target, is_retryable_transient_run_failure,
     observe_direct_run_attempt, parse_baseline_cutoff, parse_platform_time, run_created_within_baseline,
@@ -154,12 +156,6 @@ _REVIEW_CONFIRMATION_PAYLOADS = frozenset({
     WorkItemPayload.MACHINE_FEEDBACK,
     WorkItemPayload.CONTRACT,
 })
-_STRUCTURED_RECOVERY_PAYLOADS = (
-    (WorkItemPayload.VERIFICATION, "verification_ref"),
-    (WorkItemPayload.REVIEW_REPORT, "review_report_ref"),
-    (WorkItemPayload.REVIEW_LEDGER, "review_ledger_ref"),
-    (WorkItemPayload.CONTRACT, "contract_ref"),
-)
 
 
 @dataclass(frozen=True)
@@ -692,30 +688,6 @@ def _hydrate_work_item_payloads(
         work_item=item,
         deferred_payloads=projection.deferred_payloads - plan,
     )
-
-
-def _validate_structured_recovery_payloads(
-    projection: WorkItemControlProjection,
-    requested: WorkItemHydrationPlan,
-) -> None:
-    """Fail closed when referenced collect evidence is not a non-empty mapping."""
-    item = projection.work_item
-    for payload, ref_name in _STRUCTURED_RECOVERY_PAYLOADS:
-        ref = getattr(item, ref_name, None)
-        if payload not in requested or not ref:
-            continue
-        value = getattr(item, payload.value, None)
-        if isinstance(value, dict) and value:
-            continue
-        attachment_id = str(ref.get("attachment_id") or "unknown")
-        raise PlatformError(ui(
-            f"Referenced {payload.value} attachment {attachment_id} for work "
-            f"item {item.id} did not parse as a non-empty YAML/JSON mapping. "
-            "Restore a valid structured attachment before retrying DAG recovery.",
-            f"工作单元 {item.id} 引用的 {payload.value} 附件 {attachment_id} "
-            "无法解析为非空 YAML/JSON 映射。请恢复合法的结构化附件后再重试 "
-            "DAG 恢复。",
-        ))
 
 
 def _observe_control(store: WorkItemStore, job: Tuple[str, str]) -> Tuple[str, Any]:
@@ -4208,8 +4180,8 @@ def _active_formal_run_nodes(
                 node.reviewer, reviewer_id,
             ) is not None:
                 continue
-        attempt = None
         runs = None
+        binding = None
         if item.phase == TaskPhase.AUTHORING:
             intent = item.worker_handoff
             if (
@@ -4218,9 +4190,8 @@ def _active_formal_run_nodes(
                 and intent.target_worker == node.worker
             ):
                 runs = runtime.list_runs(item.id)
-                attempt = observe_direct_run_attempt(
-                    runs,
-                    intent.target_agent_id,
+                binding = dict(
+                    agent_id=intent.target_agent_id,
                     baseline_direct_run_ids=intent.baseline_direct_run_ids,
                     cutoff_created_at=intent.baseline_cutoff_created_at,
                     target_run_id=intent.target_run_id,
@@ -4234,18 +4205,14 @@ def _active_formal_run_nodes(
                 and baseline.target_reviewer == node.reviewer
             ):
                 runs = runtime.list_runs(item.id)
-                attempt = observe_direct_run_attempt(
-                    runs,
-                    baseline.target_agent_id,
+                binding = dict(
+                    agent_id=baseline.target_agent_id,
                     baseline_direct_run_ids=baseline.baseline_direct_run_ids,
                     cutoff_created_at=baseline.cutoff_created_at,
                     target_run_id=baseline.target_run_id,
                     attempt=baseline.attempt,
                 )
-        if attempt is None or runs is None or attempt.state != "active":
-            continue
-        _target, target_error = formal_dispatch_target(runs, attempt)
-        if target_error is None:
+        if binding is not None and is_active_formal_run(runs, **binding):
             active.append(key)
     return active
 
@@ -4273,7 +4240,7 @@ def _restore_active_formal_run_stages(
         collect_node = replace(node, status="in_progress")
         plan = _build_work_item_hydration_plan(collect_node, projection)
         hydrated = _hydrate_work_item_payloads(store, projection, plan)
-        _validate_structured_recovery_payloads(
+        validate_structured_recovery_payloads(
             hydrated, plan & projection.deferred_payloads)
         resolution = _resolve_handoff_review_convergence(
             hydrated.work_item, intent, key, store=store)
@@ -4298,7 +4265,7 @@ def _restore_active_formal_run_stages(
         collect_node = replace(node, status=status)
         plan = _build_work_item_hydration_plan(collect_node, projection)
         hydrated = _hydrate_work_item_payloads(store, projection, plan)
-        _validate_structured_recovery_payloads(
+        validate_structured_recovery_payloads(
             hydrated, plan & projection.deferred_payloads)
         handoff_intent = hydrated.work_item.worker_handoff
         if (

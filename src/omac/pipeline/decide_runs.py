@@ -345,6 +345,12 @@ def formal_dispatch_target(
     return target, None
 
 
+def is_active_formal_run(runs: List[AgentRunObservation], agent_id: str, **baseline) -> bool:
+    """Whether the one causally bound Run is still active and was a formal assignment/rerun dispatch."""
+    attempt = observe_direct_run_attempt(runs, agent_id, **baseline)
+    return attempt.state == "active" and formal_dispatch_target(runs, attempt)[1] is None
+
+
 def parse_platform_time(value: str | None) -> datetime | None:
     if not value:
         return None

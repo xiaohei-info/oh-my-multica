@@ -12,6 +12,9 @@ from ..core.manifest import Manifest, _dump_contract
 from ..core.stage_recovery import stage_recovery_subject, validate_stage_recovery
 from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
 from ..core.review_convergence import review_subject_digest
+from ..core.workitem import WorkItemControlProjection, WorkItemHydrationPlan, WorkItemPayload
+from ..errors import PlatformError
+from ..i18n import ui
 
 
 def current_review_subject(item) -> str:
@@ -272,3 +275,35 @@ def delayed_reviewer_recovery_marker_error(
     if item_contract != node_contract:
         return "the manifest and persisted node contracts do not match"
     return None
+
+
+STRUCTURED_RECOVERY_PAYLOADS = (
+    (WorkItemPayload.VERIFICATION, "verification_ref"),
+    (WorkItemPayload.REVIEW_REPORT, "review_report_ref"),
+    (WorkItemPayload.REVIEW_LEDGER, "review_ledger_ref"),
+    (WorkItemPayload.CONTRACT, "contract_ref"),
+)
+
+
+def validate_structured_recovery_payloads(
+    projection: WorkItemControlProjection,
+    requested: WorkItemHydrationPlan,
+) -> None:
+    """Fail closed when referenced collect evidence is not a non-empty mapping."""
+    item = projection.work_item
+    for payload, ref_name in STRUCTURED_RECOVERY_PAYLOADS:
+        ref = getattr(item, ref_name, None)
+        if payload not in requested or not ref:
+            continue
+        value = getattr(item, payload.value, None)
+        if isinstance(value, dict) and value:
+            continue
+        attachment_id = str(ref.get("attachment_id") or "unknown")
+        raise PlatformError(ui(
+            f"Referenced {payload.value} attachment {attachment_id} for work "
+            f"item {item.id} did not parse as a non-empty YAML/JSON mapping. "
+            "Restore a valid structured attachment before retrying DAG recovery.",
+            f"工作单元 {item.id} 引用的 {payload.value} 附件 {attachment_id} "
+            "无法解析为非空 YAML/JSON 映射。请恢复合法的结构化附件后再重试 "
+            "DAG 恢复。",
+        ))
