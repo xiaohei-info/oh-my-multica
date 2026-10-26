@@ -22,7 +22,7 @@ def stack(tmp_path_factory):
     instance = Stack(tmp_path_factory.mktemp("it"))
     try:
         instance.up()
-        for name in ("alice", "bob", "carol"):
+        for name in ("alice", "bob", "carol", "charlie"):
             instance.agent(name)
         yield instance
     finally:
