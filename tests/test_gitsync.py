@@ -171,7 +171,7 @@ class TestEnsureConfigSynced:
         assert not _unpushed(work, ".omac/config.yaml")
 
     def test_sync_disabled_skips(self, tmp_path, monkeypatch):
-        """sync 关(mock 引擎)→ 完全 no-op:脏 config 也不碰、不报错。"""
+        """sync 关(非 multica 引擎)→ 完全 no-op:脏 config 也不碰、不报错。"""
         monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
         work = _make_repo(tmp_path)
         _write_config(work)
@@ -311,7 +311,7 @@ class TestCommitManifest:
         work = _make_repo(tmp_path)
         (work / ".omac").mkdir()
         (work / ".omac" / "m.yaml").write_text("nodes: {}\n")
-        # mock 引擎不 sync:返回 False,不 commit
+        # 非 multica 引擎不 sync:返回 False,不 commit
         assert commit_manifest(".omac/m.yaml", "msg", repo_root=str(work),
                                engine_type="another-engine") is False
 

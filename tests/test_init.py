@@ -28,7 +28,7 @@ def test_pr_operations_belong_to_the_code_host_port_not_the_store():
 
 
 def test_multica_list_workspaces_parses_json(monkeypatch):
-    """subprocess mock:multica workspace list --output json → WorkspaceInfo。"""
+    """平台 CLI 的固定输出:multica workspace list --output json → WorkspaceInfo。"""
     from omac.engines import multica as m
 
     payload = json.dumps([

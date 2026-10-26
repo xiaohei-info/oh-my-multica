@@ -1,7 +1,7 @@
 """P5.1 web 服务端 —— API 层 + 一致性纪律 + 缓存与安全。
 
 三层测试:
-1. 一致性测试(mock):逐端点断言 HTTP 响应 == CLI 同命令 --output json 输出。
+1. 一致性测试:逐端点断言 HTTP 响应 == CLI 同命令 --output json 输出。
 2. 缓存命中测试:TTL 窗口内多次请求 dag/status 命中缓存,实际命令调用只触发一次;
    TTL 过期后再次触发。
 3. 安全测试:无 token 对外 bind → exit 5;错 token → 401;缺 token → 401;正确 token → 200。
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.integration  # real local HTTP server / real git: budge
 
 @pytest.fixture
 def orch(tmp_path):
-    """.omac 工作目录(mock 引擎)。poll_interval=2 方便 TTL 测试过窗口。"""
+    """.omac 工作目录。poll_interval=2 方便 TTL 测试过窗口。"""
     d = tmp_path / ".omac"
     d.mkdir()
     with open(d / "config.yaml", "w") as f:

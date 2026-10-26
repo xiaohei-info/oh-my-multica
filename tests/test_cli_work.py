@@ -17,7 +17,6 @@ from omac.pipeline import dispatch as dispatch_mod
 from omac.pipeline.dispatch import SUBMIT_PARAM_SPECS, SUBMIT_PARAMS_BY_KIND_PHASE, submit_template_for
 
 
-
 @pytest.mark.parametrize("kind,phase", COMBINATIONS, ids=[
     f"{k.value}-{p.value}" for k, p in COMBINATIONS])
 def test_submit_template_matches_registered_params(kind, phase):
@@ -162,9 +161,6 @@ class TestParamValidation:
             dispatch_mod._kind("not-a-kind")
 
 
-# ==================== 每个 kind × phase 成功 + 内容校验打回 ====================
-
-
 # ==================== CLI 退出码映射(smoke) ===========================
 
 class TestCliExitCodes:
@@ -182,11 +178,3 @@ class TestCliExitCodes:
         assert err["ok"] is False
         assert err["action"] == "submit"
         assert "config.yaml" in err["error"]["message"]
-
-
-# ==================== mock e2e:submit → loop 收割必过 ===========================
-
-
-# ==================== 评审员路由:phase/status 不一致时的正确路由 ============================
-
-
