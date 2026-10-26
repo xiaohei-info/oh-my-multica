@@ -4186,6 +4186,17 @@ def _restore_active_formal_run_stages(
     return blocked
 
 
+def _with_fresh_failures(store, manifest, observations, new_failures):
+    """The decision a node failed with was written during this tick, after the reconcile snapshot was taken:
+    re-read just those nodes so the report on the discovering tick carries it."""
+    ids = {key: manifest.nodes[key].work_item_id for key in new_failures
+           if key in manifest.nodes and manifest.nodes[key].work_item_id}
+    if not ids:
+        return observations
+    fresh = store.observe_work_item_controls(list(ids.values()))
+    return {**observations, **{key: fresh[item_id] for key, item_id in ids.items() if item_id in fresh}}
+
+
 def tick(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -4281,7 +4292,8 @@ def tick(
         # 全水合 get_work_item,含全量附件下载,而 observations 更新鲜)。
         report = build_needs_decision(
             manifest, manifest_path, set(failed_keys),
-            reconcile_result.observations, evidence=new_failures)
+            _with_fresh_failures(store, manifest, reconcile_result.observations, new_failures),
+            evidence=new_failures)
         # 锁定 schema:P5 web / agent 消费方只依赖 NEEDS_DECISION_KEYS
         assert set(report.keys()) == set(NEEDS_DECISION_KEYS)
 

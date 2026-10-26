@@ -42,6 +42,20 @@ def test_a_failed_node_blocks_its_dependents_but_not_independent_work(kit):
     assert failed_a["decision_required"]["reason_code"] == "nonretryable-runtime-failure"
 
 
+def test_the_tick_that_discovers_a_failure_already_reports_its_decision(kit):
+    """Nothing else is running, so the discovering tick is the one that reports: the decision it just wrote must be in the report."""
+    kit.agents([fails(BUSINESS_FAILURE)], names=("alice",))
+    manifest = kit.manifest([kit.node("a", contract=contract())])
+    path = kit.save(manifest)
+    kit.tick(manifest, path)
+    kit.wait_runs_ended(manifest.nodes["a"].work_item_id)
+
+    result = kit.tick(manifest, path)
+
+    assert result.state == "needs_decision"
+    assert result.report["failed_nodes"][0]["decision_required"]["reason_code"] == "nonretryable-runtime-failure"
+
+
 def test_blocked_nodes_stay_blocked_and_are_never_redispatched(kit):
     manifest, path = failing_dag(kit)
     assert kit.settle(manifest, path).state == "needs_decision"
