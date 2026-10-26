@@ -101,3 +101,28 @@ def test_done_non_develop_repairs_projection(status, verdict, expected):
 ])
 def test_the_tick_state_never_reports_convergence_from_an_unfinished_audit(running, failed, full_scan, audit_complete, state):
     assert decide_tick_state(running=running, failed=failed, full_scan=full_scan, audit_complete=audit_complete) == state
+
+
+@pytest.mark.parametrize("remote", [PR.MERGED, PR.OPEN, PR.PENDING])
+def test_an_unknown_merge_marker_blocks_a_done_node_whatever_the_remote_says(remote):
+    plan = decide_done_develop(done(request_state="invalid", request_state_valid=False, pr_state=remote,
+                                    merged_at="t" if remote == PR.MERGED else None), "m.yaml")
+
+    assert [type(e).__name__ for e in plan.effects] == ["SetNode", "AddComment", "UpdateStatus"]
+
+
+MERGE_CLOSED = [("SetNode", {"merged": True, "merged_at": "t", "merge_request_state": None})]
+
+
+@pytest.mark.parametrize("marker,remote,expected", [
+    ("intent", PR.MERGED, MERGE_CLOSED),
+    ("intent", PR.OPEN, ["UpdateStatus", ("SetNode", {"status": "merging"})]),                       # the marker is left as it was
+    ("intent", PR.PENDING, ["UpdateStatus", ("SetNode", {"status": "merging", "merge_request_state": "requested"})]),
+    ("requested", PR.MERGED, MERGE_CLOSED),
+    ("requested", PR.OPEN, ["UpdateStatus", ("SetNode", {"status": "merging"})]),
+    ("requested", PR.PENDING, ["UpdateStatus", ("SetNode", {"status": "merging", "merge_request_state": "requested"})]),
+])
+def test_a_done_node_keeps_the_meaning_of_a_valid_merge_marker(marker, remote, expected):
+    plan = decide_done_develop(done(request_state=marker, pr_state=remote, merged_at="t" if remote == PR.MERGED else None), "m.yaml")
+
+    assert [(type(e).__name__, e.fields) if isinstance(e, SetNode) else type(e).__name__ for e in plan.effects] == expected

@@ -4,11 +4,11 @@ import hashlib
 import yaml
 
 
-def seal_delivery(store, item_id, pr_url, verification, *, phase=None):
+def seal_delivery(store, item_id, pr_url, verification, *, phase=None, head_sha=None, identity=True):
     """Persist a complete controller-sealed delivery through the Store port."""
     from omac.core.taskmeta import DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity
 
-    head_sha = hashlib.sha256(pr_url.encode("utf-8")).hexdigest()
+    head_sha = head_sha or hashlib.sha256(pr_url.encode("utf-8")).hexdigest()
     kwargs = {
         "artifacts": {"pr_url": pr_url, "head_sha": head_sha},
         "verification": verification,
@@ -19,6 +19,8 @@ def seal_delivery(store, item_id, pr_url, verification, *, phase=None):
         kwargs["phase"] = phase
     store.update_work_item_metadata(item_id, **kwargs)
     item = store.get_work_item(item_id)
+    if not identity:
+        return item         # a delivery from before identities were sealed (no Run is needed to arrange it)
     ref = item.verification_ref
     task_id = f"test-run-{ref['attachment_id']}"
     ref["task_id"] = task_id

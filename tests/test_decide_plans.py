@@ -8,7 +8,7 @@ from omac.pipeline.decide_effects import (
 )
 from omac.pipeline.decide_merge import (
     MergeStep, block_no_pull_request, block_unproven, plan_bounce_pending, plan_observed_step,
-    plan_request_intent, plan_request_sent, plan_resume_bounce, plan_settle,
+    plan_finish_bounce, plan_request_intent, plan_request_sent, plan_resume_bounce, plan_settle,
 )
 
 
@@ -112,9 +112,8 @@ RESUME = dict(node_key="a", item_id="i", worker="w", label="merge failed", outpu
 
 
 @pytest.mark.parametrize("attempt,current,consumed,limit,outcome,kind_list", [
-    (1, 0, 1, 3, "bounce", ["AddComment", "UpdateMetadata", "UpdateStatus", "ResetReview", "Assign", "Wake",
-                            "SetNode", "SaveState"]),
-    (1, 1, 1, 3, "bounce", ["UpdateStatus", "ResetReview", "Assign", "Wake", "SetNode", "SaveState"]),  # comment already done
+    (1, 0, 1, 3, "bounce", ["AddComment", "UpdateMetadata", "UpdateStatus", "ResetReview"]),
+    (1, 1, 1, 3, "bounce", ["UpdateStatus", "ResetReview"]),  # comment already done
     (3, 2, 3, 3, "blocked", ["AddComment", "UpdateMetadata", "UpdateStatus", "SetNode", "SaveState"]),
     (1, 0, 0, 0, "blocked", ["AddComment", "UpdateMetadata", "UpdateStatus", "SetNode", "SaveState"]),
     (1, 2, 1, 3, "blocked", ["SetNode", "SaveState", "AddComment", "UpdateStatus"]),  # platform is ahead: refuse
@@ -125,8 +124,7 @@ def test_resume_bounce(attempt, current, consumed, limit, outcome, kind_list):
     assert plan.outcome == outcome and kinds(plan) == kind_list
 
 
-def test_bounce_returns_to_the_worker_in_the_documented_order():
+def test_a_bounce_keeps_its_durable_marker_until_the_worker_handoff_is_persisted():
     plan = plan_resume_bounce(attempt=1, current=1, consumed_attempt=1, **RESUME)
-    assert plan.effects == (
-        UpdateStatus("i", S.IN_PROGRESS), ResetReview("i"), Assign("i", "w", "worker"), Wake("i", "w", "worker"),
-        SetNode("a", {"status": "in_progress", "merge_request_state": None}), SaveState())
+    assert plan.effects == (UpdateStatus("i", S.IN_PROGRESS), ResetReview("i"))      # the marker is untouched
+    assert plan_finish_bounce("a").effects == (SetNode("a", {"status": "in_progress", "merge_request_state": None}), SaveState())

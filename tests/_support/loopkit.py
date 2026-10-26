@@ -168,10 +168,11 @@ class Kit:
         return node, item
 
     # ---- code host (gh shim)
-    def pr(self, url: str, *, pushes: int = 1, merged: bool = False) -> None:
+    def pr(self, url: str, *, pushes: int = 1, merged: bool = False, **facts) -> None:
+        """Arrange a pull request on the code host shim: ``facts`` may be state="CLOSED", merge_state, auto_merge, merged_at."""
         path = self.stack.gh_state / "prs.json"
         prs = json.loads(path.read_text()) if path.exists() else {}
-        prs[url] = {"pushes": pushes, **({"merged": True, "merged_at": "2026-07-26T08:00:00Z"} if merged else {})}
+        prs[url] = {"pushes": pushes, **({"merged": True, "merged_at": "2026-07-26T08:00:00Z"} if merged else {}), **facts}
         path.write_text(json.dumps(prs))
 
     def merges(self) -> list[list[str]]:

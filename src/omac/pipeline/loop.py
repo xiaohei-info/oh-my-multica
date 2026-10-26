@@ -63,7 +63,7 @@ from .decide_worker import (
     control_matches_handoff_candidate, handoff_has_new_delivery,
     AfterCi, AfterCiObservation, NoSubmit, NoSubmitObservation, decide_after_ci, decide_worker_no_submit,
 )
-from .decide_merge import merge_bounce_attempt, merge_request_state_is_valid
+from .decide_merge import is_recovering_merge_handoff, merge_bounce_attempt, merge_request_state_is_valid, plan_finish_bounce
 from .convergence import (
     ConvergenceResolution, ResolutionState, check_handoff_ledger_ref, handoff_needs_ledger,
     persist_decision, resolve_convergence, resolve_handoff_convergence,
@@ -2446,13 +2446,9 @@ def _complete_merge_if_confirmed(
     node = manifest.nodes[key]
     item = store.get_work_item(node.work_item_id)
     _validate_controller_sealed_delivery(store, code_host, item)
-    recovering_merge_handoff = (
-        merge_bounce_attempt(node.merge_request_state) is not None
-        and item.phase == TaskPhase.AUTHORING
-        and item.review_verdict is None
-        and item.review_report is None
-        and item.review_subject_digest is None
-    )
+    recovering_merge_handoff = is_recovering_merge_handoff(
+        node.merge_request_state, phase=item.phase, verdict=item.review_verdict, report=item.review_report,
+        subject_digest=item.review_subject_digest)
     if (
         node.reviewer
         and not recovering_merge_handoff
@@ -2470,6 +2466,11 @@ def _complete_merge_if_confirmed(
         return "review"
     action = run_merge_delivery(
         config, manifest, key, store, runtime, code_host, retry_limits, manifest_path)
+    if action == "bounce":
+        _hand_back_to_worker(store, runtime, code_host, manifest, key)
+        if store.observe_work_item_control(node.work_item_id).work_item.worker_handoff is not None:
+            # The intent is durable, so the dispatch resumes from it; only now is the bounce complete.
+            apply(plan_finish_bounce(key), Ports(store=store), ManifestState(manifest, manifest_path))
     if action == "pass":
         apply([
             UpdateStatus(node.work_item_id, WorkItemStatus.DONE),
@@ -2936,6 +2937,11 @@ def _collect_worker_handoff(c: _Collect, n: _Node) -> bool:
     """Observe or retry the persisted Worker handoff; completed handoffs continue into the worker stage."""
     key, node = n.key, n.node
     if n.item.worker_handoff is not None:
+        if merge_bounce_attempt(node.merge_request_state) is not None:
+            # A merge bounce whose Worker handoff is already durable is complete: the handoff owns the dispatch from here,
+            # and a marker left behind would turn the next, unrelated delivery into a "resumed" bounce.
+            apply(plan_finish_bounce(key), Ports(store=c.store), ManifestState(c.manifest, c.manifest_path))
+            node = c.manifest.nodes[key]
         handoff_intent = n.item.worker_handoff
         if not handoff_intent.is_causally_bound():
             raise PlatformError(
@@ -3205,16 +3211,23 @@ def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
     return False
 
 
-def _return_to_worker(c: _Collect, n: _Node) -> None:
-    """Hand a delivery that failed a gate after Worker evidence (CI) back to its Worker through a persisted handoff.
+def _hand_back_to_worker(store, runtime, code_host, manifest, key) -> _WorkerHandoffResult:
+    """Hand a delivery that failed a gate after Worker evidence (CI, merge) back to its Worker through a persisted handoff.
 
     The handoff retires the sealed delivery identity of the failed delivery and binds the next delivery to the new Run;
     a bare assign + wake would leave the resubmission unsealed and the review stage unable to prove its subject."""
-    n.handoff = _dispatch_worker_handoff(
-        c.store, c.runtime, c.code_host, c.manifest, n.key,
-        review_bounce=n.item.bounces.review, gate="explicit-dispatch", projection=n.projection)
-    if n.handoff.state == "complete":
-        _finalize_worker_handoff_or_defer(c.store, c.manifest, n.key, n.node, n.handoff)
+    node = manifest.nodes[key]
+    projection = store.observe_work_item_control(node.work_item_id)
+    handoff = _dispatch_worker_handoff(
+        store, runtime, code_host, manifest, key,
+        review_bounce=projection.work_item.bounces.review, gate="explicit-dispatch")
+    if handoff.state == "complete":
+        _finalize_worker_handoff_or_defer(store, manifest, key, node, handoff)
+    return handoff
+
+
+def _return_to_worker(c: _Collect, n: _Node) -> None:
+    n.handoff = _hand_back_to_worker(c.store, c.runtime, c.code_host, c.manifest, n.key)
     set_node(c.manifest, n.key, status="in_progress")
 
 

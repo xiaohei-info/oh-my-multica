@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """`gh` shim for integration tests: pull requests live in $OMAC_GH_STATE/prs.json, every call is logged to
-$OMAC_GH_STATE/calls.log, and $OMAC_GH_STATE/behavior.json can make `pr merge` fail ({"merge": "fail"}).
+$OMAC_GH_STATE/calls.log, and $OMAC_GH_STATE/behavior.json can make `pr merge` fail ({"merge": "fail"}), succeed without merging ("noop"), queue ("queue"), or make
+`pr view` fail ({"view": "fail"}). A pull request entry may carry "state" (e.g. "CLOSED"), "merge_state", "auto_merge", "merged_at".
 
 Supports exactly what OMAC calls: `gh pr view <url> --json ...`, `gh pr merge <url> ...` and `gh pr checks <url>` ({"checks": "fail"} makes it fail), `gh pr create` (for real
 agents in the smoke run), plus the test-only
@@ -16,16 +17,27 @@ prs_path, behavior_path = root / "prs.json", root / "behavior.json"
 prs = json.loads(prs_path.read_text()) if prs_path.exists() else {}
 behavior = json.loads(behavior_path.read_text()) if behavior_path.exists() else {}
 if args[:2] == ["pr", "view"] and len(args) > 2:
+    if behavior.get("view") == "fail":
+        sys.exit("gh: could not reach api.github.com (temporary)")
     url, entry = args[2], prs.get(args[2], {})
-    print(json.dumps({"isDraft": False, "state": "MERGED" if entry.get("merged") else "OPEN",
-                      "headRefOid": hashlib.sha1(f"{url}#{entry.get('pushes', 0)}".encode()).hexdigest(), "mergeStateStatus": "CLEAN",
-                      "mergedAt": entry.get("merged_at"), "autoMergeRequest": None}))
+    print(json.dumps({"isDraft": False, "state": entry.get("state") or ("MERGED" if entry.get("merged") else "OPEN"),
+                      "headRefOid": hashlib.sha1(f"{url}#{entry.get('pushes', 0)}".encode()).hexdigest(),
+                      "mergeStateStatus": entry.get("merge_state", "CLEAN"),
+                      "mergedAt": entry.get("merged_at"), "autoMergeRequest": {"enabledBy": "shim"} if entry.get("auto_merge") else None}))
 elif args[:2] == ["pr", "merge"] and len(args) > 2:
     if behavior.get("merge") == "fail":
         sys.exit("merge refused")
-    prs[args[2]] = {**prs.get(args[2], {}), "merged": True, "merged_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    prs_path.write_text(json.dumps(prs))
-    print("merged")
+    entry = prs.get(args[2], {})
+    if behavior.get("merge") == "noop":          # the command succeeds but the pull request stays open
+        print("merge requested")
+    elif behavior.get("merge") == "queue":       # accepted into the merge queue: pending, not merged
+        prs[args[2]] = {**entry, "auto_merge": True}
+        prs_path.write_text(json.dumps(prs))
+        print("merge queued")
+    else:
+        prs[args[2]] = {**entry, "merged": True, "merged_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        prs_path.write_text(json.dumps(prs))
+        print("merged")
 elif args[:2] == ["pr", "checks"] and len(args) > 2:
     if behavior.get("checks") == "fail":
         sys.exit("check failed: ci/build")

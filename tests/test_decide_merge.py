@@ -68,3 +68,20 @@ def test_marker_parsing():
     assert merge_bounce_attempt(None) is None
     assert merge_request_state_is_valid(None) and merge_request_state_is_valid("bounce_pending:1")
     assert not merge_request_state_is_valid("done")
+
+
+@pytest.mark.parametrize("marker,phase,verdict,report,subject,expected", [
+    ("bounce_pending:1", "authoring", None, None, None, True),        # the Worker side is already reset: resume the bounce
+    ("bounce_pending:1", "review", None, None, None, False),
+    ("bounce_pending:1", "authoring", "pass", None, None, False),      # any review fact left means the review must be judged
+    ("bounce_pending:1", "authoring", None, {"blockers": []}, None, False),
+    ("bounce_pending:1", "authoring", None, None, "digest", False),
+    (None, "authoring", None, None, None, False),                      # only a bounce marker turns an empty projection into a recovery
+    ("requested", "authoring", None, None, None, False),
+    ("intent", "authoring", None, None, None, False),
+])
+def test_an_emptied_review_projection_is_a_recovery_only_under_a_pending_bounce(marker, phase, verdict, report, subject, expected):
+    from omac.core.taskmeta import TaskPhase
+    from omac.pipeline.decide_merge import is_recovering_merge_handoff
+
+    assert is_recovering_merge_handoff(marker, phase=TaskPhase(phase), verdict=verdict, report=report, subject_digest=subject) is expected

@@ -13,7 +13,9 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
+from ..core.taskmeta import TaskPhase
 from ..core.workitem import PullRequestState, WorkItemStatus
 from ..i18n import ui
 from .decide_effects import (
@@ -37,6 +39,16 @@ def merge_bounce_attempt(state: str | None) -> int | None:
 
 def merge_request_state_is_valid(state: str | None) -> bool:
     return state in VALID_MERGE_REQUEST_STATES or merge_bounce_attempt(state) is not None
+
+
+def is_recovering_merge_handoff(request_state: str | None, *, phase: TaskPhase, verdict: str | None, report: Any,
+                                subject_digest: str | None) -> bool:
+    """A pending merge bounce whose Worker side is already reset: the node has no review facts to be judged against."""
+    return (
+        merge_bounce_attempt(request_state) is not None
+        and phase == TaskPhase.AUTHORING
+        and verdict is None and report is None and subject_digest is None
+    )
 
 
 class MergePrecheck(Enum):
@@ -264,7 +276,12 @@ def plan_resume_bounce(
         effects += [UpdateStatus(item_id, WorkItemStatus.BLOCKED),
                     SetNode(node_key, {"status": "blocked", "merge_request_state": None}), SaveState()]
         return Plan(tuple(effects), "blocked")
-    effects += [UpdateStatus(item_id, WorkItemStatus.IN_PROGRESS), ResetReview(item_id),
-                Assign(item_id, worker, "worker"), Wake(item_id, worker, "worker"),
-                SetNode(node_key, {"status": "in_progress", "merge_request_state": None}), SaveState()]
+    # The marker stays: the Loop now hands the delivery back through a persisted handoff intent and only then clears it
+    # (`plan_finish_bounce`), so a crash in between resumes the same bounce instead of losing the Worker's dispatch.
+    effects += [UpdateStatus(item_id, WorkItemStatus.IN_PROGRESS), ResetReview(item_id)]
     return Plan(tuple(effects), "bounce")
+
+
+def plan_finish_bounce(node_key: str) -> Plan:
+    """The handoff to the Worker is durable: the bounce is complete."""
+    return Plan((SetNode(node_key, {"status": "in_progress", "merge_request_state": None}), SaveState()))
