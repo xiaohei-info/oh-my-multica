@@ -1,9 +1,9 @@
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
 
+from _support.ports import UnusedStore
 from omac.core.amendment import (
     APPLY_LEDGER_SCHEMA, _prepare_apply_ledger, _resume_apply_ledger,
 )
@@ -32,7 +32,7 @@ def advance(manifest, store, amendment_id, minimal):
 def test_unrelated_amendments_keep_authorized_budget_without_replaying_old_nodes(tmp_path):
     manifest, item = fixture()
     original = deepcopy(manifest)
-    store = Mock()
+    store = UnusedStore()
     for index in range(3):
         ledger = advance(manifest, store, f"amend-harness-{index}", {"authoring": ["harness"]})
         assert set(ledger["nodes"]) == {"harness"}
@@ -45,13 +45,12 @@ def test_unrelated_amendments_keep_authorized_budget_without_replaying_old_nodes
         summary = _resume_apply_ledger(manifest, str(path), store)
         assert sorted(node for values in summary.values() for node in values) == ["harness"]
         assert manifest.nodes["dispatch"] == original.nodes["dispatch"]
-    assert not store.mock_calls
     assert item.bounces.review == 22 and item.bounce_baseline is None
 
 
 def test_new_affected_node_budget_supersedes_retained_budget():
     manifest, item = fixture()
-    store = Mock()
+    store = UnusedStore()
     advance(manifest, store, "amend-harness", {"authoring": ["harness"]})
     # A later accepted recovery of Dispatch owns a new baseline. It must not
     # fall back to the older baseline even if the new active entry is invalid.
@@ -64,7 +63,7 @@ def test_new_affected_node_budget_supersedes_retained_budget():
 @pytest.mark.parametrize("change", ["contract", "issue", "removed", "regressed", "store-only"])
 def test_retained_budget_does_not_grant_unrelated_or_unproven_authority(change):
     manifest, item = fixture()
-    advance(manifest, Mock(), "amend-harness", {"authoring": ["harness"]})
+    advance(manifest, UnusedStore(), "amend-harness", {"authoring": ["harness"]})
     if change == "contract":
         manifest.nodes["dispatch"].contract.objective = "changed scope"
     elif change == "issue":
@@ -83,21 +82,21 @@ def test_retained_budget_does_not_grant_unrelated_or_unproven_authority(change):
 def test_invalid_old_baseline_never_creates_authorization(bad):
     manifest, item = fixture()
     manifest.meta['amendment_apply']['nodes']['dispatch']['bounce_baseline']['review'] = bad
-    advance(manifest, Mock(), "amend-harness", {"authoring": ["harness"]})
+    advance(manifest, UnusedStore(), "amend-harness", {"authoring": ["harness"]})
     assert consumed_bounces(manifest, "dispatch", item, "review") == 22
 
 
 def test_unsynced_old_recovery_is_not_carried_as_completed_authority():
     manifest, item = fixture()
     manifest.meta['amendment_apply']['nodes']['dispatch']['state'] = 'pending'
-    advance(manifest, Mock(), "amend-harness", {"authoring": ["harness"]})
+    advance(manifest, UnusedStore(), "amend-harness", {"authoring": ["harness"]})
     assert consumed_bounces(manifest, "dispatch", item, "review") == 22
 
 
 def test_retry_log_uses_manifest_authority_when_store_projection_is_missing():
     from omac.core.retry_budget import bounce_log_fields
     manifest, item = fixture()
-    advance(manifest, Mock(), 'amend-harness', {'authoring': ['harness']})
+    advance(manifest, UnusedStore(), 'amend-harness', {'authoring': ['harness']})
     fields = bounce_log_fields(item, 'worker', absolute_count=3, limit=20,
                                manifest=manifest, node_id='dispatch')
     assert fields == {'absolute_audit_round': 3, 'current_generation_consumed': 1,
@@ -107,7 +106,7 @@ def test_retry_log_uses_manifest_authority_when_store_projection_is_missing():
 @pytest.mark.parametrize('bad_identity', [None, 7, 'other-amendment'])
 def test_retained_authority_requires_matching_accepted_ledger_identity(bad_identity):
     manifest, item = fixture()
-    advance(manifest, Mock(), 'amend-harness', {'authoring': ['harness']})
+    advance(manifest, UnusedStore(), 'amend-harness', {'authoring': ['harness']})
     manifest.meta['amendment_apply']['amendment_id'] = bad_identity
     if bad_identity in (None, 7):
         manifest.meta['last_amendment_id'] = bad_identity

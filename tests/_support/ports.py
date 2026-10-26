@@ -23,3 +23,10 @@ class UnusedCodeHost(CodeHost):
 
     def read_pull_request_readiness(self, *args, **kwargs):
         self._fail("read_pull_request_readiness")
+
+
+class UnusedStore:
+    """Stands in for any port object (store or runtime) that code under test must never use: every attribute access fails the test."""
+
+    def __getattr__(self, name):
+        pytest.fail(f"{name} must not be used here")

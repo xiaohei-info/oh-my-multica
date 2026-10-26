@@ -9,7 +9,8 @@ def test_within_budget_passes():
 
 def test_slow_unit_test_fails_but_docker_test_gets_more_time():
     assert budget.check_call(**{**OK, "seconds": 0.5})
-    assert budget.check_call(**{**OK, "seconds": 0.3}) == []  # inside the 2x gate band (target stays 200 ms)
+    assert budget.check_call(**{**OK, "seconds": 0.25})  # the gate is the target: no slack band
+    assert budget.check_call(**{**OK, "seconds": 0.19}) == []
     assert budget.check_call(**{**OK, "seconds": 0.5, "kind": "docker"}) == []
     assert budget.check_call(**{**OK, "seconds": 31, "kind": "docker"})
 

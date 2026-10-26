@@ -136,7 +136,7 @@ goes through `omac.i18n.ui(english, chinese)`.
 5. **Architecture checks** live in `tests/test_architecture.py` and
    `lint-imports`; do not weaken them to make a change pass. (enforced)
 6. Per-test budgets are enforced by `tests/conftest.py` (`tests/_support/budget.py`):
-   unit 0.2 s target (0.4 s gate), integration 5 s, docker 30 s, peak memory and
+   unit 0.2 s, integration 5 s, docker 30 s, peak memory and
    temp-file limits. Do not add files to `EXEMPT_FILES` without a reason in the PR.
 7. Tests that need the real server go to `tests/it` (private Docker Multica; never
    skipped silently). The real-agent smoke run costs money and never runs for pull

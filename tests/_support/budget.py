@@ -10,7 +10,6 @@ from pathlib import Path
 
 MB = 1024 * 1024
 UNIT_SECONDS = 0.2
-UNIT_TIMING_SLACK = 2.0  # scheduler noise on loaded CI runners; the target stays 200 ms, the gate trips at 400 ms
 INTEGRATION_SECONDS = 5.0  # real git / local HTTP servers / subprocesses (marker `integration`)
 DOCKER_SECONDS = 30.0
 UNIT_RSS = 300 * MB
@@ -29,7 +28,7 @@ def kind_of(markers) -> str:
 
 
 def seconds_limit(kind: str) -> float:
-    return {"docker": DOCKER_SECONDS, "integration": INTEGRATION_SECONDS}.get(kind, UNIT_SECONDS * UNIT_TIMING_SLACK)
+    return {"docker": DOCKER_SECONDS, "integration": INTEGRATION_SECONDS}.get(kind, UNIT_SECONDS)
 
 
 def rss_limit(kind: str) -> int:

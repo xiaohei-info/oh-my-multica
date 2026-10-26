@@ -9,7 +9,6 @@ import hashlib
 import json
 from pathlib import Path
 import threading
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -113,21 +112,26 @@ class _RemoteFixture:
 
 
 class _ParallelHydrationStore:
-    """Read-only Store double with observable work-item hydration concurrency."""
+    """A concurrency probe handed to the reconcile reader in place of a store: it counts how many reads overlap and holds each one at a
+    rendezvous (``hydration_rendezvous`` / ``control_rendezvous`` reads must be in flight together) or until another item has finished
+    (``after``), so the order and overlap are decided by synchronisation, never by sleeping. It simulates no platform state."""
 
     def __init__(
         self,
         item_ids: list[str],
         *,
-        delays: dict[str, float] | None = None,
-        control_delays: dict[str, float] | None = None,
+        hydration_rendezvous: int = 1,
+        control_rendezvous: int = 1,
+        after: dict[str, str] | None = None,
         fail_item_id: str | None = None,
         shared_attachment_id: str | None = None,
         safe_parallelism: int | None = None,
         safe_control_parallelism: int = 1,
     ):
-        self.delays = delays or {}
-        self.control_delays = control_delays or {}
+        self.after = after or {}
+        self._hydration_gate = threading.Barrier(hydration_rendezvous, timeout=10)
+        self._control_gate = threading.Barrier(control_rendezvous, timeout=10)
+        self._finished = threading.Condition()
         self.fail_item_id = fail_item_id
         self.safe_parallelism = safe_parallelism
         self.safe_control_parallelism = safe_control_parallelism
@@ -179,7 +183,7 @@ class _ParallelHydrationStore:
             self.max_active_controls = max(
                 self.max_active_controls, self.active_controls)
         try:
-            time.sleep(self.control_delays.get(item_id, 0.0))
+            self._control_gate.wait()
             return self.projections[item_id]
         finally:
             with self._lock:
@@ -197,7 +201,10 @@ class _ParallelHydrationStore:
                 self.max_active_hydrations, self.active_hydrations)
             self.hydration_plans[item_id] = plan
         try:
-            time.sleep(self.delays.get(item_id, 0.0))
+            self._hydration_gate.wait()
+            with self._finished:
+                if not self._finished.wait_for(lambda: self.after.get(item_id) in (None, *self.hydration_finished), timeout=10):
+                    raise AssertionError(f"{self.after[item_id]} never finished")
             if item_id == self.fail_item_id:
                 raise PlatformError(f"hydrate failed: {item_id}")
             return replace(
@@ -208,7 +215,9 @@ class _ParallelHydrationStore:
         finally:
             with self._lock:
                 self.active_hydrations -= 1
+            with self._finished:
                 self.hydration_finished.append(item_id)
+                self._finished.notify_all()
 
     def observe_pull_request(self, _pr_url: str) -> PullRequestObservation:
         self.pr_observations += 1
@@ -395,13 +404,13 @@ def _terminal_runtime():
     )
 
 
-def _large_dag_fixture():
+def _large_dag_fixture(historical: int = 69):
     issues = {}
     attachments = {}
     nodes = {}
     active_ids = {f"active-{index}" for index in range(7)} | {"confirm-0"}
-    historical_ids = [f"done-{index}" for index in range(69)] + [
-        f"blocked-{index}" for index in range(69)
+    historical_ids = [f"done-{index}" for index in range(historical)] + [
+        f"blocked-{index}" for index in range(historical)
     ]
     for item_id in [*historical_ids, *sorted(active_ids)]:
         if item_id.startswith("done-"):
@@ -449,7 +458,7 @@ def test_reconcile_hydrates_eight_work_items_with_bounded_parallelism():
     item_ids = [f"item-{index}" for index in range(8)]
     store = _ParallelHydrationStore(
         item_ids,
-        delays={item_id: 0.01 for item_id in item_ids},
+        hydration_rendezvous=4,
     )
     manifest = _parallel_hydration_manifest(item_ids)
 
@@ -475,7 +484,7 @@ def test_reconcile_observes_controls_with_bounded_parallelism():
     item_ids = [f"item-{index}" for index in range(8)]
     store = _ParallelHydrationStore(
         item_ids,
-        control_delays={item_id: 0.01 for item_id in item_ids},
+        control_rendezvous=4,
         safe_control_parallelism=4,
     )
     manifest = Manifest(
@@ -507,12 +516,7 @@ def test_reconcile_hydration_completion_order_does_not_change_manifest_order():
     item_ids = [f"item-{index}" for index in range(4)]
     store = _ParallelHydrationStore(
         item_ids,
-        delays={
-            "item-0": 0.12,
-            "item-1": 0.01,
-            "item-2": 0.08,
-            "item-3": 0.02,
-        },
+        after={"item-0": "item-1", "item-2": "item-3"},       # item-0 and item-2 finish last, whatever the thread scheduling
     )
 
     observations, _ = loop._observe_reconcile_inputs(
@@ -526,7 +530,6 @@ def test_reconcile_respects_store_serial_hydration_capability():
     item_ids = [f"item-{index}" for index in range(4)]
     store = _ParallelHydrationStore(
         item_ids,
-        delays={item_id: 0.005 for item_id in item_ids},
         safe_parallelism=1,
     )
 
@@ -543,7 +546,6 @@ def test_reconcile_hydration_failure_precedes_pr_reads_and_candidate_writes(
     item_ids = [f"item-{index}" for index in range(8)]
     store = _ParallelHydrationStore(
         item_ids,
-        delays={item_id: 0.02 for item_id in item_ids},
         fail_item_id="item-3",
     )
     manifest, path = _manifest_path(
@@ -631,6 +633,7 @@ def test_146_node_interval_reconcile_reads_only_active_issues_and_hydrates_neede
     assert load_manifest(path).nodes["active-0"].status == "in_progress"
 
 
+@pytest.mark.integration  # scale test: 145-146 nodes, many small state files
 def test_146_node_full_scan_batches_control_envelopes_without_payload_hydration(
     tmp_path,
 ):
@@ -655,6 +658,7 @@ def test_146_node_full_scan_batches_control_envelopes_without_payload_hydration(
     ]
 
 
+@pytest.mark.integration  # scale test: 145-146 nodes, many small state files
 def test_146_node_full_scan_falls_back_to_issue_get_for_list_omission(tmp_path):
     issues, attachments, nodes = _large_dag_fixture()
     omitted_id = "blocked-0"
@@ -687,7 +691,7 @@ def test_146_node_full_scan_falls_back_to_issue_get_for_list_omission(tmp_path):
 
 
 def test_full_scan_active_control_failure_remains_an_observation_barrier(tmp_path):
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
     manifest, path = _manifest_path(tmp_path, nodes)
@@ -736,7 +740,7 @@ def test_full_scan_no_project_multica_static_control_failure_fails_closed(
 def test_full_scan_static_batch_failure_falls_back_and_isolates_unknown_error(
     tmp_path,
 ):
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
     manifest, path = _manifest_path(tmp_path, nodes)
@@ -765,7 +769,7 @@ def test_full_scan_static_batch_failure_falls_back_and_isolates_unknown_error(
 
 
 def test_full_scan_static_missing_fallback_is_authoritative_fact(tmp_path):
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
     manifest, path = _manifest_path(tmp_path, nodes)
@@ -794,7 +798,7 @@ def test_full_scan_static_missing_fallback_is_authoritative_fact(tmp_path):
 
 def test_single_not_found_recheck_preserves_work_item_identity_when_item_returns(
         tmp_path):
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
     manifest, path = _manifest_path(tmp_path, nodes)
@@ -826,7 +830,7 @@ def test_single_not_found_recheck_preserves_work_item_identity_when_item_returns
 
 def test_not_found_followed_by_unknown_error_preserves_manifest_identity(
         tmp_path):
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
     manifest, path = _manifest_path(tmp_path, nodes)
@@ -860,7 +864,7 @@ def test_not_found_followed_by_unknown_error_preserves_manifest_identity(
 
 def test_not_found_without_identity_confirmation_fails_closed(
         tmp_path):
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
     manifest, path = _manifest_path(tmp_path, nodes)
@@ -904,7 +908,7 @@ def test_status_report_does_not_claim_converged_for_incomplete_full_scan(
 
 
 def test_confirmed_merge_stale_marker_is_cleared_after_authoritative_observation(tmp_path):
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
     manifest, path = _manifest_path(tmp_path, nodes)
@@ -923,7 +927,7 @@ def test_confirmed_merge_stale_marker_is_cleared_after_authoritative_observation
 
 
 def test_confirmed_merge_historical_done_review_baseline_is_cleared(tmp_path):
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     static_id = nodes["done-0"].work_item_id
     issues[static_id]["metadata"]["reviewer_run_baseline"] = ReviewerRunBaseline(
         schema="omac.reviewer-run-baseline/v1",
@@ -954,7 +958,7 @@ def test_confirmed_merge_historical_done_review_baseline_is_cleared(tmp_path):
 def test_project_full_scan_network_failure_on_static_issue_isolated_from_active_reads(
         tmp_path):
     """Transient static issue reads must not abort a project-scoped audit."""
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
     store._sleep = lambda _seconds: None
@@ -983,7 +987,7 @@ def test_project_full_scan_network_failure_on_static_issue_isolated_from_active_
 
 
 def test_confirmed_merge_marker_network_failure_remains_active_barrier(tmp_path):
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     static_id = nodes["done-0"].work_item_id
     issues[static_id]["metadata"]["worker_handoff"] = _worker_handoff(
         issues[static_id], item_id=static_id)
@@ -1011,7 +1015,7 @@ def test_confirmed_merge_marker_network_failure_remains_active_barrier(tmp_path)
 
 
 def test_confirmed_merge_with_real_recovery_fact_fails_closed(tmp_path):
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     static_id = nodes["done-0"].work_item_id
     issues[static_id]["metadata"]["decision_required"] = {
         "schema": "omac.decision-required/v1",
@@ -1031,7 +1035,7 @@ def test_confirmed_merge_with_real_recovery_fact_fails_closed(tmp_path):
 
 
 def test_full_scan_list_failure_isolates_static_controls(tmp_path):
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
     manifest, path = _manifest_path(tmp_path, nodes)
@@ -1061,6 +1065,7 @@ def test_full_scan_list_failure_isolates_static_controls(tmp_path):
     }
 
 
+@pytest.mark.integration  # scale test: 145-146 nodes, many small state files
 def test_146_node_reconcile_reuses_immutable_attachment_bodies_across_ticks(
     tmp_path,
 ):
@@ -1079,6 +1084,7 @@ def test_146_node_reconcile_reuses_immutable_attachment_bodies_across_ticks(
     assert remote.pr_observations == 2
 
 
+@pytest.mark.integration  # scale test: 145-146 nodes, many small state files
 def test_146_node_status_reuses_reconcile_observation_budget(tmp_path):
     issues, attachments, nodes = _large_dag_fixture()
     remote = _RemoteFixture(issues, attachments)
@@ -1096,6 +1102,7 @@ def test_146_node_status_reuses_reconcile_observation_budget(tmp_path):
     ) == (15, 8, 18, 1)
 
 
+@pytest.mark.integration  # scale test: 145-146 nodes, many small state files
 def test_146_node_full_tick_reuses_reconcile_observations_for_collect(
     tmp_path, monkeypatch,
 ):
@@ -1485,6 +1492,7 @@ def test_worker_handoff_required_hydration_failure_is_fail_closed(
     assert effects == []
 
 
+@pytest.mark.integration  # scale test: 145-146 nodes, many small state files
 def test_146_node_late_submit_after_reconcile_is_collected_next_tick_without_wake(
     tmp_path, monkeypatch,
 ):
@@ -1554,7 +1562,7 @@ def test_146_node_late_submit_after_reconcile_is_collected_next_tick_without_wak
 
 
 def test_reconcile_observations_cover_collect_required_evidence(tmp_path):
-    issues, attachments, nodes = _large_dag_fixture()
+    issues, attachments, nodes = _large_dag_fixture(historical=2)
     remote = _RemoteFixture(issues, attachments)
     store = _store(remote)
     manifest, path = _manifest_path(tmp_path, nodes)

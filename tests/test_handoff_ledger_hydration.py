@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import replace
 from _support.ports import UnusedCodeHost
 import json
-from unittest.mock import Mock
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -97,22 +97,15 @@ def case(monkeypatch):
         status="in_progress",
     )
     manifest = Manifest(meta={}, nodes={node.id: node})
-    runtime = Mock()
     intent = projection.work_item.worker_handoff
-    # Synthetic Runtime view only: test an already-bound formal active Run.
-    runtime.list_runs.return_value = [
-        AgentRunObservation(
-            id=intent.target_run_id,
-            kind="direct",
-            status="running",
-            agent_id=intent.target_agent_id,
-            created_at="2099-01-01T00:00:00Z",
-            trigger_kind="issue_assignment",
-        )
-    ]
-    runtime.wake.side_effect = lambda *a, **kw: pytest.fail(
-        "Active Worker must not be dispatched again"
-    )
+    wakes = []
+    # The Runtime view is canned (an already-bound formal active Run); only the calls the dispatch makes on it matter.
+    runtime = SimpleNamespace(
+        list_runs=lambda _item_id: [AgentRunObservation(
+            id=intent.target_run_id, kind="direct", status="running", agent_id=intent.target_agent_id,
+            created_at="2099-01-01T00:00:00Z", trigger_kind="issue_assignment")],
+        wake=lambda *a, **kw: wakes.append(a) or pytest.fail("Active Worker must not be dispatched again"),
+        wakes=wakes)
     return store, remote, projection, intent, manifest, runtime
 
 
@@ -129,7 +122,7 @@ def test_fresh_locked_dispatch_hydrates_original_round3_ledger(case):
     assert (
         remote.attachment_downloads == 2
     )  # full handoff + exact ledger, no other payload
-    assert runtime.wake.call_count == 0
+    assert runtime.wakes == []
 
 
 def test_shared_resolution_hydrates_without_changing_control_facts(case):
