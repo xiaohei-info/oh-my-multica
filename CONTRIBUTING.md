@@ -28,7 +28,7 @@ Run focused checks while developing. Before opening a Pull Request, verify the
 change in proportion to what it touches:
 
 - Source code, tests, package/build configuration, schemas, or executable
-  behavior: `python -m pytest tests/ -m "not live"` and `lint-imports`
+  behavior: `python -m pytest tests/ -m "not live" -n 4 --dist loadfile` (needs Docker; add `-m "not docker and not live"` without it) and `lint-imports`
 - Markdown-only changes: `git diff --check`, local-link checks, and rendering
   or parsing for changed diagrams or formats when available.
 
