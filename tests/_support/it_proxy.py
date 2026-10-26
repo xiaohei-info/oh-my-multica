@@ -39,6 +39,7 @@ class Proxy:
     target: str
     rules: list = field(default_factory=list)
     log: list = field(default_factory=list)   # (method, path, status or None)
+    bodies: list = field(default_factory=list)   # (method, path, first bytes of the body) of every write, in request order
     kill_pid: int | None = None
     last: dict = field(default_factory=dict)       # GET path -> (status, headers, payload) of its latest response
     frozen: list = field(default_factory=list)     # (include, exclude, {path: response}) frozen reads
@@ -61,6 +62,8 @@ class Proxy:
             def _handle(self):
                 length = int(self.headers.get("content-length") or 0)
                 body = self.rfile.read(length) if length else None
+                if self.command != "GET":
+                    proxy.bodies.append((self.command, self.path, (body or b"")[:240].decode("utf-8", "replace")))
                 stale = proxy._frozen_response(self.command, self.path)
                 if stale:
                     proxy.log.append((self.command, self.path, stale[0]))

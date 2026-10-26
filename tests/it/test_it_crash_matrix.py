@@ -57,13 +57,14 @@ def test_a_fault_after_write_k_never_duplicates_an_effect(project, stack, k, fau
         cwd=project.work, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     proxy.kill_pid = first.pid
     try:
-        first.communicate(timeout=170)
+        _out, first_err = first.communicate(timeout=170)
     finally:
         proxy.stop()
     if fault == "kill_after":
         assert first.returncode == -9, "the kill rule should have fired"
 
     resumed = project.omac("dag", "run", manifest, "--max-minutes", "2", "--output", "json")
+    resumes = [("resume", resumed.returncode, resumed.stderr[-2500:])]
     orphan = re.search(r"multica issue status (\S+) cancelled", resumed.stdout + resumed.stderr)
     if resumed.returncode == 2:
         # Crashed between creating the issue and recording it: fail closed, say how to clear it, then resume.
@@ -71,6 +72,7 @@ def test_a_fault_after_write_k_never_duplicates_an_effect(project, stack, k, fau
         stack.multica("issue", "status", orphan.group(1), "cancelled")
         resumed = project.omac("dag", "run", manifest, "--max-minutes", "2", "--output", "json")
     retried = resumed.returncode == 20
+    resumes.append(("after-orphan", resumed.returncode, resumed.stderr[-2500:]))
     if retried:
         # An unknown merge outcome is never replayed: the node stops and the report names the explicit decision.
         retry = next(a for a in json.loads(resumed.stdout)["report"]["next_actions"] if a.startswith("omac node retry"))
@@ -84,4 +86,6 @@ def test_a_fault_after_write_k_never_duplicates_an_effect(project, stack, k, fau
     runs = json.loads(stack.multica("issue", "runs", live[0]["id"], "--output", "json"))
     assert 1 <= len(runs) <= 1 + retried, (
         "the Worker is dispatched once, plus at most once per explicit retry; OMAC's writes in the faulted process: "
-        f"{[(m, p.split('/', 4)[-1]) for m, p, _ in proxy.writes()]}; Run statuses: {[r.get('status') for r in runs]}")
+        f"{[(m, p.split('/', 4)[-1], b[:90]) for m, p, b in proxy.bodies]}; first exit {first.returncode}, resumed {resumes}; "
+        f"Runs: {[(r.get('id'), r.get('status'), r.get('created_at'), r.get('completed_at'), (r.get('attribution') or {}).get('evidence')) for r in runs]}; "
+        f"first stderr: {first_err[-1500:]}")
