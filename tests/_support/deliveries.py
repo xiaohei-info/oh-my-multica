@@ -34,8 +34,9 @@ def verification_for(contract: Contract, dag_key: str) -> dict:
     }
 
 
-def review_report_for(context: dict, verdict: str, round_index: int = 1) -> dict:
-    """A review report for the obligations listed by `omac work show` (context), with the given verdict."""
+def review_report_for(context: dict, verdict: str, round_index: int = 1, *, repeat: bool = False) -> dict:
+    """A review report for the obligations listed by `omac work show` (context), with the given verdict.
+    ``repeat``: the blockers of earlier reviews are still open and reported again unchanged."""
     contract = _load_contract(context["contract"])
     failed = "dimension:structure" if verdict == "reject" else None
     return {
@@ -46,7 +47,8 @@ def review_report_for(context: dict, verdict: str, round_index: int = 1) -> dict
             for o in context.get("review_obligations") or []
         ],
         "prior_blocker_results": [
-            {"blocker_id": b["blocker_id"], "status": "fixed", "evidence": "regression check passed"}
+            {"blocker_id": b["blocker_id"], "status": "unchanged" if repeat else "fixed",
+             "evidence": "the same invariant still fails" if repeat else "regression check passed"}
             for b in context.get("prior_open_blockers") or []
         ],
         "review_goals": ["review goal"],
@@ -65,7 +67,8 @@ def review_report_for(context: dict, verdict: str, round_index: int = 1) -> dict
             for a in evidence_targets(contract)
         ],
         "blockers": ([{
-            "root_cause_key": f"review-{round_index}", "obligation_id": failed, "classification": "new",
+            "root_cause_key": (context["prior_open_blockers"][0]["root_cause_key"] if repeat else f"review-{round_index}"),
+            "obligation_id": failed, "classification": "unchanged" if repeat else "new",
             "summary": "needs revision", "evidence": "the reviewer found a blocker",
             "required_fix": "revise the deliverable",
         }] if failed else []),
