@@ -9,11 +9,16 @@ def test_within_budget_passes():
     assert budget.check_call(**OK) == []
 
 
-def test_slow_unit_test_fails_but_docker_test_gets_more_time():
-    assert budget.check_call(**{**OK, "seconds": 0.5})
-    assert budget.check_call(**{**OK, "seconds": 0.25})  # the gate is the target: no slack band
-    assert budget.check_call(**{**OK, "seconds": 0.19}) == []
-    assert budget.check_call(**{**OK, "seconds": 0.5, "kind": "docker"}) == []
+def test_a_unit_test_is_held_to_its_cpu_time_not_to_how_busy_the_machine_is():
+    assert budget.check_call(**{**OK, "seconds": 0.5, "cpu_seconds": 0.25})            # 0.25 s of work is over the 0.2 s budget
+    assert budget.check_call(**{**OK, "seconds": 0.19, "cpu_seconds": 0.19}) == []
+    assert budget.check_call(**{**OK, "seconds": 0.6, "cpu_seconds": 0.02}) == []      # a stalled machine does not fail a cheap test
+    assert budget.check_call(**{**OK, "seconds": 1.5, "cpu_seconds": 0.02})             # but a test that blocks does
+    assert budget.check_call(**{**OK, "seconds": 0.5}) and budget.check_call(**{**OK, "seconds": 0.19}) == []   # no CPU figure: wall clock
+
+
+def test_a_docker_test_gets_seconds_not_the_unit_budget():
+    assert budget.check_call(**{**OK, "seconds": 0.5, "cpu_seconds": 0.5, "kind": "docker"}) == []
     assert budget.check_call(**{**OK, "seconds": 31, "kind": "docker"})
 
 

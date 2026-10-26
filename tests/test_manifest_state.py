@@ -51,6 +51,7 @@ def test_a_save_rewrites_only_the_files_that_changed(tmp_path):
     assert {name for name in after if before.get(name) != after[name]} == {"n3.yaml"}
 
 
+@pytest.mark.integration  # scale test: 500 nodes, 500 small state files
 def test_tick_on_a_500_node_dag_writes_kilobytes_not_the_whole_state(tmp_path):
     path = str(tmp_path / "dag.yaml")
     save_manifest(_dag(500), path)
@@ -65,6 +66,7 @@ def test_tick_on_a_500_node_dag_writes_kilobytes_not_the_whole_state(tmp_path):
     assert sum(p.stat().st_size for p in rewritten) < 100 * 1024
 
 
+@pytest.mark.integration  # scale test: 500 nodes, 500 small state files
 def test_a_500_node_dag_with_every_runtime_fact_set_averages_under_4kb_per_node_state_file(tmp_path):
     path = str(tmp_path / "dag.yaml")
     manifest = _dag(500)

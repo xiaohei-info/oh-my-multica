@@ -122,8 +122,10 @@ goes through `omac.i18n.ui(english, chinese)`.
 
 1. **Write tests before implementation.** New or changed executable behavior
    needs regression coverage of the main path, boundaries, and known risks.
-2. **CI-equivalent run:** `python3 -m pytest tests/ -m "not live"`. Code must
-   work on Python 3.10 and 3.12. `live` tests need a configured Multica
+2. **CI-equivalent run:** `python3 -m pytest tests/ -m "not live" -n 4 --dist loadfile`
+   (Docker is required; without it, add `-m "not docker and not live"`). CI runs the
+   same tests as one non-Docker job plus three Docker shards (`docs/github-setup.md`).
+   Code must work on Python 3.10 and 3.12. `live` tests need a configured Multica
    workspace and run only on request (`-m live`).
 3. **Tests protect behavior, not text.** Do not assert on source code text or
    `inspect.getsource`, do not test the test doubles themselves, do not restate
@@ -136,7 +138,7 @@ goes through `omac.i18n.ui(english, chinese)`.
 5. **Architecture checks** live in `tests/test_architecture.py` and
    `lint-imports`; do not weaken them to make a change pass. (enforced)
 6. Per-test budgets are enforced by `tests/conftest.py` (`tests/_support/budget.py`):
-   unit 0.2 s, integration 5 s, docker 30 s, peak memory and
+   unit 0.2 s of CPU time (1 s wall backstop), integration 5 s, docker 30 s, peak memory and
    temp-file limits. Do not add files to `EXEMPT_FILES` without a reason in the PR.
 7. Tests that need the real server go to `tests/it` (private Docker Multica; never
    skipped silently). The real-agent smoke run costs money and never runs for pull

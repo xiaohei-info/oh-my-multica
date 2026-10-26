@@ -222,7 +222,7 @@ Use *result collection* (`collect_results`, 结果收集), *running nodes* (`run
 
 | Layer | What | Budget per test |
 |---|---|---|
-| Unit | Pure `decide_*` tables, state store, schemas, lint, projections over synthetic work items, and adapter parsing over canned platform-CLI output (only the platform CLI call is replaced). There is no in-memory platform double: anything that needs platform behaviour is a Docker test | 0.2 s, 300 MB RSS, 10 MB tmp |
+| Unit | Pure `decide_*` tables, state store, schemas, lint, projections over synthetic work items, and adapter parsing over canned platform-CLI output (only the platform CLI call is replaced). There is no in-memory platform double: anything that needs platform behaviour is a Docker test | 0.2 s of CPU time (wall clock only as a 1 s blocking backstop; no sleeping over 50 ms), 300 MB RSS, 10 MB tmp |
 | Integration | Real git, a real local HTTP server, subprocesses, 145-node scale cases (`@pytest.mark.integration`) | 5 s |
 | Docker | `tests/it`: a private Multica (compose project `omac-it-*`, label `omac.it=1`, loopback port, `down -v`) | 30 s, 500 MB |
 | Smoke | `tests/smoke`: a real Coding Agent on the same stack, weekly, never for pull requests | minutes |

@@ -83,13 +83,22 @@ def test_catalog_rejects_skill_symlink(tmp_path):
         AgentTemplateCatalog(root).get("worker")
 
 
+@pytest.fixture(scope="module")
+def repo_template():
+    """The packaged templates, read once for the module: ``repo_template(language, id)`` (language None = the default)."""
+    catalogs = {language: AgentTemplateCatalog() if language is None else AgentTemplateCatalog(language=language) for language in (None, "cn", "en")}
+    cache = {(language, template_id): catalog.get(template_id)
+             for language, catalog in catalogs.items() for template_id in catalog.list_ids()}
+    return lambda language, template_id: cache[(language, template_id)]
+
+
 def test_repo_catalog_uses_agents_directory_directly_under_omac_package():
     catalog = AgentTemplateCatalog()
 
     assert catalog.root == Path(__file__).resolve().parents[1] / "src" / "omac" / "agents"
 
 
-def test_repo_catalog_contains_native_profile_templates_with_skill_counts():
+def test_repo_catalog_contains_native_profile_templates_with_skill_counts(repo_template):
     catalog = AgentTemplateCatalog()
 
     expected = {
@@ -102,17 +111,17 @@ def test_repo_catalog_contains_native_profile_templates_with_skill_counts():
         "reviewer": 0,
     }
     assert catalog.list_ids() == sorted(expected)
-    assert {template_id: len(catalog.get(template_id).skills)
+    assert {template_id: len(repo_template(None, template_id).skills)
             for template_id in expected} == expected
     assert {"acceptor", "backend", "frontend", "planner", "worker"}.isdisjoint(expected)
     for template_id in expected:
-        template = catalog.get(template_id)
+        template = repo_template(None, template_id)
         assert template.instructions
         assert "OMAC" in template.instructions
         assert not (template.path / "AGENTS.md").exists()
 
 
-def test_repo_templates_keep_full_generic_profile_rules_without_runtime_bindings():
+def test_repo_templates_keep_full_generic_profile_rules_without_runtime_bindings(repo_template):
     expected_roles = {
         "architect": "Architect",
         "backend-eng": "Backend Engineer",
@@ -134,10 +143,8 @@ def test_repo_templates_keep_full_generic_profile_rules_without_runtime_bindings
         "当前加载的 orchestration skill",
     )
 
-    chinese_catalog = AgentTemplateCatalog(language="cn")
-    english_catalog = AgentTemplateCatalog(language="en")
     for template_id, role_name in expected_roles.items():
-        template_path = chinese_catalog.get(template_id).path
+        template_path = repo_template("cn", template_id).path
         assert (template_path / "instructions.md").is_file()
         assert (template_path / "instructions.en.md").is_file()
 
@@ -146,14 +153,14 @@ def test_repo_templates_keep_full_generic_profile_rules_without_runtime_bindings
         assert not re.search(r"[\u3400-\u9fff]", english_role)
         assert len(english_role.splitlines()) >= len(chinese_role.splitlines()) * 0.9
 
-        chinese = chinese_catalog.get(template_id).instructions
+        chinese = repo_template("cn", template_id).instructions
         assert f"# {role_name}" in chinese
         assert "# 通用规约" in chinese
         assert "# 风险边界" in chinese
         assert "# 工具与协作偏好" in chinese
         assert "# 输出纪律" in chinese
 
-        english = english_catalog.get(template_id).instructions
+        english = repo_template("en", template_id).instructions
         assert f"# {role_name}" in english
         assert "# General rules" in english
         assert "# Risk boundaries" in english
@@ -175,13 +182,11 @@ def test_orchestrator_template_is_standalone_and_has_no_profile_migration_notes(
         assert "execution mechanism is provided by" not in instructions.lower()
 
 
-def test_repo_templates_require_complete_delivery_and_real_business_tests():
-    chinese = AgentTemplateCatalog(language="cn")
-    english = AgentTemplateCatalog(language="en")
+def test_repo_templates_require_complete_delivery_and_real_business_tests(repo_template):
 
     for template_id in ("backend-eng", "frontend-eng", "data-rd"):
-        cn = chinese.get(template_id).instructions
-        en = english.get(template_id).instructions
+        cn = repo_template("cn", template_id).instructions
+        en = repo_template("en", template_id).instructions
         for item in ("真实业务行为", "骨架", "占位", "假数据"):
             assert item in cn, f"{template_id} missing Chinese quality rule: {item}"
         for item in ("real business behavior", "skeleton", "placeholder", "synthetic data"):

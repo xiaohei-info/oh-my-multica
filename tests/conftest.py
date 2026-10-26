@@ -1,6 +1,7 @@
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -40,7 +41,7 @@ def pytest_runtest_makereport(item, call):
     problems = budget.check_call(
         seconds=call.duration, tmp_bytes=tmp_bytes, session_tmp_bytes=_session_tmp_bytes,
         rss_before=item.stash.get(_RSS_KEY, 0), rss_after=budget.peak_rss_bytes(),
-        kind=budget.kind_of(m.name for m in item.iter_markers()))
+        kind=budget.kind_of(m.name for m in item.iter_markers()), cpu_seconds=time.process_time() - item.stash.get(_CPU_KEY, 0.0))
     if problems and os.environ.get("OMAC_BUDGET_REPORT"):  # calibration: list overages instead of failing
         with open(os.environ["OMAC_BUDGET_REPORT"], "a", encoding="utf-8") as out:
             out.write(f"{item.nodeid}\t{'; '.join(problems)}\n")
@@ -50,11 +51,13 @@ def pytest_runtest_makereport(item, call):
 
 
 _RSS_KEY = pytest.StashKey[int]()
+_CPU_KEY = pytest.StashKey[float]()
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item):
     item.stash[_RSS_KEY] = budget.peak_rss_bytes()
+    item.stash[_CPU_KEY] = time.process_time()
     yield
 
 
@@ -81,6 +84,19 @@ def _instant_waits(monkeypatch, request):
     from omac.pipeline import loop
     monkeypatch.setattr(loop, "_HANDOFF_OBSERVATION_INTERVAL", 0.0)
     monkeypatch.setattr(loop, "_TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS", 0.0)
+
+
+@pytest.fixture(autouse=True)
+def _unit_tests_do_not_sleep(monkeypatch, request):
+    """The clock is an external boundary: a unit test synchronises with events, it does not wait for time to pass."""
+    if budget.kind_of(m.name for m in request.node.iter_markers()) == "unit" and "tests/it" not in str(request.fspath):
+        real_sleep = time.sleep
+
+        def short_sleep(seconds):
+            if seconds > budget.UNIT_SLEEP_SECONDS:
+                pytest.fail(f"a unit test slept {seconds}s; synchronise with an event instead (limit {budget.UNIT_SLEEP_SECONDS}s)")
+            real_sleep(seconds)
+        monkeypatch.setattr(time, "sleep", short_sleep)
 
 
 @pytest.fixture(autouse=True)
