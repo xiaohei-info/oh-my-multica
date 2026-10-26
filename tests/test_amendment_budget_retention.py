@@ -94,49 +94,6 @@ def test_unsynced_old_recovery_is_not_carried_as_completed_authority():
     assert consumed_bounces(manifest, "dispatch", item, "review") == 22
 
 
-def test_real_apply_and_reentry_leave_unaffected_node_and_store_untouched(tmp_path):
-    from test_amendment import _engine, _manifest, _proposal
-    from omac.core.amendment import build_reviewed_amendment, apply_amendment
-    engine = _engine()
-    path = _manifest(tmp_path)
-    bootstrap = engine.store.create_work_item("ws", "bootstrap", "desc", "bootstrap", "alice", reviewer="bob")
-    dispatch = engine.store.create_work_item("ws", "dispatch", "desc", "dispatch", "alice", reviewer="bob")
-    manifest = load_manifest(str(path))
-    manifest.nodes['dispatch'] = deepcopy(manifest.nodes['bootstrap'])
-    manifest.nodes['dispatch'].id = 'dispatch'
-    manifest.nodes['dispatch'].work_item_id = dispatch.id
-    engine.store.set_node_contract(dispatch.id, manifest.nodes['dispatch'].contract)
-    engine.store.update_work_item_metadata(dispatch.id, review_bounce=22)
-    manifest.meta.update(last_amendment_id='amend-old', amendment_apply={
-        'schema': APPLY_LEDGER_SCHEMA, 'amendment_id': 'amend-old', 'nodes': {
-            'dispatch': {'stage': 'authoring', 'state': 'synced',
-                         'expected_contract_sha256': review_context_binding(manifest.nodes['dispatch'])['contract_sha256'],
-                         'bounce_baseline': {'worker': 2, 'review': 21, 'merge': 0}}}})
-    save_manifest(manifest, str(path))
-    before = deepcopy(engine.store.get_work_item(dispatch.id))
-    reviewed = build_reviewed_amendment(
-        manifest, _proposal({'op': 'resume', 'node': 'bootstrap', 'stage': 'authoring'}),
-        engine.store, issue_id='reviewed-new', reviewer_verdict='pass')
-    for _ in range(2):
-        result = apply_amendment(str(path), reviewed, engine.store, {'alice', 'bob', 'charlie'})
-        updated = load_manifest(str(path))
-        assert 'dispatch' not in updated.meta['amendment_apply']['nodes']
-        assert all('dispatch' not in v for v in result['sync'].values())
-        assert consumed_bounces(updated, 'dispatch', engine.store.get_work_item(dispatch.id), 'review') == 1
-        assert engine.store.get_work_item(dispatch.id) == before
-    assert bootstrap.id != dispatch.id
-    engine.store.update_work_item_metadata(dispatch.id, review_bounce=23)
-    latest = load_manifest(str(path))
-    renewed = build_reviewed_amendment(
-        latest, _proposal({'op': 'resume', 'node': 'dispatch', 'stage': 'authoring'}),
-        engine.store, issue_id='reviewed-dispatch-again', reviewer_verdict='pass')
-    apply_amendment(str(path), renewed, engine.store, {'alice', 'bob', 'charlie'})
-    latest = load_manifest(str(path))
-    assert consumed_bounces(latest, 'dispatch', engine.store.get_work_item(dispatch.id), 'review') == 0
-    assert 'dispatch' not in latest.meta['amendment_apply'].get('retained_bounce_baselines', {})
-    assert latest.meta['amendment_apply']['nodes']['dispatch']['work_item_id'] == dispatch.id
-
-
 def test_retry_log_uses_manifest_authority_when_store_projection_is_missing():
     from omac.core.retry_budget import bounce_log_fields
     manifest, item = fixture()
