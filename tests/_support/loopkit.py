@@ -208,6 +208,18 @@ class Kit:
         self.monkeypatch.setattr(target, name, wrapper)
         return state
 
+    def before(self, target, name, hook: Callable, *, only: Callable | None = None):
+        """Run ``hook(*args, **kw)`` just before every real ``target.<name>`` call (to check what the platform looks like
+        at that moment); the hook may raise to fail the call."""
+        original = getattr(target, name)
+
+        def wrapper(*args, **kw):
+            if only is None or only(*args, **kw):
+                hook(*args, **kw)
+            return original(*args, **kw)
+
+        self.monkeypatch.setattr(target, name, wrapper)
+
     def distort(self, target, name, transform: Callable, *, times: int = 1, only: Callable | None = None):
         """Return ``transform(real_result)`` instead of the real result for ``times`` calls (a stale or inconsistent
         read), then behave normally. Returns a dict with the call count."""
