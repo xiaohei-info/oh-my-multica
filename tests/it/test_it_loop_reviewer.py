@@ -7,6 +7,7 @@ from dataclasses import replace
 import pytest
 
 from _support.loopkit import HANG, contract
+from _support.rework import delayed_verdict
 from omac.core.manifest import load_manifest
 from omac.core.taskmeta import TaskPhase
 from omac.core.workitem import WorkItemStatus
@@ -370,28 +371,6 @@ def test_an_invalid_no_submit_budget_fails_closed(kit, bad):
 
 
 # ---- a verdict that arrived while a recovery decision was recorded ------------------------------------------------
-
-def canonical_decision(item, path):
-    return {"schema": "omac.decision-required/v1", "reason_code": "reviewer-run-baseline-unavailable",
-            "kind": "develop", "phase": "review", "gate": "reviewer", "resume_issue_id": item.id, "node_id": "a",
-            "failure_class": "unproven-reviewer-run-causality", "next_action": f"omac node retry {path} a --stage review"}
-
-
-def delayed_verdict(kit, verdict):
-    """The Reviewer really submitted ``verdict``, but the node is still held by the baseline-unavailable decision."""
-    manifest, path, item = kit.in_review([kit.stack.review(verdict)])
-    kit.wait_for(lambda: kit.store.get_work_item(item.id).review_verdict == verdict, what="the submitted verdict")
-    kit.wait_runs_ended(item.id)
-    current = kit.store.get_work_item(item.id)
-    run = kit.reviewer_runs(item.id)[0]
-    kit.store.update_work_item_metadata(
-        item.id, reviewer_run_baseline=replace(current.reviewer_run_baseline, target_run_id=run.id),
-        decision_required=canonical_decision(item, path))
-    kit.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
-    manifest.nodes["a"].status = "in_review"
-    kit.save(manifest)
-    return manifest, path, kit.store.get_work_item(item.id), run
-
 
 def hold(kit, manifest, path, item, **metadata):
     """Re-arrange a blocked node holding ``metadata`` (decision, baseline) around the preserved verdict."""

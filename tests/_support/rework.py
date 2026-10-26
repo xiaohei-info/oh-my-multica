@@ -148,3 +148,21 @@ def boundary_setup(kit, required_fix, **blocker_fields):
     report["blockers"][0].update({"required_fix": required_fix, **blocker_fields})
     kit.store.update_work_item_metadata(item.id, review_report=report)
     return manifest, path, item
+
+
+def delayed_verdict(kit, verdict):
+    """The Reviewer really submitted ``verdict``, but the node is still held by the baseline-unavailable decision."""
+    from omac.pipeline.decide_recovery import reviewer_recovery_decision
+
+    manifest, path, item = kit.in_review([kit.stack.review(verdict)])
+    kit.wait_for(lambda: kit.store.get_work_item(item.id).review_verdict == verdict, what="the submitted verdict")
+    kit.wait_runs_ended(item.id)
+    current = kit.store.get_work_item(item.id)
+    run = kit.reviewer_runs(item.id)[0]
+    kit.store.update_work_item_metadata(
+        item.id, reviewer_run_baseline=replace(current.reviewer_run_baseline, target_run_id=run.id),
+        decision_required=reviewer_recovery_decision(path, "a", item, "reviewer-run-baseline-unavailable"))
+    kit.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+    manifest.nodes["a"].status = "in_review"
+    kit.save(manifest)
+    return manifest, path, kit.store.get_work_item(item.id), run
