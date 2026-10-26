@@ -82,17 +82,21 @@ def test_decide_modules_stay_pure():
     assert out == []
 
 
-def test_tests_do_not_assert_on_source_text():
+@pytest.fixture(scope="module")
+def test_file_texts():  # read in setup: the call then costs a substring check, whatever the disk load
+    return {p.name: p.read_text(encoding="utf-8") for p in sorted(Path(__file__).parent.rglob("test_*.py"))}
+
+
+def test_tests_do_not_assert_on_source_text(test_file_texts):
     """Tests protect behavior, not wording (AGENTS.md, Tests rule 3)."""
     import ast
     offenders = []
-    for path in sorted(Path(__file__).parent.rglob("test_*.py")):
-        text = path.read_text(encoding="utf-8")
-        if "getsource" not in text:  # parsing 60k lines of tests per run is what made this slow
+    for name, text in test_file_texts.items():
+        if "getsource" not in text:
             continue
         for node in ast.walk(ast.parse(text)):
             if isinstance(node, ast.Attribute) and node.attr == "getsource":
-                offenders.append(f"{path.name}:{node.lineno}")
+                offenders.append(f"{name}:{node.lineno}")
     assert offenders == []
 
 
