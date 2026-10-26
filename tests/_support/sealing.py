@@ -4,8 +4,8 @@ import hashlib
 import yaml
 
 
-def seal_mock_delivery(store, item_id, pr_url, verification, *, phase=None):
-    """Persist a complete controller-sealed delivery for MockStore tests."""
+def seal_delivery(store, item_id, pr_url, verification, *, phase=None):
+    """Persist a complete controller-sealed delivery through the Store port."""
     from omac.core.taskmeta import DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity
 
     head_sha = hashlib.sha256(pr_url.encode("utf-8")).hexdigest()
@@ -38,7 +38,7 @@ def seal_mock_delivery(store, item_id, pr_url, verification, *, phase=None):
             verification_uploader_id=ref.get("uploader_id"),
             verification_uploader_type=ref.get("uploader_type"),
             verification_task_id=task_id,
-            verification_created_at=ref["created_at"],
+            verification_created_at=ref.get("created_at") or "2026-07-30T01:00:00Z",
         ),
     )
     return store.get_work_item(item_id)

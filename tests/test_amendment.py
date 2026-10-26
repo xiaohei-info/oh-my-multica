@@ -212,11 +212,11 @@ def test_authoring_recovery_hides_legacy_convergence_review_control_but_keeps_au
 
 def _seal_review_fixture(engine, item_id="1"):
     """Review recovery fixtures model a real prior controller-sealed submission."""
-    from _support.sealing import seal_mock_delivery
+    from _support.sealing import seal_delivery
     from dataclasses import replace
     current = engine.store.get_work_item(item_id)
     old_head = (current.artifacts or {}).get("head_sha")
-    sealed = seal_mock_delivery(
+    sealed = seal_delivery(
         engine.store, item_id,
         (current.artifacts or {}).get("pr_url", "https://example.test/pr/1"),
         current.verification or {"commands": []},

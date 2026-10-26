@@ -27,7 +27,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from _support.sealing import seal_mock_delivery
+from _support.sealing import seal_delivery
 
 from omac.core.config import (
     DEFAULT_GITHUB_MERGE_COMMAND,
@@ -127,7 +127,7 @@ def _review_passed_item(store, reviewer="bob"):
     item = store.create_work_item(
         "ws", "node-a", "d", dag_key="a", worker="alice", reviewer=reviewer,
         initial_status=WorkItemStatus.IN_REVIEW)
-    seal_mock_delivery(
+    seal_delivery(
         store, item.id, "https://example.com/pr/1",
         {"commands": [{"cmd": "pytest -q", "exit_code": 0}],
          "integration_gates": [], "coverage": 100})
@@ -438,7 +438,7 @@ class TestCollectResultsMerge:
         assert manifest.nodes["a"].status == "in_progress"
         assert store.get_work_item(item.id).review_verdict is None  # reset_review
         # worker 修后重交(新 PR),不重新 pass;重启 worker 阶段
-        seal_mock_delivery(
+        seal_delivery(
             store, item.id, "https://example.com/pr/2",
             store.get_work_item(item.id).verification)
         store.update_status(item.id, WorkItemStatus.DONE)
@@ -474,7 +474,7 @@ class TestCollectResultsMerge:
         item = store.create_work_item(
             "ws", "node-a", "d", dag_key="a", worker="alice", reviewer="bob",
             initial_status=WorkItemStatus.IN_PROGRESS)
-        seal_mock_delivery(
+        seal_delivery(
             store, item.id, "https://example.com/pr/1",
             {"commands": [{"cmd": "pytest -q", "exit_code": 0, "summary": "ok"}],
              "integration_gates": [], "pr_base": "feature/v1", "coverage": 95})
@@ -502,7 +502,7 @@ class TestCollectResultsMerge:
         assert store.get_work_item(item.id).review_verdict is None
         # worker 修完冲突:切 merge 为成功 + 新 PR,不重新 pass
         cfg["merge"]["command"] = f"sh {merge_ok} {{pr_url}}"
-        seal_mock_delivery(
+        seal_delivery(
             store, item.id, "https://example.com/pr/2",
             store.get_work_item(item.id).verification)
         store.update_status(item.id, WorkItemStatus.DONE)
@@ -572,7 +572,7 @@ class TestCollectResultsMerge:
         runtime = _runtime(store)
         item = _review_passed_item(store)
         old_subject = store.get_work_item(item.id).review_subject_digest
-        seal_mock_delivery(
+        seal_delivery(
             store, item.id, "https://example.com/pr/2",
             {"commands": [{"cmd": "pytest -q", "exit_code": 0}],
              "revision": 2})
@@ -1266,7 +1266,7 @@ class TestMergeClosureRegression:
         assert len([entry for entry in store.assign_log if entry[2] == "worker"]) == worker_assignments
         assert requests == [old_pr]
 
-        seal_mock_delivery(
+        seal_delivery(
             store, item.id, new_pr,
             store.get_work_item(item.id).verification)
         store.update_status(item.id, WorkItemStatus.DONE)
@@ -1673,7 +1673,7 @@ class TestMergeClosureRegression:
         runtime = _runtime(store)
         item = _review_passed_item(store)
         store.reset_review(item.id)
-        seal_mock_delivery(
+        seal_delivery(
             store, item.id, store.get_work_item(item.id).artifacts["pr_url"],
             {"commands": [{"command": "pytest", "exit_code": 0}]},
             phase=TaskPhase.REVIEW)

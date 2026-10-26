@@ -18,7 +18,7 @@ import os
 import stat
 import pytest
 
-from _support.sealing import seal_mock_delivery
+from _support.sealing import seal_delivery
 
 from omac.core.manifest import Manifest, Node
 from omac.core.config import DEFAULT_RETRY
@@ -67,7 +67,7 @@ def _worker_done_item(store, reviewer="bob"):
     item = store.create_work_item(
         "ws", "node-a", "d", dag_key="a", worker="alice", reviewer=reviewer,
         initial_status=WorkItemStatus.IN_PROGRESS)
-    seal_mock_delivery(
+    seal_delivery(
         store, item.id, "https://example.com/pr/1",
         {"commands": [{"cmd": "pytest -q", "exit_code": 0, "summary": "ok"}],
          "integration_gates": [], "pr_base": "feature/v1", "coverage": 95})
@@ -336,7 +336,7 @@ class TestCollectResultsCi:
         assert manifest.nodes["a"].status == "in_progress"
         assert store.get_work_item(item.id).bounces.ci == 1
         # worker 修后重交:重新置为 worker DONE
-        seal_mock_delivery(
+        seal_delivery(
             store, item.id, "https://example.com/pr/1",
             store.get_work_item(item.id).verification)
         store.update_status(item.id, WorkItemStatus.DONE)

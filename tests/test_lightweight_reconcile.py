@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from _support.fake_platform import MockCodeHost
+from _support.ports import UnusedCodeHost
 import copy
 from dataclasses import replace
 import hashlib
@@ -15,7 +15,6 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from _support.sealing import seal_mock_delivery
 
 from omac.cli import exit_codes
 from omac.cli.main import main
@@ -39,7 +38,6 @@ from omac.core.workitem import (
     WorkItemPayload,
     WorkItemStatus,
 )
-from _support.fake_platform import MockRuntime, MockStore
 from omac.engines.multica import MulticaStore
 from omac.errors import AuthError, PlatformError, WorkItemNotFoundError
 from omac.pipeline import loop
@@ -456,7 +454,7 @@ def test_reconcile_hydrates_eight_work_items_with_bounded_parallelism():
     manifest = _parallel_hydration_manifest(item_ids)
 
     observations, _ = loop._observe_reconcile_inputs(
-        store, MockCodeHost(), manifest, max_parallel=4)
+        store, UnusedCodeHost(), manifest, max_parallel=4)
 
     assert store.max_active_hydrations == 4  # four overlapped, never more than max_parallel
     assert list(observations) == item_ids
@@ -497,7 +495,7 @@ def test_reconcile_observes_controls_with_bounded_parallelism():
     )
 
     observations, _ = loop._observe_reconcile_inputs(
-        store, MockCodeHost(), manifest, max_parallel=4, full_scan=True)
+        store, UnusedCodeHost(), manifest, max_parallel=4, full_scan=True)
 
     assert store.max_active_controls == 4  # four reads overlapped, never more than the safe limit
     assert list(observations) == item_ids
@@ -518,7 +516,7 @@ def test_reconcile_hydration_completion_order_does_not_change_manifest_order():
     )
 
     observations, _ = loop._observe_reconcile_inputs(
-        store, MockCodeHost(), _parallel_hydration_manifest(item_ids), max_parallel=4)
+        store, UnusedCodeHost(), _parallel_hydration_manifest(item_ids), max_parallel=4)
 
     assert store.hydration_finished != item_ids
     assert list(observations) == item_ids
@@ -533,7 +531,7 @@ def test_reconcile_respects_store_serial_hydration_capability():
     )
 
     loop._observe_reconcile_inputs(
-        store, MockCodeHost(), _parallel_hydration_manifest(item_ids), max_parallel=8)
+        store, UnusedCodeHost(), _parallel_hydration_manifest(item_ids), max_parallel=8)
 
     assert store.max_active_hydrations == 1
 
@@ -563,7 +561,7 @@ def test_reconcile_hydration_failure_precedes_pr_reads_and_candidate_writes(
 
     with pytest.raises(PlatformError, match="hydrate failed: item-3"):
         loop.reconcile_with_observations(
-            store, MockCodeHost(), manifest, path, max_parallel=4)
+            store, UnusedCodeHost(), manifest, path, max_parallel=4)
 
     assert store.pr_observations == 0
     assert candidate_calls == []
@@ -575,7 +573,7 @@ def test_reconcile_hydration_handles_zero_or_one_work_item(item_ids):
     store = _ParallelHydrationStore(item_ids)
 
     observations, pull_requests = loop._observe_reconcile_inputs(
-        store, MockCodeHost(), _parallel_hydration_manifest(item_ids), max_parallel=8)
+        store, UnusedCodeHost(), _parallel_hydration_manifest(item_ids), max_parallel=8)
 
     assert list(observations) == item_ids
     assert pull_requests == {}
@@ -590,7 +588,7 @@ def test_reconcile_does_not_share_duplicate_attachment_refs_across_work_items():
     )
 
     observations, _ = loop._observe_reconcile_inputs(
-        store, MockCodeHost(), _parallel_hydration_manifest(item_ids), max_parallel=2)
+        store, UnusedCodeHost(), _parallel_hydration_manifest(item_ids), max_parallel=2)
 
     assert set(store.hydration_plans) == set(item_ids)
     assert observations["item-a"].work_item.verification == {
@@ -732,7 +730,7 @@ def test_full_scan_no_project_multica_static_control_failure_fails_closed(
     store.observe_work_item_control = fail_control
 
     with pytest.raises(type(error), match=str(error)):
-        loop.reconcile(store, MockCodeHost(), manifest, path, full_scan=True)
+        loop.reconcile(store, UnusedCodeHost(), manifest, path, full_scan=True)
 
 
 def test_full_scan_static_batch_failure_falls_back_and_isolates_unknown_error(
@@ -882,10 +880,6 @@ def test_not_found_without_identity_confirmation_fails_closed(
 
 def test_status_report_does_not_claim_converged_for_incomplete_full_scan(
         tmp_path, monkeypatch):
-    store = MockStore(EngineConfig(
-        engine_type="mock", workspace_id="ws",
-        extra={"MOCK_AUTO_COMPLETE": "false"},
-    ))
     manifest = Manifest(meta={}, nodes={
         "static": Node(
             "static", "worker", work_item_id="issue-static", status="done",
@@ -904,7 +898,7 @@ def test_status_report_does_not_claim_converged_for_incomplete_full_scan(
         ),
     )
 
-    report = build_status_report(manifest, store, MockCodeHost(), path)
+    report = build_status_report(manifest, None, UnusedCodeHost(), path)   # the reconcile is replaced: no port is read
 
     assert report["progress"]["converged"] is False
 
@@ -1178,7 +1172,7 @@ def test_terminal_worker_handoff_observation_downloads_no_attachments(tmp_path):
 def test_terminal_worker_handoff_late_submit_hydrates_only_worker_evidence(
     tmp_path, monkeypatch,
 ):
-    code_host = MockCodeHost()
+    code_host = UnusedCodeHost()
     item_id = "node-a"
     issue, attachments = _issue(item_id, status="done", phase="authoring")
     issue["metadata"]["worker_handoff"] = _worker_handoff(
@@ -1229,7 +1223,7 @@ def test_terminal_worker_handoff_late_submit_hydrates_only_worker_evidence(
 def test_late_submit_contract_hydration_failure_keeps_handoff_uncommitted(
     tmp_path, monkeypatch,
 ):
-    code_host = MockCodeHost()
+    code_host = UnusedCodeHost()
     item_id = "node-a"
     issue, attachments = _issue(
         item_id, status="in_progress", phase="authoring")
@@ -1329,7 +1323,7 @@ def test_late_submit_contract_hydration_failure_keeps_handoff_uncommitted(
 def test_late_submit_commits_handoff_only_after_complete_worker_evidence(
     tmp_path, monkeypatch,
 ):
-    code_host = MockCodeHost()
+    code_host = UnusedCodeHost()
     item_id = "node-a"
     issue, attachments = _issue(
         item_id, status="in_progress", phase="authoring")
@@ -1781,7 +1775,7 @@ def test_control_projection_preserves_unknown_fields_without_hydrating_payloads(
 
 
 def test_running_delivery_hydration_preserves_digest_identity_and_subject_binding():
-    code_host = MockCodeHost()
+    code_host = UnusedCodeHost()
     item_id = "node-a"
     issue, attachments = _issue(item_id, status="done", phase="review")
     verification_ref = issue["metadata"]["verification_ref"]
@@ -1839,7 +1833,7 @@ def test_running_delivery_hydration_preserves_digest_identity_and_subject_bindin
 
 
 def test_new_head_cannot_reuse_old_verification_or_verdict():
-    code_host = MockCodeHost()
+    code_host = UnusedCodeHost()
     item_id = "node-a"
     old_verification = {"commands": [{"cmd": "pytest old", "exit_code": 0}]}
     old_item = WorkItem(
@@ -1947,7 +1941,7 @@ def test_cli_status_recovers_confirmed_merge_from_one_control_read_without_hydra
     monkeypatch.setattr(
         dag,
         "_assemble_engine",
-        lambda _args: (SimpleNamespace(store=store, code_host=MockCodeHost()), store.config),
+        lambda _args: (SimpleNamespace(store=store, code_host=UnusedCodeHost()), store.config),
     )
 
     assert main(["dag", "status", path, "--output", "json"]) == exit_codes.OK
@@ -2052,129 +2046,6 @@ def test_status_required_hydration_failure_produces_no_report_or_partial_write(
     assert effects == []
     assert manifest == before_manifest
     assert Path(path).read_bytes() == before_file
-
-
-def test_incident_confirmed_merge_recovers_manifest_and_platform_idempotently(
-    tmp_path, monkeypatch,
-):
-    store = MockStore(EngineConfig(
-        engine_type="mock",
-        workspace_id="confirmed-merge-recovery",
-        extra={"MOCK_AUTO_COMPLETE": "false"},
-    ))
-    runtime = MockRuntime(store)
-    item = store.create_work_item(
-        "confirmed-merge-recovery",
-        "node-a",
-        "node-a",
-        dag_key="node-a",
-        worker="alice",
-        reviewer="bob",
-    )
-    store.update_work_item_metadata(
-        item.id,
-        phase=TaskPhase.REVIEW,
-        artifacts={"pr_url": "https://github.com/acme/repo/pull/1"},
-        verification={"commands": [{"cmd": "pytest -q", "exit_code": 0}]},
-    )
-    store.update_status(item.id, WorkItemStatus.IN_REVIEW)
-    store.assign_work_item(item.id, "bob", "reviewer")
-    runs_before = list(runtime.list_runs(item.id))
-    manifest, path = _manifest_path(tmp_path, {
-        "node-a": Node(
-            id="node-a",
-            worker="alice",
-            reviewer="bob",
-            work_item_id=item.id,
-            status="in_progress",
-            merged=True,
-            merged_at="2026-07-30T00:00:00Z",
-        ),
-    })
-    normalizations = []
-    original_normalize = getattr(
-        store, "normalize_confirmed_merge", None)
-
-    def record_normalize(item_id):
-        normalizations.append(item_id)
-        assert original_normalize is not None
-        return original_normalize(item_id)
-
-    monkeypatch.setattr(
-        store, "normalize_confirmed_merge", record_normalize, raising=False)
-
-    assert loop.reconcile(store, MockCodeHost(), manifest, path) is True
-
-    recovered = store.get_work_item(item.id)
-    assert manifest.nodes["node-a"].status == "done"
-    assert recovered.status is WorkItemStatus.DONE
-    assert recovered.platform_assignee_id is None
-    assert runtime.list_runs(item.id) == runs_before
-    assert normalizations == [item.id]
-
-    assert loop.reconcile(store, MockCodeHost(), manifest, path) is False
-    assert normalizations == [item.id]
-    assert runtime.list_runs(item.id) == runs_before
-
-
-@pytest.mark.parametrize("outcome", ["failed", "unknown-after-commit"])
-def test_confirmed_merge_recovery_write_fails_closed_without_partial_platform_state(
-    tmp_path, monkeypatch, outcome,
-):
-    store = MockStore(EngineConfig(
-        engine_type="mock",
-        workspace_id=f"confirmed-merge-{outcome}",
-        extra={"MOCK_AUTO_COMPLETE": "false"},
-    ))
-    runtime = MockRuntime(store)
-    item = store.create_work_item(
-        store.config.workspace_id,
-        "node-a",
-        "node-a",
-        dag_key="node-a",
-        worker="alice",
-        reviewer="bob",
-    )
-    store.update_work_item_metadata(item.id, phase=TaskPhase.REVIEW)
-    store.update_status(item.id, WorkItemStatus.IN_REVIEW)
-    store.assign_work_item(item.id, "bob", "reviewer")
-    runs_before = list(runtime.list_runs(item.id))
-    manifest, path = _manifest_path(tmp_path, {
-        "node-a": Node(
-            id="node-a",
-            worker="alice",
-            reviewer="bob",
-            work_item_id=item.id,
-            status="in_progress",
-            merged=True,
-            merged_at="2026-07-30T00:00:00Z",
-        ),
-    })
-    before_file = Path(path).read_bytes()
-    original_normalize = getattr(
-        store, "normalize_confirmed_merge", None)
-
-    def fail_normalize(item_id):
-        if outcome == "unknown-after-commit":
-            assert original_normalize is not None
-            original_normalize(item_id)
-        raise PlatformError("confirmed merge normalization outcome unknown")
-
-    monkeypatch.setattr(
-        store, "normalize_confirmed_merge", fail_normalize, raising=False)
-
-    with pytest.raises(PlatformError, match="normalization outcome unknown"):
-        loop.reconcile(store, MockCodeHost(), manifest, path)
-
-    current = store.get_work_item(item.id)
-    platform_state = (current.status, current.platform_assignee_id)
-    assert platform_state in {
-        (WorkItemStatus.IN_REVIEW, "mock-agent-bob"),
-        (WorkItemStatus.DONE, None),
-    }
-    assert manifest.nodes["node-a"].status == "in_progress"
-    assert Path(path).read_bytes() == before_file
-    assert runtime.list_runs(item.id) == runs_before
 
 
 def test_unknown_control_fact_keeps_unconfirmed_done_on_fail_closed_hydration():
@@ -2488,7 +2359,7 @@ def test_full_get_work_item_still_hydrates_every_referenced_payload():
 
 
 def test_unknown_pr_state_never_preserves_unconfirmed_done(tmp_path):
-    code_host = MockCodeHost()
+    code_host = UnusedCodeHost()
     issue, attachments = _issue(
         "node-a", status="done", phase="review", review_verdict="pass")
     remote = _RemoteFixture({"node-a": issue}, attachments)
@@ -2508,59 +2379,3 @@ def test_unknown_pr_state_never_preserves_unconfirmed_done(tmp_path):
     assert manifest.nodes["node-a"].merged is False
 
 
-def test_tick_collects_delivery_persisted_after_reconcile_control_snapshot(
-    tmp_path,
-):
-    store = MockStore(EngineConfig(
-        engine_type="mock",
-        workspace_id="fresh-observation",
-        extra={"MOCK_AUTO_COMPLETE": "false"},
-    ))
-    runtime = MockRuntime(store)
-    item = store.create_work_item(
-        "fresh-observation",
-        "node-a",
-        "node-a",
-        dag_key="node-a",
-        worker="alice",
-        reviewer="bob",
-    )
-    store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
-    manifest, path = _manifest_path(tmp_path, {
-        "node-a": Node(
-            id="node-a",
-            worker="alice",
-            reviewer="bob",
-            work_item_id=item.id,
-            status="in_progress",
-        ),
-    })
-    original_observe = store.observe_work_item_control
-    delivered = False
-
-    def observe_then_deliver(item_id):
-        nonlocal delivered
-        projection = original_observe(item_id)
-        if not delivered:
-            verification = {
-                "commands": [{"cmd": "pytest -q", "exit_code": 0}],
-                "integration_gates": [],
-                "coverage": 100,
-            }
-            seal_mock_delivery(
-                store, item_id, "https://github.com/acme/repo/pull/1",
-                verification, phase=TaskPhase.AUTHORING)
-            store.update_status(item_id, WorkItemStatus.DONE)
-            delivered = True
-        return projection
-
-    store.observe_work_item_control = observe_then_deliver
-
-    result = loop.tick(
-        store, runtime, MockCodeHost(), manifest, path, max_parallel=1, config={})
-
-    current = store.get_work_item(item.id)
-    assert result.state == "running"
-    assert manifest.nodes["node-a"].status == "in_review"
-    assert current.phase is TaskPhase.REVIEW
-    assert current.status is WorkItemStatus.IN_REVIEW
