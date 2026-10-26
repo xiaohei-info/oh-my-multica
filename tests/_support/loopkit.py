@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import time
-from pathlib import Path
 from typing import Any, Callable
 
 import yaml
@@ -194,6 +193,36 @@ class Kit:
         self.monkeypatch.setattr(target, name, wrapper)
         return state
 
+    def after(self, target, name, hook: Callable, *, only: Callable | None = None, times: int = 1):
+        """Run ``hook(result, *args, **kw)`` right after the real ``target.<name>`` returns (``times`` calls, then stop);
+        what happens on the platform between two of the Loop's steps. Returns a dict with the call count."""
+        original, state = getattr(target, name), {"calls": 0}
+
+        def wrapper(*args, **kw):
+            result = original(*args, **kw)
+            if (only is None or only(*args, **kw)) and state["calls"] < times:
+                state["calls"] += 1
+                hook(result, *args, **kw)
+            return result
+
+        self.monkeypatch.setattr(target, name, wrapper)
+        return state
+
+    def distort(self, target, name, transform: Callable, *, times: int = 1, only: Callable | None = None):
+        """Return ``transform(real_result)`` instead of the real result for ``times`` calls (a stale or inconsistent
+        read), then behave normally. Returns a dict with the call count."""
+        original, state = getattr(target, name), {"calls": 0}
+
+        def wrapper(*args, **kw):
+            result = original(*args, **kw)
+            if (only is None or only(*args, **kw)) and state["calls"] < times:
+                state["calls"] += 1
+                return transform(result)
+            return result
+
+        self.monkeypatch.setattr(target, name, wrapper)
+        return state
+
     def forbid(self, target, *names) -> None:
         import pytest
 
@@ -237,10 +266,11 @@ class Kit:
             self.wait_runs_ended(item.id)
         return manifest, path, item
 
-    def in_review(self, *reviewer_runs):
+    def in_review(self, *reviewer_runs, rework=()):
         """Run the Loop until node `a` is in review and the Reviewer's first Run exists.
-        ``reviewer_runs``: one scenario attempt per Reviewer Run; Runs after the last repeat the last attempt."""
-        self.stack.set_scenario("alice", [[self.stack.tool("worker-submit")]])
+        ``reviewer_runs``: one scenario attempt per Reviewer Run; Runs after the last repeat the last attempt.
+        ``rework``: the Worker's attempts after its first (which submits); with none, every Run submits."""
+        self.stack.set_scenario("alice", [[self.stack.tool("worker-submit")], *rework])
         self.agents(list(reviewer_runs) or HANG, names=("bob",))
         node = self.node("a", reviewer="bob", contract=contract())
         manifest = self.manifest([node])
