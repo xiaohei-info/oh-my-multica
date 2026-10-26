@@ -176,3 +176,14 @@ def smoke_triggers(source: str) -> list[str]:
     names = {triggers} if isinstance(triggers, str) else set(triggers)
     extra = names - {"schedule", "workflow_dispatch"}
     return [f"smoke.yml: forbidden trigger {t!r}" for t in sorted(extra)]
+
+
+def test_module_imports(path: str, source: str) -> list[str]:
+    """A test file never imports another test file: what several share belongs in tests/_support."""
+    out = []
+    for node in ast.walk(_parse(source)):
+        names = ([a.name for a in node.names] if isinstance(node, ast.Import)
+                 else [node.module or ""] if isinstance(node, ast.ImportFrom) and not node.level else [])
+        out += [f"{path}:{node.lineno}: imports test module `{n}`; move the shared helper to tests/_support"
+                for n in names if n.split(".")[0].startswith("test_")]
+    return out

@@ -195,3 +195,19 @@ def test_port_writes_are_allowed_in_the_executor_and_reads_are_not_writes():
     assert rules.inline_effects("src/omac/engines/multica.py", snippet) == []
     assert rules.inline_effects("src/omac/pipeline/loop.py", "def f(store):\n    store.get_work_item('i')\n") == []
     assert rules.inline_effects("src/omac/pipeline/loop.py", "def f(t):\n    t.cancel()\n") == []
+
+
+@pytest.fixture(scope="module")
+def test_file_cross_imports():
+    return [line for path in sorted((ROOT / "tests").rglob("test_*.py"))
+            for line in rules.test_module_imports(path.relative_to(ROOT).as_posix(), _read(path))]
+
+
+def test_no_test_file_imports_another_test_file(test_file_cross_imports):
+    assert test_file_cross_imports == []
+
+
+def test_the_cross_import_rule_sees_both_import_forms():
+    assert rules.test_module_imports("tests/x.py", "from test_a import b\n")
+    assert rules.test_module_imports("tests/x.py", "def f():\n    import test_a\n")
+    assert rules.test_module_imports("tests/x.py", "from _support.a import b\nimport pytest\n") == []
