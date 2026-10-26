@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from omac.core.review_convergence import advance_review_ledger
+from omac.core import review_convergence as review_mod
+from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, advance_review_ledger
 
 
 def _report(root: str, evidence: str, classification: str, prior: list[dict], *, failing: bool = True) -> dict:
@@ -93,3 +94,169 @@ UNTRUSTED = {
 
 def copy_of(ledger: dict) -> dict:
     return deepcopy(ledger)
+
+
+def _with_cycle_blocker_facts(ledger):
+    records = {
+        record["blocker_id"]: record for record in ledger["blockers"]
+    }
+    current = {}
+    prior_open_ids = set()
+    for cycle in ledger["cycles"]:
+        open_ids = set(cycle["open_blocker_ids"])
+        cycle.setdefault("subject_digest", f"subject-{cycle['round']}")
+        cycle.setdefault("verdict", "reject" if open_ids else "pass")
+        facts = []
+        for blocker_id in sorted(prior_open_ids - open_ids):
+            previous = current[blocker_id]
+            facts.append({
+                field: previous[field]
+                for field in review_mod._BLOCKER_FACT_FIELDS[:6]
+            } | {
+                "status": "fixed",
+                "classification": "fixed",
+                "last_evidence": f"fixed in round {cycle['round']}",
+            })
+        for blocker_id in sorted(open_ids):
+            source = records.setdefault(blocker_id, {
+                "blocker_id": blocker_id,
+                "root_cause_key": f"root-{blocker_id.removeprefix('BLK-')}",
+                "obligation_id": "dimension:structure",
+                "status": "open",
+                "classification": "new",
+                "owner": f"owner-{len(records) % 3}",
+            })
+            previous = current.get(blocker_id)
+            if previous is None:
+                classification = "new"
+            elif previous["status"] == "fixed":
+                classification = "regressed"
+            else:
+                classification = (
+                    "unchanged"
+                    if source.get("classification") == "unchanged"
+                    else "deeper"
+                )
+            fact = {
+                "blocker_id": blocker_id,
+                "root_cause_key": source["root_cause_key"],
+                "obligation_id": source["obligation_id"],
+                "summary": source.get("summary", blocker_id),
+                **({"owner": source["owner"]} if source.get("owner") else {}),
+                "evidence": source.get("evidence", f"evidence for {blocker_id}"),
+                "required_fix": source.get("required_fix", f"fix {blocker_id}"),
+                "status": "open",
+                "classification": classification,
+            }
+            if previous is not None and previous["status"] == "open":
+                fact["last_evidence"] = f"still open in round {cycle['round']}"
+            facts.append(fact)
+        cycle["blocker_facts_schema"] = (
+            review_mod.REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA
+        )
+        cycle["blocker_facts"] = facts
+        cycle["prior_open_blocker_ids"] = sorted(prior_open_ids)
+        cycle["open_blocker_ids"] = sorted(open_ids)
+        cycle["reported_blocker_ids"] = sorted(open_ids)
+        cycle["new_count"] = sum(
+            fact["classification"] == "new" for fact in facts)
+        cycle["fixed_count"] = sum(
+            fact["status"] == "fixed" for fact in facts)
+        cycle["regressed_count"] = sum(
+            fact["classification"] == "regressed" for fact in facts)
+        cycle["unchanged_count"] = sum(
+            fact["classification"] == "unchanged" for fact in facts)
+        cycle["open_count"] = len(open_ids)
+        cycle["obligation_results"] = {
+            fact["obligation_id"]: "fail"
+            for fact in facts if fact["status"] == "open"
+        }
+        current_ledger = {
+            "schema": "omac.review-ledger/v1",
+            "cycles": ledger["cycles"][:cycle["round"]],
+            "blockers": [],
+        }
+        current = {
+            blocker["blocker_id"]: blocker
+            for blocker in review_mod._canonical_cycle_projection(
+                current_ledger["cycles"])
+        }
+        prior_open_ids = open_ids
+    ledger["blockers"] = sorted(current.values(), key=lambda item: item["blocker_id"])
+    return ledger
+
+
+def decision_ledger(
+    open_counts, *, new_counts=None, obligation_ids=("dimension:structure",),
+    first_seen_rounds=None, classifications=None,
+):
+    del new_counts, first_seen_rounds
+    final_classifications = classifications or ["unchanged"]
+    max_open_count = max(open_counts)
+    blockers = [
+        {
+            "blocker_id": f"BLK-{index}",
+            "root_cause_key": f"root-{index}",
+            "obligation_id": obligation_ids[(index - 1) % len(obligation_ids)],
+            "status": "open",
+            "classification": final_classifications[
+                (index - 1) % len(final_classifications)
+            ],
+            "first_seen_round": 1,
+            "last_seen_round": len(open_counts),
+            "seen_count": len(open_counts),
+            "owner": f"owner-{(index - 1) % 3}",
+        }
+        for index in range(1, max_open_count + 1)
+    ]
+    cycles = []
+    previous_ids = set()
+    next_id = 1
+    active_ids = set()
+    for round_index, open_count in enumerate(open_counts, start=1):
+        while len(active_ids) < open_count:
+            active_ids.add(f"BLK-{next_id}")
+            next_id += 1
+        while len(active_ids) > open_count:
+            active_ids.remove(sorted(active_ids)[-1])
+        cycles.append({
+            "round": round_index,
+            "new_count": len(active_ids - previous_ids),
+            "fixed_count": len(previous_ids - active_ids),
+            "regressed_count": 0,
+            "unchanged_count": 0,
+            "open_count": open_count,
+            "prior_open_blocker_ids": sorted(previous_ids),
+            "open_blocker_ids": sorted(active_ids),
+            "reported_blocker_ids": sorted(active_ids),
+        })
+        previous_ids = set(active_ids)
+    ledger = {
+        "schema": "omac.review-ledger/v1",
+        "cycles": cycles,
+        "blockers": blockers,
+    }
+    return _with_cycle_blocker_facts(ledger)
+
+
+def review_results(obligations, *, failed=()):
+    failed = set(failed)
+    return [
+        {
+            "obligation_id": obligation["obligation_id"],
+            "status": "fail" if obligation["obligation_id"] in failed else "pass",
+            "evidence": f"checked {obligation['obligation_id']}",
+        }
+        for obligation in obligations
+    ]
+
+
+def review_report(obligations, *, blockers=None, prior=None, failed=()):
+    return {
+        "review_protocol": REVIEW_PROTOCOL_VERSION,
+        "full_review_completed": True,
+        "obligation_results": review_results(obligations, failed=failed),
+        "prior_blocker_results": prior or [],
+        "blockers": blockers or [],
+        "nits": [],
+    }

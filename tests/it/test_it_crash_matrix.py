@@ -82,4 +82,6 @@ def test_a_fault_after_write_k_never_duplicates_an_effect(project, stack, k, fau
     live = [i for i in _issues(stack, name) if i["status"] != "cancelled"]
     assert len(live) == 1, "exactly one live issue for the node"
     runs = json.loads(stack.multica("issue", "runs", live[0]["id"], "--output", "json"))
-    assert 1 <= len(runs) <= 1 + retried, "the Worker is dispatched once, plus at most once per explicit retry"
+    assert 1 <= len(runs) <= 1 + retried, (
+        "the Worker is dispatched once, plus at most once per explicit retry; OMAC's writes in the faulted process: "
+        f"{[(m, p.split('/', 4)[-1]) for m, p, _ in proxy.writes()]}; Run statuses: {[r.get('status') for r in runs]}")

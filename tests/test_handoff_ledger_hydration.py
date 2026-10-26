@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
-from _support.fake_platform import MockCodeHost
+from _support.ports import UnusedCodeHost
 import json
 from unittest.mock import Mock
 
@@ -122,7 +122,7 @@ def test_fresh_locked_dispatch_hydrates_original_round3_ledger(case):
     assert current_review_ledger(projection.work_item) is None
     assert WorkItemPayload.REVIEW_LEDGER in projection.deferred_payloads
     result = loop._dispatch_worker_handoff_locked(
-        store, runtime, MockCodeHost(), manifest, "harness-node", projection=projection
+        store, runtime, UnusedCodeHost(), manifest, "harness-node", projection=projection
     )
     assert result.state == "waiting" and result.intent == intent
     assert remote.issues == before

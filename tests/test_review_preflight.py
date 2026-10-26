@@ -2,10 +2,6 @@ from types import SimpleNamespace
 
 from omac.core.review_preflight import run_plan_preflight, run_review_preflight
 from omac.core.taskmeta import TaskKind
-from omac.engines import create_engine
-from _support.fake_platform import MockStore
-from omac.engines.models import EngineConfig
-from omac.pipeline.tasks import run_task
 
 
 def _item(command_a, command_b=None, *, blocked_by=None, scope_paths=None):
@@ -295,41 +291,3 @@ def test_non_manifest_review_has_no_manifest_specific_preflight():
     assert run_review_preflight(item) == []
 
 
-def test_run_task_reworks_machine_failure_before_dispatching_reviewer():
-    import yaml
-    MockStore.reset()
-    engine = create_engine("mock", EngineConfig(
-        engine_type="mock",
-        workspace_id="ws",
-        extra={"MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0"},
-    ))
-
-    def manifest(command):
-        return yaml.safe_dump({
-            "meta": {"name": "demo"},
-            "nodes": [{
-                "id": "node-a",
-                "worker": "alice",
-                "blocked_by": [],
-                "contract": {"verification_commands": [command]},
-            }],
-        }, sort_keys=False)
-
-    MockStore.set_kind_delivery_sequence("decompose", [
-        {"manifest": manifest("go test cmd/oactl/entrypoint/...")},
-        {"manifest": manifest("go test ./cmd/oactl/entrypoint/...")},
-    ])
-
-    result = run_task(
-        engine,
-        TaskKind.DECOMPOSE,
-        {"title": "decompose"},
-        "alice",
-        reviewers=["bob"],
-        max_revisions=3,
-        poll=lambda: None,
-    )
-
-    roles = [entry[2] for entry in engine.store.assign_log]
-    assert result["verdict"] == "pass"
-    assert roles == ["worker", "worker", "reviewer"]

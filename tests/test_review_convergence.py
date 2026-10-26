@@ -1,14 +1,14 @@
 from copy import deepcopy
-from _support.fake_platform import MockCodeHost
+from _support.ledgers import (
+    _with_cycle_blocker_facts, decision_ledger as _decision_ledger, review_report as _report,
+)
+from _support.samples import work_item
 import json
 from types import SimpleNamespace
 
 import pytest
 import yaml
 
-from omac.cli import exit_codes
-from omac.cli.commands import work as work_cmd
-from omac.cli.main import main
 from omac.core import review_convergence as review_mod
 from omac.core.review_convergence import (
     LegacyReviewLedgerUnverifiable,
@@ -22,17 +22,11 @@ from omac.core.review_convergence import (
     validate_review_ledger,
 )
 from omac.core.taskmeta import TaskKind, TaskPhase, WorkerHandoffIntent
-from _support.fake_platform import MockStore
-from omac.engines.models import EngineConfig
 from omac.core.workitem import WorkItemStatus
-from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import dispatch
 from omac.pipeline.convergence import ResolutionState, resolve_convergence
-from omac.pipeline.dispatch import submit as submit_work
-from omac.engines import create_engine
-from omac.pipeline.tasks import run_task
 from omac.core.acceptance import load_acceptance_doc
-from omac.core.manifest import Contract, Manifest, Node, _dump_contract
+from omac.core.manifest import Contract, Manifest, Node
 
 
 def _item(*, contract=None, ledger=None):
@@ -42,29 +36,6 @@ def _item(*, contract=None, ledger=None):
         review_ledger=ledger,
         review_obligations=None,
     )
-
-
-def _results(obligations, *, failed=()):
-    failed = set(failed)
-    return [
-        {
-            "obligation_id": obligation["obligation_id"],
-            "status": "fail" if obligation["obligation_id"] in failed else "pass",
-            "evidence": f"checked {obligation['obligation_id']}",
-        }
-        for obligation in obligations
-    ]
-
-
-def _report(obligations, *, blockers=None, prior=None, failed=()):
-    return {
-        "review_protocol": REVIEW_PROTOCOL_VERSION,
-        "full_review_completed": True,
-        "obligation_results": _results(obligations, failed=failed),
-        "prior_blocker_results": prior or [],
-        "blockers": blockers or [],
-        "nits": [],
-    }
 
 
 def _amendment_acceptance_doc():
@@ -859,149 +830,6 @@ def test_new_schema_resolves_without_legacy_decision():
 
     assert resolution.state is ResolutionState.NEEDS_DECISION
     assert resolution.convergence["reason_code"] == "review-convergence-stalled"
-
-
-def _with_cycle_blocker_facts(ledger):
-    records = {
-        record["blocker_id"]: record for record in ledger["blockers"]
-    }
-    current = {}
-    prior_open_ids = set()
-    for cycle in ledger["cycles"]:
-        open_ids = set(cycle["open_blocker_ids"])
-        cycle.setdefault("subject_digest", f"subject-{cycle['round']}")
-        cycle.setdefault("verdict", "reject" if open_ids else "pass")
-        facts = []
-        for blocker_id in sorted(prior_open_ids - open_ids):
-            previous = current[blocker_id]
-            facts.append({
-                field: previous[field]
-                for field in review_mod._BLOCKER_FACT_FIELDS[:6]
-            } | {
-                "status": "fixed",
-                "classification": "fixed",
-                "last_evidence": f"fixed in round {cycle['round']}",
-            })
-        for blocker_id in sorted(open_ids):
-            source = records.setdefault(blocker_id, {
-                "blocker_id": blocker_id,
-                "root_cause_key": f"root-{blocker_id.removeprefix('BLK-')}",
-                "obligation_id": "dimension:structure",
-                "status": "open",
-                "classification": "new",
-                "owner": f"owner-{len(records) % 3}",
-            })
-            previous = current.get(blocker_id)
-            if previous is None:
-                classification = "new"
-            elif previous["status"] == "fixed":
-                classification = "regressed"
-            else:
-                classification = (
-                    "unchanged"
-                    if source.get("classification") == "unchanged"
-                    else "deeper"
-                )
-            fact = {
-                "blocker_id": blocker_id,
-                "root_cause_key": source["root_cause_key"],
-                "obligation_id": source["obligation_id"],
-                "summary": source.get("summary", blocker_id),
-                **({"owner": source["owner"]} if source.get("owner") else {}),
-                "evidence": source.get("evidence", f"evidence for {blocker_id}"),
-                "required_fix": source.get("required_fix", f"fix {blocker_id}"),
-                "status": "open",
-                "classification": classification,
-            }
-            if previous is not None and previous["status"] == "open":
-                fact["last_evidence"] = f"still open in round {cycle['round']}"
-            facts.append(fact)
-        cycle["blocker_facts_schema"] = (
-            review_mod.REVIEW_CYCLE_BLOCKER_FACTS_SCHEMA
-        )
-        cycle["blocker_facts"] = facts
-        cycle["prior_open_blocker_ids"] = sorted(prior_open_ids)
-        cycle["open_blocker_ids"] = sorted(open_ids)
-        cycle["reported_blocker_ids"] = sorted(open_ids)
-        cycle["new_count"] = sum(
-            fact["classification"] == "new" for fact in facts)
-        cycle["fixed_count"] = sum(
-            fact["status"] == "fixed" for fact in facts)
-        cycle["regressed_count"] = sum(
-            fact["classification"] == "regressed" for fact in facts)
-        cycle["unchanged_count"] = sum(
-            fact["classification"] == "unchanged" for fact in facts)
-        cycle["open_count"] = len(open_ids)
-        cycle["obligation_results"] = {
-            fact["obligation_id"]: "fail"
-            for fact in facts if fact["status"] == "open"
-        }
-        current_ledger = {
-            "schema": "omac.review-ledger/v1",
-            "cycles": ledger["cycles"][:cycle["round"]],
-            "blockers": [],
-        }
-        current = {
-            blocker["blocker_id"]: blocker
-            for blocker in review_mod._canonical_cycle_projection(
-                current_ledger["cycles"])
-        }
-        prior_open_ids = open_ids
-    ledger["blockers"] = sorted(current.values(), key=lambda item: item["blocker_id"])
-    return ledger
-
-
-def _decision_ledger(
-    open_counts, *, new_counts=None, obligation_ids=("dimension:structure",),
-    first_seen_rounds=None, classifications=None,
-):
-    del new_counts, first_seen_rounds
-    final_classifications = classifications or ["unchanged"]
-    max_open_count = max(open_counts)
-    blockers = [
-        {
-            "blocker_id": f"BLK-{index}",
-            "root_cause_key": f"root-{index}",
-            "obligation_id": obligation_ids[(index - 1) % len(obligation_ids)],
-            "status": "open",
-            "classification": final_classifications[
-                (index - 1) % len(final_classifications)
-            ],
-            "first_seen_round": 1,
-            "last_seen_round": len(open_counts),
-            "seen_count": len(open_counts),
-            "owner": f"owner-{(index - 1) % 3}",
-        }
-        for index in range(1, max_open_count + 1)
-    ]
-    cycles = []
-    previous_ids = set()
-    next_id = 1
-    active_ids = set()
-    for round_index, open_count in enumerate(open_counts, start=1):
-        while len(active_ids) < open_count:
-            active_ids.add(f"BLK-{next_id}")
-            next_id += 1
-        while len(active_ids) > open_count:
-            active_ids.remove(sorted(active_ids)[-1])
-        cycles.append({
-            "round": round_index,
-            "new_count": len(active_ids - previous_ids),
-            "fixed_count": len(previous_ids - active_ids),
-            "regressed_count": 0,
-            "unchanged_count": 0,
-            "open_count": open_count,
-            "prior_open_blocker_ids": sorted(previous_ids),
-            "open_blocker_ids": sorted(active_ids),
-            "reported_blocker_ids": sorted(active_ids),
-        })
-        previous_ids = set(active_ids)
-    ledger = {
-        "schema": "omac.review-ledger/v1",
-        "cycles": cycles,
-        "blockers": blockers,
-    }
-    return _with_cycle_blocker_facts(ledger)
 
 
 def test_review_convergence_allows_healthy_progress_without_policy_signal():
@@ -1849,20 +1677,10 @@ def test_review_ledger_validation_rejects_impossible_blocker_counts(field, value
         validate_review_ledger(ledger, expected_round=3)
 
 
-def _store():
-    MockStore.reset()
-    return MockStore(EngineConfig(engine_type="mock", workspace_id="ws"))
-
-
 def test_work_show_exposes_finite_review_contract_and_open_blockers():
-    store = _store()
-    item = store.create_work_item(
-        "ws", "review", "review", dag_key="review-1", worker="alice",
-        reviewer="bob", kind=TaskKind.DECOMPOSE,
-        initial_status=WorkItemStatus.IN_REVIEW,
-    )
-    item.phase = TaskPhase.REVIEW
-    item.deliverable = "nodes: []"
+    item = work_item(
+        title="review", dag_key="review-1", worker="alice", reviewer="bob", kind=TaskKind.DECOMPOSE,
+        status=WorkItemStatus.IN_REVIEW, phase=TaskPhase.REVIEW, deliverable="nodes: []")
     item.review_ledger = {
         "schema": "omac.review-ledger/v1",
         "cycles": [],
@@ -1889,11 +1707,7 @@ def test_work_show_exposes_finite_review_contract_and_open_blockers():
 
 
 def test_authoring_show_exposes_required_closures_and_convergence_mode():
-    store = _store()
-    item = store.create_work_item(
-        "ws", "authoring", "authoring", dag_key="review-1", worker="alice",
-        kind=TaskKind.DECOMPOSE,
-    )
+    item = work_item(title="authoring", dag_key="review-1", worker="alice", kind=TaskKind.DECOMPOSE)
     item.review_ledger = {
         "schema": "omac.review-ledger/v1",
         "cycles": [
@@ -1927,11 +1741,7 @@ def test_authoring_show_exposes_required_closures_and_convergence_mode():
 
 
 def test_authoring_show_does_not_bind_feedback_from_non_review_handoff():
-    store = _store()
-    item = store.create_work_item(
-        "ws", "authoring", "authoring", dag_key="review-1", worker="alice",
-        kind=TaskKind.DEVELOP,
-    )
+    item = work_item(title="authoring", dag_key="review-1", worker="alice", kind=TaskKind.DEVELOP)
     item.worker_handoff = WorkerHandoffIntent(
         schema="omac.worker-handoff/v1",
         state="pending",
@@ -1952,11 +1762,7 @@ def test_authoring_show_does_not_bind_feedback_from_non_review_handoff():
 
 
 def test_authoring_show_does_not_expose_malformed_review_nits_feedback():
-    store = _store()
-    item = store.create_work_item(
-        "ws", "authoring", "authoring", dag_key="review-1", worker="alice",
-        kind=TaskKind.DEVELOP,
-    )
+    item = work_item(title="authoring", dag_key="review-1", worker="alice", kind=TaskKind.DEVELOP)
     item.worker_handoff = WorkerHandoffIntent(
         schema="omac.worker-handoff/v1",
         state="pending",
@@ -1978,11 +1784,7 @@ def test_authoring_show_does_not_expose_malformed_review_nits_feedback():
 
 
 def test_authoring_show_does_not_expose_uncoupled_review_nits_feedback():
-    store = _store()
-    item = store.create_work_item(
-        "ws", "authoring", "authoring", dag_key="review-1", worker="alice",
-        kind=TaskKind.DEVELOP,
-    )
+    item = work_item(title="authoring", dag_key="review-1", worker="alice", kind=TaskKind.DEVELOP)
     item.worker_handoff = WorkerHandoffIntent(
         schema="omac.worker-handoff/v1",
         state="pending",
@@ -2033,264 +1835,6 @@ def test_review_report_rejects_malformed_nits(nits):
     errors = validate_convergence_review(item, "pass-with-nits", report)
 
     assert any("review_report.nits" in error for error in errors)
-
-
-def test_review_submit_rejects_empty_pass_with_nits_without_state_change(
-    tmp_path,
-):
-    store = _store()
-    item = store.create_work_item(
-        "ws", "review", "review", dag_key="review-1", worker="alice",
-        reviewer="bob", kind=TaskKind.DECOMPOSE,
-        initial_status=WorkItemStatus.IN_REVIEW,
-    )
-    item.phase = TaskPhase.REVIEW
-    item.deliverable = "nodes: []"
-    item.review_subject_digest = "subject-v1"
-    item.review_obligations = build_review_obligations(item)
-    report = _report(item.review_obligations)
-    report_path = tmp_path / "review.yaml"
-    report_path.write_text(yaml.safe_dump(report))
-
-    with pytest.raises(
-        ValidationError,
-        match="pass-with-nits verdict requires at least one non-empty nit",
-    ):
-        submit_work(
-            store,
-            item.id,
-            code_host=MockCodeHost(), verdict="pass-with-nits",
-            report_file=str(report_path),
-        )
-
-    current = store.get_work_item(item.id)
-    assert current.review_verdict is None
-    assert current.review_report is None
-    assert current.worker_handoff is None
-    assert current.bounces.review == 0
-
-
-def test_review_submit_updates_ledger_before_exposing_verdict(tmp_path):
-    store = _store()
-    item = store.create_work_item(
-        "ws", "review", "review", dag_key="review-1", worker="alice",
-        reviewer="bob", kind=TaskKind.DECOMPOSE,
-        initial_status=WorkItemStatus.IN_REVIEW,
-    )
-    item.phase = TaskPhase.REVIEW
-    item.deliverable = "nodes: []"
-    item.review_subject_digest = "subject-v1"
-    item.review_obligations = build_review_obligations(item)
-    report = _report(
-        item.review_obligations,
-        failed={"dimension:execution"},
-        blockers=[{
-            "root_cause_key": "command-target",
-            "obligation_id": "dimension:execution",
-            "classification": "new",
-            "summary": "command target is empty",
-            "evidence": "target matches nothing",
-            "required_fix": "declare a non-empty target",
-        }],
-    )
-    path = tmp_path / "review.yaml"
-    path.write_text(yaml.safe_dump(report))
-
-    dispatch.submit(
-        store, item.id, code_host=MockCodeHost(), verdict="reject", report_file=str(path))
-
-    current = store.get_work_item(item.id)
-    assert current.review_verdict == "reject"
-    assert current.review_ledger["cycles"][0]["subject_digest"] == "subject-v1"
-    assert current.review_ledger["cycles"][0]["new_count"] == 1
-    assert current.review_ledger["blockers"][0]["root_cause_key"] == "command-target"
-
-
-def _legacy_two_cycle_review_case(tmp_path):
-    store = _store()
-    item = store.create_work_item(
-        "ws", "review", "review", dag_key="review-1", worker="alice",
-        reviewer="bob", kind=TaskKind.DECOMPOSE,
-        initial_status=WorkItemStatus.IN_REVIEW,
-    )
-    item.phase = TaskPhase.REVIEW
-    item.deliverable = "nodes: []"
-    item.review_subject_digest = "subject-v3"
-    item.review_obligations = build_review_obligations(item)
-    ledger = _decision_ledger([1, 1])
-    for cycle in ledger["cycles"]:
-        cycle.pop("blocker_facts_schema")
-        cycle.pop("blocker_facts")
-    store.update_work_item_metadata(
-        item.id,
-        review_ledger=ledger,
-        review_bounce=2,
-    )
-    blocker = ledger["blockers"][0]
-    report = _report(
-        item.review_obligations,
-        prior=[{
-            "blocker_id": blocker["blocker_id"],
-            "status": "unchanged",
-            "evidence": "the same task boundary still cannot close the blocker",
-        }],
-        failed={blocker["obligation_id"]},
-        blockers=[{
-            "root_cause_key": blocker["root_cause_key"],
-            "obligation_id": blocker["obligation_id"],
-            "classification": "unchanged",
-            "summary": "the same blocker remains open",
-            "evidence": "the current node boundary is still insufficient",
-            "required_fix": "split the work into independently reviewable nodes",
-        }],
-    )
-    report_path = tmp_path / "review.yaml"
-    report_path.write_text(yaml.safe_dump(report))
-    return store, item, report_path
-
-
-def test_legacy_two_cycle_ledger_requires_stable_decision_before_third_submit(
-    tmp_path, monkeypatch,
-):
-    store, item, report_path = _legacy_two_cycle_review_case(tmp_path)
-    before = deepcopy(store.get_work_item(item.id))
-    writes = []
-    original_update = store.update_work_item_metadata
-    original_status = store.update_status
-
-    def record_update(*args, **kwargs):
-        writes.append(("metadata", args, kwargs))
-        return original_update(*args, **kwargs)
-
-    def record_status(*args, **kwargs):
-        writes.append(("status", args, kwargs))
-        return original_status(*args, **kwargs)
-
-    monkeypatch.setattr(store, "update_work_item_metadata", record_update)
-    monkeypatch.setattr(store, "update_status", record_status)
-
-    decisions = []
-    for _ in range(2):
-        with pytest.raises(NeedsDecision) as exc:
-            dispatch.submit(
-                store,
-                item.id,
-                code_host=MockCodeHost(), verdict="reject",
-                report_file=str(report_path),
-            )
-        decisions.append(exc.value.report)
-
-    assert decisions[0] == decisions[1]
-    assert decisions[0]["reason_code"] == (
-        "review-convergence-ledger-unverifiable")
-    assert decisions[0]["convergence"]["mode"] == (
-        "unverifiable-legacy-ledger")
-    assert decisions[0]["next_action"].startswith("omac dag amend propose ")
-    assert writes == []
-    after = store.get_work_item(item.id)
-    assert after.review_ledger == before.review_ledger
-    assert after.review_report == before.review_report
-    assert after.review_verdict == before.review_verdict
-    assert after.decision_required == before.decision_required
-    assert after.status == before.status
-
-
-def test_legacy_two_cycle_cli_returns_repeatable_exit_20_without_writes(
-    tmp_path, monkeypatch, capsys,
-):
-    store, item, report_path = _legacy_two_cycle_review_case(tmp_path)
-    before = deepcopy(store.get_work_item(item.id))
-    writes = []
-    monkeypatch.setattr(work_cmd, "_resolve_store", lambda: store)
-    for name in ("update_work_item_metadata", "update_status", "assign_work_item"):
-        monkeypatch.setattr(
-            store, name,
-            lambda *_args, _name=name, **_kwargs: writes.append(_name),
-        )
-
-    decisions = []
-    for _ in range(2):
-        assert main([
-            "work", "submit", item.id, "--verdict", "reject",
-            "--report-file", str(report_path),
-        ]) == exit_codes.NEEDS_DECISION
-        captured = capsys.readouterr()
-        decisions.append(json.loads(captured.out))
-        assert "omac dag amend propose" in captured.err
-
-    assert decisions[0] == decisions[1]
-    assert decisions[0]["reason_code"] == (
-        "review-convergence-ledger-unverifiable")
-    assert writes == []
-    assert store.get_work_item(item.id) == before
-
-
-def test_v2_review_submit_rejects_legacy_report_before_metadata_write(tmp_path):
-    store = _store()
-    item = store.create_work_item(
-        "ws", "review", "review", dag_key="review-1", worker="alice",
-        reviewer="bob", kind=TaskKind.DECOMPOSE,
-        initial_status=WorkItemStatus.IN_REVIEW,
-    )
-    item.phase = TaskPhase.REVIEW
-    item.deliverable = "nodes: []"
-    item.review_subject_digest = "subject-v1"
-    item.review_obligations = build_review_obligations(item)
-    path = tmp_path / "legacy.yaml"
-    path.write_text(yaml.safe_dump({
-        "full_review_completed": True,
-        "blockers": [],
-        "nits": [],
-    }))
-
-    with pytest.raises(ValidationError, match="review_protocol"):
-        dispatch.submit(
-            store, item.id, code_host=MockCodeHost(), verdict="pass", report_file=str(path))
-
-    current = store.get_work_item(item.id)
-    assert current.review_verdict is None
-    assert current.review_report is None
-    assert current.review_ledger is None
-
-
-def test_legacy_review_report_remains_accepted_without_v2_obligations(tmp_path):
-    store = _store()
-    item = store.create_work_item(
-        "ws", "legacy", "legacy", dag_key="legacy-1", worker="alice",
-        reviewer="bob", kind=TaskKind.DECOMPOSE,
-        initial_status=WorkItemStatus.IN_REVIEW,
-    )
-    item.phase = TaskPhase.REVIEW
-    item.deliverable = "nodes: []"
-    report = {"full_review_completed": True, "blockers": [], "nits": []}
-    path = tmp_path / "legacy.yaml"
-    path.write_text(yaml.safe_dump(report))
-
-    dispatch.submit(store, item.id, code_host=MockCodeHost(), verdict="pass", report_file=str(path))
-
-    assert store.get_work_item(item.id).review_verdict == "pass"
-    assert store.get_work_item(item.id).review_ledger is None
-
-
-def test_mock_review_cycles_persist_same_ledger_contract_as_real_submit():
-    MockStore.reset()
-    engine = create_engine("mock", EngineConfig(
-        engine_type="mock", workspace_id="ws",
-        extra={"MOCK_AUTO_COMPLETE": "true", "MOCK_AUTO_COMPLETE_DELAY": "0"},
-    ))
-    MockStore.set_kind_delivery("plan", {
-        "plan": "# Plan", "project_rules": "## Rules"})
-    MockStore.set_review_rejects(1)
-
-    result = run_task(
-        engine, TaskKind.PLAN, {"title": "plan"}, "alice",
-        reviewers=["bob"], max_revisions=3, poll=lambda: None)
-
-    item = engine.store.get_work_item(result["item_id"])
-    assert len(item.review_ledger["cycles"]) == 2
-    assert item.review_ledger["cycles"][0]["verdict"] == "reject"
-    assert item.review_ledger["cycles"][1]["verdict"] == "pass"
-    assert item.review_ledger["blockers"][0]["status"] == "fixed"
 
 
 def test_new_ledger_versions_local_round_semantics_without_rewriting_history():

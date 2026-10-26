@@ -121,3 +121,11 @@ def failed_handoff_intent() -> dict:
         "baseline_pr_head_sha": _hex("head")[:40], "target_run_id": None,
         "target_worker_bounce": 20, "terminal_observed_at": None,
     }
+
+
+def work_item(**fields):
+    """A WorkItem as the Store would return it, with only the fields a test cares about set."""
+    from omac.core.workitem import WorkItem, WorkItemStatus
+
+    base = dict(id="item-1", workspace_id="ws", title="t", description="d", status=WorkItemStatus.TODO, dag_key="dag-1")
+    return WorkItem(**{**base, **fields})
