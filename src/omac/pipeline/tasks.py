@@ -630,6 +630,8 @@ def _pristine_amendment_activity_projection(item: WorkItem) -> Dict[str, Any]:
             continue
         default = _field_default(definition)
         value = getattr(item, name)
+        if default is None and value == "":
+            continue  # clear_assignment() writes an empty string for "no reviewer"; that is the initial state
         if default is _NO_FIELD_DEFAULT or value != default:
             projection[name] = value
     for name in set(vars(item)) - set(definitions):
@@ -934,6 +936,31 @@ def _resume_reviewer_completed_without_verdict(
     return verified
 
 
+def _is_unstarted_authoring(item: WorkItem) -> bool:
+    """No delivery and no stopped Run on record: the issue may be refreshed in place when it is resumed."""
+    return bool(
+        item.status == WorkItemStatus.TODO
+        and item.phase == TaskPhase.AUTHORING
+        and not item.deliverable
+        and not item.deliverable_ref
+        and not item.agent_run_failed
+        and not item.agent_run_finished_without_submit
+    )
+
+
+def _is_stopped_authoring_with_delivery(item: WorkItem) -> bool:
+    """A delivery is already present and the authoring Run stopped: resuming it in place would be unsafe."""
+    return bool(
+        item.phase == TaskPhase.AUTHORING
+        and item.deliverable
+        and (
+            item.status in (WorkItemStatus.FAILED, WorkItemStatus.BLOCKED)
+            or item.agent_run_failed
+            or item.agent_run_finished_without_submit
+        )
+    )
+
+
 def _guard_resume_authoring_terminal_run(
     engine, item: WorkItem, kind: TaskKind,
 ) -> WorkItem:
@@ -1101,14 +1128,7 @@ class _TaskRun:
                 self.spec.contract = self.contract
             item = _resume_reviewer_completed_without_verdict(self.engine, item, self.kind)
             item = _guard_resume_authoring_terminal_run(self.engine, item, self.kind)
-            if (
-                item.status == WorkItemStatus.TODO
-                and item.phase == TaskPhase.AUTHORING
-                and not item.deliverable
-                and not item.deliverable_ref
-                and not item.agent_run_failed
-                and not item.agent_run_finished_without_submit
-            ):
+            if _is_unstarted_authoring(item):
                 item = refresh_authoring_task(
                     self.engine, item.id, self.spec, item_snapshot=item)
             self.item_id = item.id
@@ -1219,16 +1239,7 @@ class _TaskRun:
             self.resumed_confirmation = _resume_amendment_nits_confirmation(
                 self.engine, item, self.contract)
 
-        if (
-            self.resume_item_id is not None
-            and item.phase == TaskPhase.AUTHORING
-            and item.deliverable
-            and (
-                item.status in (WorkItemStatus.FAILED, WorkItemStatus.BLOCKED)
-                or item.agent_run_failed
-                or item.agent_run_finished_without_submit
-            )
-        ):
+        if self.resume_item_id is not None and _is_stopped_authoring_with_delivery(item):
             next_action, recovery = _new_attempt_recovery(self.kind, item.id)
             raise NeedsDecision(
                 ui(

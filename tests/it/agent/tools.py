@@ -27,7 +27,7 @@ def omac(*args):
 def show(issue):
     done = omac("work", "show", issue, "--output", "json")
     if done.returncode:
-        sys.exit(f"work show failed: {done.stderr[-400:]}")
+        sys.exit(f"work show failed ({done.returncode}): {done.stderr[-400:]}{done.stdout[-400:]}")
     return json.loads(done.stdout)
 
 

@@ -30,6 +30,18 @@ def stalled(cycle_count: int = 3, *, classification: str = "unchanged") -> dict:
     return ledger
 
 
+def churning(cycle_count: int) -> dict:
+    """Every cycle fixes the previous blocker and finds a different one: never stalled, one open blocker throughout."""
+    ledger = None
+    for index in range(1, cycle_count + 1):
+        prior = [{"blocker_id": b["blocker_id"], "status": "fixed", "evidence": "regression check passed"}
+                 for b in review_mod.open_blockers(ledger)]
+        ledger = advance_review_ledger(
+            ledger, _report(f"review-{index}", "the reviewer found a blocker", "new", prior), verdict="reject",
+            subject_digest=f"subject-{index}", round_index=index)
+    return ledger
+
+
 def late_scope() -> dict:
     """Five clean passes, then a new blocker root in cycle six."""
     ledger = None
