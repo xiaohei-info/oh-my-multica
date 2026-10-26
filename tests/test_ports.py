@@ -11,9 +11,8 @@ from omac.engines.runtime import AgentRuntime
 from omac.engines.store import WorkItemStore
 
 
-@pytest.mark.parametrize("engine_type", ["mock", "multica"])
-def test_engine_combines_one_complete_adapter_per_port(engine_type):
-    engine = create_engine(engine_type, EngineConfig(engine_type=engine_type, workspace_id="ws"))
+def test_engine_combines_one_complete_adapter_per_port():
+    engine = create_engine("multica", EngineConfig(engine_type="multica", workspace_id="ws"))
     assert isinstance(engine.store, WorkItemStore) and not inspect.isabstract(type(engine.store))
     assert isinstance(engine.runtime, AgentRuntime) and not inspect.isabstract(type(engine.runtime))
     assert isinstance(engine.code_host, CodeHost) and not inspect.isabstract(type(engine.code_host))

@@ -24,7 +24,7 @@ from omac.errors import ValidationError
 # ==================== resolve_retry 合并 + 校验 ====================
 
 def test_resolve_retry_defaults_when_missing():
-    assert config_mod.resolve_retry({"engine": "mock"}) == {
+    assert config_mod.resolve_retry({"engine": "multica"}) == {
         "worker": 3, "ci": 3, "review": 3, "merge": 3}
 
 
@@ -120,35 +120,20 @@ def test_resolve_workflow_rejects_non_bool():
 
 # ==================== init 生成含 retry 块 ====================
 
-def test_init_writes_retry_block(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    code = main([
-        "init", "--engine", "mock", "--workspace", "mock-workspace",
-        "--planner", "alice", "--orchestrator", "bob",
-        "--workers", "charlie", "--reviewers", "alice",
-    ])
-    assert code == exit_codes.OK
-    cfg = config_mod.load_config()
-    assert cfg["retry"] == {"worker": 3, "ci": 3, "review": 3, "merge": 3}
-    # DEFAULT_MAX_ROUNDS 与 acceptance.max_rounds 同源,无重复 authority(Nit 6)
-    assert cfg["acceptance"] == {"max_rounds": config_mod.DEFAULT_MAX_ROUNDS}
-    assert cfg["acceptance"]["max_rounds"] == 3
-    assert cfg["workflow"] == config_mod.DEFAULT_WORKFLOW
-    assert cfg["reconcile"] == config_mod.DEFAULT_RECONCILE
 
 
 # ==================== config get/set 可读写 retry ====================
 
 def test_config_get_retry_review(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "engine", "multica"])
     main(["config", "set", "retry.review", "5"])
     assert main(["config", "get", "retry.review"]) == exit_codes.OK
 
 
 def test_config_set_roundtrip(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "engine", "multica"])
     main(["config", "set", "retry.ci", "1"])
     capsys.readouterr()
     assert main(["config", "get", "retry.ci"]) == exit_codes.OK
@@ -158,7 +143,7 @@ def test_config_set_roundtrip(tmp_path, monkeypatch, capsys):
 def test_config_set_negative_retry_rejected(tmp_path, monkeypatch, capsys):
     """负数 retry 被校验期拒绝 → exit 5。"""
     monkeypatch.chdir(tmp_path)
-    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "engine", "multica"])
     code = main(["config", "set", "retry.merge", "-2"])
     assert code == exit_codes.VALIDATION
     err = capsys.readouterr().err
@@ -167,7 +152,7 @@ def test_config_set_negative_retry_rejected(tmp_path, monkeypatch, capsys):
 
 def test_config_set_invalid_reconcile_value_rejected(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "engine", "multica"])
     code = main(["config", "set", "reconcile.full_scan_interval_ticks", "0"])
     assert code == exit_codes.VALIDATION
     assert "must be >= 1" in capsys.readouterr().err
@@ -183,8 +168,9 @@ def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
     (tmp_path / ".omac").mkdir()
     with open(tmp_path / ".omac" / "config.yaml", "w") as f:
         yaml.dump({
-            "engine": "mock",
+            "engine": "multica",
             "workspace": "ws",
+            "project": "p1",
             "retry": {"worker": 3, "ci": 0, "review": 1, "merge": 2},
         }, f)
     manifest = tmp_path / ".omac" / "m.yaml"
@@ -205,6 +191,7 @@ def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
         return TickResult(state="converged", done=["a"])
 
     monkeypatch.setattr(dag_cmd, "tick", fake_tick)
+    monkeypatch.setattr(dag_cmd, "ensure_config_synced", lambda *a, **k: None)   # git push of the config: not under test
 
     assert main(["dag", "tick", str(manifest)]) == exit_codes.OK
     assert seen["retry_limits"] == {"worker": 3, "ci": 0, "review": 1, "merge": 2}
@@ -215,13 +202,13 @@ def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
 
 def test_plan_resolve_review_rounds_default(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "engine", "multica"])
     assert plan_cmd.resolve_review_rounds(config_mod.load_config()) == 3
 
 
 def test_plan_resolve_review_rounds_configurable(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "engine", "multica"])
     main(["config", "set", "retry.review", "7"])
     cfg = config_mod.load_config()
     assert plan_cmd.resolve_review_rounds(cfg) == 7
@@ -238,7 +225,7 @@ def test_plan_resolve_review_rounds_rejects_negative(tmp_path, monkeypatch):
 def test_resolve_no_submit_runs_defaults_when_missing():
     """未配置时保持历史硬编码预算 2,平台默认行为不变。"""
     assert config_mod.resolve_no_submit_runs({}) == 2
-    assert config_mod.resolve_no_submit_runs({"engine": "mock"}) == 2
+    assert config_mod.resolve_no_submit_runs({"engine": "multica"}) == 2
     # retry 块存在但未写 no_submit_runs → 仍是默认 2
     assert config_mod.resolve_no_submit_runs({"retry": {"review": 5}}) == 2
 
@@ -279,7 +266,7 @@ def test_resolve_retry_still_ignores_no_submit_runs_key():
 def test_config_set_no_submit_runs_rejects_zero(tmp_path, monkeypatch, capsys):
     """非法值在 config set 校验期被拒(exit 5),不落盘。"""
     monkeypatch.chdir(tmp_path)
-    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "engine", "multica"])
     code = main(["config", "set", "retry.no_submit_runs", "0"])
     assert code == exit_codes.VALIDATION
     err = capsys.readouterr().err
@@ -290,7 +277,7 @@ def test_config_set_no_submit_runs_rejects_zero(tmp_path, monkeypatch, capsys):
 
 def test_config_set_no_submit_runs_rejects_non_int(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "engine", "multica"])
     code = main(["config", "set", "retry.no_submit_runs", "1.5"])
     assert code == exit_codes.VALIDATION
     assert "no_submit_runs" in capsys.readouterr().err
@@ -298,7 +285,7 @@ def test_config_set_no_submit_runs_rejects_non_int(tmp_path, monkeypatch, capsys
 
 def test_config_set_no_submit_runs_accepts_positive(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    main(["config", "set", "engine", "mock"])
+    main(["config", "set", "engine", "multica"])
     assert main(["config", "set", "retry.no_submit_runs", "6"]) == exit_codes.OK
     capsys.readouterr()
     assert config_mod.load_config()["retry"]["no_submit_runs"] == 6

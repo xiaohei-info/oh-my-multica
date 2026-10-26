@@ -70,42 +70,8 @@ def test_default_english_runtime_messages_have_no_chinese(
     assert re.search(r"[\u4e00-\u9fff]", rendered) is None
 
 
-def test_non_interactive_init_persists_english_language(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-
-    assert main([
-        "init",
-        "--engine", "mock",
-        "--workspace", "mock-workspace",
-        "--planner", "alice",
-        "--orchestrator", "bob",
-        "--workers", "charlie",
-        "--reviewers", "alice",
-    ]) == exit_codes.OK
-
-    from omac.core import config as config_mod
-    assert config_mod.load_config()["language"] == "en"
 
 
-def test_non_interactive_init_default_output_is_english(
-    tmp_path, monkeypatch, capsys,
-):
-    monkeypatch.chdir(tmp_path)
-
-    assert main([
-        "init",
-        "--engine", "mock",
-        "--workspace", "mock-workspace",
-        "--planner", "alice",
-        "--orchestrator", "bob",
-        "--workers", "charlie",
-        "--reviewers", "alice",
-    ]) == exit_codes.OK
-
-    captured = capsys.readouterr()
-    rendered = captured.out + captured.err
-    assert "Configuration written" in rendered
-    assert re.search(r"[\u4e00-\u9fff]", rendered) is None
 
 
 def test_init_engine_prompt_uses_selected_language(monkeypatch):
