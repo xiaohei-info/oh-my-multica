@@ -12,6 +12,7 @@ WorkItemStore/AgentRuntime 接口,绝不直接 shell 平台 CLI)。
 """
 from __future__ import annotations
 
+import uuid
 from typing import Callable, Optional
 
 from ..core.review_preflight import run_manifest_preflight
@@ -22,7 +23,7 @@ from ..i18n import ui
 from .dispatch import reviewer_dispatch_stopped
 from .apply import Ports, apply, apply_one
 from .decide_transitions import block_if_needed
-from .decide_effects import CreateWorkItem, DispatchReviewer, UpdateMetadata, UpdateStatus
+from .decide_effects import Assign, CreateWorkItem, UpdateMetadata, UpdateStatus, Wake
 
 
 def _dispatch_blocked(store, item_id: str, current) -> NeedsDecision:
@@ -75,7 +76,7 @@ def _start_review(engine, workspace_id: str, title: str, body, reviewer: str,
         'workspace_id': workspace_id,
         'title': title,
         'description': title if callable(body) else body,
-        'dag_key': "plan-check",
+        'dag_key': f"plan-check-{uuid.uuid4().hex[:8]}",  # one per check: a fixed key made the second check in a workspace fail
         'worker': reviewer,
         'kind': TaskKind.DECOMPOSE,
     }), Ports(store=store))
@@ -98,9 +99,11 @@ def _start_review(engine, workspace_id: str, title: str, body, reviewer: str,
     current = store.observe_work_item_control(item.id).work_item
     if reviewer_dispatch_stopped(current):
         raise _dispatch_blocked(store, item.id, current)
-    if not apply_one(DispatchReviewer(item.id, reviewer), Ports(store=store, runtime=runtime)):
-        raise _dispatch_blocked(
-            store, item.id, store.observe_work_item_control(item.id).work_item)
+    # A review issue has no earlier Run for a suppressed assignment to rerun, so the assignment itself must start it.
+    apply([Assign(item.id, reviewer, "reviewer"), Wake(item.id, reviewer, "reviewer")], Ports(store=store, runtime=runtime))
+    current = store.observe_work_item_control(item.id).work_item
+    if reviewer_dispatch_stopped(current):
+        raise _dispatch_blocked(store, item.id, current)
     return item.id
 
 

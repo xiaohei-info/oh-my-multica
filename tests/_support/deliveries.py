@@ -40,7 +40,7 @@ def review_report_for(context: dict, verdict: str, round_index: int = 1, *, repe
     contract = _load_contract(context["contract"]) if context.get("contract") else None
     failed = "dimension:structure" if verdict == "reject" else None
     return {
-        "review_protocol": context["review_protocol"],
+        **({"review_protocol": context["review_protocol"]} if "review_protocol" in context else {}),   # a standalone manifest review has none
         "obligation_results": [
             {"obligation_id": o["obligation_id"], "status": "fail" if o["obligation_id"] == failed else "pass",
              "evidence": "covered"}
