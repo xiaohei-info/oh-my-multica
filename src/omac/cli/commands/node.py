@@ -245,13 +245,13 @@ def _recover_delayed_reviewer_submission(
     manifest, node_key: str, node, engine, current, manifest_path: str,
 ) -> bool:
     """Bind a delayed-visible Reviewer Run without replaying either role."""
-    from ...pipeline.loop import (
-        _classify_reviewer_recovery_decision,
-        _delayed_reviewer_recovery_marker_error,
+    from ...pipeline.decide_recovery import (
+        classify_reviewer_recovery_decision,
+        delayed_reviewer_recovery_marker_error,
     )
     from ...pipeline.decide_runs import formal_dispatch_target, observe_direct_run_attempt
 
-    decision_class = _classify_reviewer_recovery_decision(
+    decision_class = classify_reviewer_recovery_decision(
         manifest_path, node_key, current)
     retry = f"omac node retry {manifest_path} {node.id} --stage review"
 
@@ -303,7 +303,7 @@ def _recover_delayed_reviewer_submission(
 
     # Reuse the controller's direct-Run matcher. It proves direct kind, target
     # agent, strict cutoff, baseline exclusion, usable time, and uniqueness.
-    marker_error = _delayed_reviewer_recovery_marker_error(
+    marker_error = delayed_reviewer_recovery_marker_error(
         manifest, manifest_path, node_key, current,
         node.reviewer, reviewer_id,
         require_target=False,
@@ -643,10 +643,10 @@ def _accept_nits_check_delivery(manifest, node_key: str, item) -> None:
     # adapts arguments; all platform facts still come from Store/Runtime.
     from ...pipeline.loop import (
         _control_matches_delivery_identity,
-        _review_subject_for_current_delivery,
+        review_subject_for_current_delivery,
     )
 
-    if item.review_subject_digest != _review_subject_for_current_delivery(manifest, node_key, item):
+    if item.review_subject_digest != review_subject_for_current_delivery(manifest, node_key, item):
         raise ValidationError(ui(
             "The pass-with-nits verdict is bound to a stale review subject; "
             "run `omac node retry` to start a fresh delivery.",

@@ -904,7 +904,7 @@ def _provisional_reviewer_decision_fixture(
         current.delivery_identity,
         verification_created_at=cutoff,
     )
-    subject = loop._review_subject_for_current_delivery(
+    subject = loop.review_subject_for_current_delivery(
         manifest, "a", replace(current, delivery_identity=identity))
     baseline = replace(
         current.reviewer_run_baseline,

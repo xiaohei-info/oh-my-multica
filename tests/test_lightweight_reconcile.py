@@ -1828,7 +1828,7 @@ def test_running_delivery_hydration_preserves_digest_identity_and_subject_bindin
     observed = store.hydrate_work_item_evidence(projection, plan)
 
     assert observed.verification == verification
-    assert loop._review_subject_is_current(
+    assert loop.review_subject_is_current(
         Manifest(meta={}, nodes={item_id: Node(
             id=item_id, worker="worker", reviewer="reviewer",
             work_item_id=item_id, status="in_review")}),
