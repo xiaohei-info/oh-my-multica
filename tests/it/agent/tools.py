@@ -3,12 +3,15 @@ issue text tells a real agent to, and submit through `omac work submit` (OMAC is
 
 usage: tools.py worker-submit [--no-push] [--empty-commands] <issue> | reviewer-submit [--repeat] <verdict> <issue> | dump <issue>
 """
+import contextlib
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # tests/ -> _support
 
@@ -19,9 +22,15 @@ from omac.core.manifest import _load_contract  # noqa: E402
 
 
 def omac(*args):
+    """`omac <args>` through the entry point the console script calls, in this process: a second Python start costs more than the command."""
+    from omac.cli.main import main
+
     # The daemon puts its own directory ahead of ours on PATH; the shim dir must win so `gh` is the test shim.
-    env = {**os.environ, "PATH": os.environ["OMAC_FAKE_BIN"] + os.pathsep + os.environ["PATH"]}
-    return subprocess.run([sys.executable, "-m", "omac", *args], capture_output=True, text=True, env=env)
+    os.environ["PATH"] = os.environ["OMAC_FAKE_BIN"] + os.pathsep + os.environ["PATH"]
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = main(list(args))
+    return SimpleNamespace(returncode=code, stdout=out.getvalue(), stderr=err.getvalue())
 
 
 def show(issue):

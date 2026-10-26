@@ -84,7 +84,7 @@ def poll_for(seconds=120):
     def poll():
         if time.time() > deadline:
             raise AssertionError(f"still waiting after {seconds}s")
-        time.sleep(0.3)
+        time.sleep(0.1)
     return poll
 
 

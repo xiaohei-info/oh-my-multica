@@ -132,7 +132,7 @@ class Kit:
             value = predicate()
             if value:
                 return value
-            time.sleep(0.3)
+            time.sleep(0.1)
         raise AssertionError(f"timed out waiting for {what}")
 
     # ---- arrangement through the real store

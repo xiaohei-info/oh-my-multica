@@ -34,7 +34,7 @@ def run(kit, kind: TaskKind, payload: dict, assignee: str, *, timeout: float = 9
     def poll():
         if time.time() > deadline:
             raise AssertionError(f"run_task still waiting after {timeout}s")
-        time.sleep(0.3)
+        time.sleep(0.1)
 
     kwargs.setdefault("poll", poll)
     return tasks.run_task(kit.engine, kind, payload, assignee, **kwargs)

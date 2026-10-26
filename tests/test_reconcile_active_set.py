@@ -35,67 +35,30 @@ def _manifest(**nodes_by_status) -> Manifest:
     return Manifest(meta={"name": "active-set"}, nodes=nodes)
 
 
+CLOSED = {"merged": True, "merged_at": "2026-01-01T00:00:00Z"}
+
+# (status, extra node facts, active?): the membership rule of loop.reconcile_active_keys for one node that has a work item.
+MEMBERSHIP = [
+    *[(status, {}, True) for status in sorted(loop.RUNNING_STATUSES)],            # a running node always needs its observation
+    ("todo", {}, True),                                                          # about to be dispatched: stale projections must not be trusted
+    ("blocked", {}, False), ("failed", {}, False),                               # without a recovery marker they are static
+    ("blocked", {"recovery_marker": True}, True), ("failed", {"recovery_marker": True}, True),
+    ("done", CLOSED, False),                                                     # merge confirmed: static
+    ("done", {**CLOSED, "recovery_marker": True}, True),                         # stays active until an authoritative read proves the marker stale
+    ("done", {}, True),                                                          # PR closure is still to be observed
+    ("done", {**CLOSED, "merge_request_state": "requested"}, True),              # an open merge request
+    ("abandoned", {}, False), ("abandoned", {"recovery_marker": True}, False),   # never active, marker or not
+    ("cancelled", {}, True),                                                     # an unknown status stays active: the generic platform sync must not be lost
+]
+
+
+@pytest.mark.parametrize(("status", "extra", "active"), MEMBERSHIP, ids=[
+    f"{status}{'+' + '+'.join(sorted(extra)) if extra else ''}-{'active' if active else 'static'}" for status, extra, active in MEMBERSHIP])
+def test_membership_of_the_active_set(status, extra, active):
+    assert loop.reconcile_active_keys(_manifest(node=(status, extra))) == ({"node"} if active else set())
+
+
 class TestReconcileActiveKeys:
-    """活跃集选择函数 loop.reconcile_active_keys 的成员规则。"""
-
-    @pytest.mark.parametrize(
-        "status", sorted(loop.RUNNING_STATUSES))
-    def test_running_nodes_are_always_active(self, status):
-        manifest = _manifest(node=(status, {}))
-        assert loop.reconcile_active_keys(manifest) == {"node"}
-
-    def test_todo_nodes_are_active_for_stale_projection_protection(self):
-        manifest = _manifest(node=("todo", {}))
-        assert loop.reconcile_active_keys(manifest) == {"node"}
-
-    @pytest.mark.parametrize("status", ["blocked", "failed"])
-    def test_failed_nodes_without_marker_are_static(self, status):
-        manifest = _manifest(node=(status, {}))
-        assert loop.reconcile_active_keys(manifest) == set()
-
-    @pytest.mark.parametrize("status", ["blocked", "failed"])
-    def test_failed_nodes_with_recovery_marker_are_active(self, status):
-        manifest = _manifest(node=(status, {"recovery_marker": True}))
-        assert loop.reconcile_active_keys(manifest) == {"node"}
-
-    def test_confirmed_merge_closed_done_is_static(self):
-        manifest = _manifest(node=(
-            "done", {"merged": True, "merged_at": "2026-01-01T00:00:00Z"}))
-        assert loop.reconcile_active_keys(manifest) == set()
-
-    def test_confirmed_merge_closed_done_with_marker_stays_active_until_observed(self):
-        manifest = _manifest(node=(
-            "done", {
-                "merged": True,
-                "merged_at": "2026-01-01T00:00:00Z",
-                "recovery_marker": True,
-            }))
-        # Interval and full-scan reconciliation both stay conservative until
-        # an authoritative control read proves that the marker is stale.
-        assert loop.reconcile_active_keys(manifest) == {"node"}
-
-    def test_done_without_merge_closure_is_active_for_pr_observation(self):
-        manifest = _manifest(node=("done", {}))
-        assert loop.reconcile_active_keys(manifest) == {"node"}
-
-    def test_done_with_open_merge_request_is_active(self):
-        manifest = _manifest(node=(
-            "done",
-            {
-                "merged": True,
-                "merged_at": "2026-01-01T00:00:00Z",
-                "merge_request_state": "requested",
-            },
-        ))
-        assert loop.reconcile_active_keys(manifest) == {"node"}
-
-    def test_abandoned_is_never_active_even_with_marker(self):
-        manifest = _manifest(
-            plain=("abandoned", {}),
-            marked=("abandoned", {"recovery_marker": True}),
-        )
-        assert loop.reconcile_active_keys(manifest) == set()
-
     def test_nodes_without_work_item_are_never_active(self):
         manifest = Manifest(meta={}, nodes={
             "a": Node(id="a", worker="worker", status="in_progress"),
@@ -103,10 +66,6 @@ class TestReconcileActiveKeys:
         })
         assert loop.reconcile_active_keys(manifest) == set()
 
-    def test_unknown_status_stays_active_to_preserve_generic_sync(self):
-        """非标准状态保守进活跃集,避免静默丢失通用平台同步分支。"""
-        manifest = _manifest(node=("cancelled", {}))
-        assert loop.reconcile_active_keys(manifest) == {"node"}
 
     def test_dispatch_candidates_are_covered_by_todo_rule(self):
         """依赖刚满足、本轮将被 dispatch 的节点是 ready(todo)节点,必在集合中。"""

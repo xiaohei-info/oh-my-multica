@@ -270,7 +270,7 @@ def test_formal_run_attribution_kinds_on_real_server(engine, store, stack):
         direct = [r for r in engine.runtime.list_runs(item.id) if r.kind == "direct"]
         if direct and all(r.terminal for r in direct):
             break
-        time.sleep(0.3)
+        time.sleep(0.1)
     assert direct, "assigning the issue to a scripted agent produced no direct Run"
     assert {r.trigger_kind for r in direct} <= {"issue_assignment", "rerun"}
     assert all(r.formal for r in direct)

@@ -23,37 +23,23 @@ from omac.errors import ValidationError
 
 # ==================== resolve_retry 合并 + 校验 ====================
 
-def test_resolve_retry_defaults_when_missing():
-    assert config_mod.resolve_retry({"engine": "multica"}) == {
-        "worker": 3, "ci": 3, "review": 3, "merge": 3}
+ALL_THREE = {"worker": 3, "ci": 3, "review": 3, "merge": 3}
 
 
-def test_resolve_retry_merges_partial_override():
-    cfg = {"retry": {"review": 5}}
-    assert config_mod.resolve_retry(cfg) == {
-        "worker": 3, "ci": 3, "review": 5, "merge": 3}
+@pytest.mark.parametrize(("config", "expected"), [
+    ({"engine": "multica"}, ALL_THREE),                                                            # missing: the defaults
+    ({"retry": {"review": 5}}, {**ALL_THREE, "review": 5}),                                        # a partial override merges
+    ({"retry": {"worker": 0, "ci": 0, "review": 0, "merge": 0}}, dict.fromkeys(ALL_THREE, 0)),     # zero is valid
+    ({"retry": {"review": 2, "bogus": 9}}, {**ALL_THREE, "review": 2}),                            # an unknown key is ignored
+])
+def test_resolve_retry_merges_over_the_defaults(config, expected):
+    assert config_mod.resolve_retry(config) == expected
 
 
-def test_resolve_retry_zero_is_valid():
-    cfg = {"retry": {"worker": 0, "ci": 0, "review": 0, "merge": 0}}
-    assert config_mod.resolve_retry(cfg) == {
-        "worker": 0, "ci": 0, "review": 0, "merge": 0}
-
-
-def test_resolve_retry_rejects_negative():
+@pytest.mark.parametrize("retry", [{"ci": -1}, {"review": "abc"}])
+def test_resolve_retry_rejects_negative_and_non_integer_values(retry):
     with pytest.raises(ValidationError):
-        config_mod.resolve_retry({"retry": {"ci": -1}})
-
-
-def test_resolve_retry_rejects_non_int():
-    with pytest.raises(ValidationError):
-        config_mod.resolve_retry({"retry": {"review": "abc"}})
-
-
-def test_resolve_retry_ignores_unknown_subkey():
-    cfg = {"retry": {"review": 2, "bogus": 9}}
-    assert config_mod.resolve_retry(cfg) == {
-        "worker": 3, "ci": 3, "review": 2, "merge": 3}
+        config_mod.resolve_retry({"retry": retry})
 
 
 # ==================== CI 默认检测 ====================

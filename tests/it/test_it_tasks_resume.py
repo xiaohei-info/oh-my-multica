@@ -253,7 +253,7 @@ def test_a_blank_review_verdict_is_an_undecided_state_not_a_reject(world):
     calls = []
 
     def poll_until_valid_verdict():
-        time.sleep(0.3)   # a real Run needs a moment to appear
+        time.sleep(0.1)   # a real Run needs a moment to appear
         calls.append(1)
         if len(calls) == 1:
             kit.store.update_work_item_metadata(item.id, review_verdict="pass", review_report=review_report(item=kit.store.get_work_item(item.id)))
@@ -290,7 +290,7 @@ def test_a_verdict_not_bound_to_the_current_review_subject_is_invalidated(world)
     assigns = kit.record(kit.store, "assign_work_item")
 
     def submit_fresh_review():
-        time.sleep(0.3)
+        time.sleep(0.1)
         current = kit.store.get_work_item(item.id)
         assert current.phase == TaskPhase.REVIEW and current.review_verdict is None and current.review_subject_digest
         kit.store.update_work_item_metadata(item.id, review_verdict="pass", review_report=review_report(item=current))
@@ -321,7 +321,7 @@ def test_a_bound_verdict_whose_stored_report_is_invalid_is_not_consumed(world):
     assigns = kit.record(kit.store, "assign_work_item")
 
     def submit_valid_review():
-        time.sleep(0.3)
+        time.sleep(0.1)
         current = kit.store.get_work_item(item.id)
         if current.phase == TaskPhase.REVIEW and current.review_verdict is None:
             kit.store.update_work_item_metadata(item.id, review_verdict="pass", review_report=review_report(item=current))

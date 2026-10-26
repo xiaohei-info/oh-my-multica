@@ -44,7 +44,7 @@ def human_confirms(world, item_id):
     def poll():
         import time
 
-        time.sleep(0.3)
+        time.sleep(0.1)
         current = world.store.get_work_item(item_id) if item_id else None
         if current is not None and current.phase is TaskPhase.CONFIRMATION and current.status is not WorkItemStatus.DONE:
             world.store.update_status(current.id, WorkItemStatus.DONE)
@@ -149,7 +149,7 @@ def test_the_human_gate_waits_until_somebody_confirms(world):
     def bounded_poll():
         import time
 
-        time.sleep(0.3)
+        time.sleep(0.1)
         polls.append(1)
         if len(polls) > 12:
             raise TimeoutError("not confirmed")
@@ -171,7 +171,7 @@ def test_a_human_confirmation_moves_a_reviewed_issue_to_done(world):
     def poll():
         import time
 
-        time.sleep(0.3)
+        time.sleep(0.1)
         for item in world.store.list_work_items(world.kit.workspace):
             if item.title.endswith("human-confirms") and item.phase is TaskPhase.CONFIRMATION and item.status is not WorkItemStatus.DONE:
                 world.store.update_status(item.id, WorkItemStatus.DONE)
@@ -202,7 +202,7 @@ def test_the_confirmation_phase_is_the_last_write_after_the_assignment_is_cleare
     def poll():
         import time
 
-        time.sleep(0.3)
+        time.sleep(0.1)
         for item in world.store.list_work_items(kit.workspace):
             if item.title.endswith("confirm-last") and item.phase is TaskPhase.CONFIRMATION and item.status is not WorkItemStatus.DONE:
                 world.store.update_status(item.id, WorkItemStatus.DONE)
@@ -218,7 +218,7 @@ def test_without_reviewers_the_human_confirmation_is_the_end(world):
     def poll():
         import time
 
-        time.sleep(0.3)
+        time.sleep(0.1)
         for item in world.store.list_work_items(world.kit.workspace):
             if item.title.endswith("human-only") and item.phase is TaskPhase.CONFIRMATION and item.status is not WorkItemStatus.DONE:
                 world.store.update_status(item.id, WorkItemStatus.DONE)
