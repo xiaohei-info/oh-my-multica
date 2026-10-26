@@ -315,6 +315,7 @@ def test_docs_digest_is_recursive_order_independent_and_content_bound(tmp_path):
     assert changed_attempt["attempt_id"] != first_attempt["attempt_id"]
 
 
+@pytest.mark.integration  # runs real git
 def test_docs_digest_uses_only_git_tracked_files_for_revision_snapshot(tmp_path):
     project_root = tmp_path / "project"
     docs = project_root / "docs"
@@ -340,6 +341,7 @@ def test_docs_digest_uses_only_git_tracked_files_for_revision_snapshot(tmp_path)
     assert snapshot["docs_files"] == ["docs/design.md"]
 
 
+@pytest.mark.integration  # runs real git
 def test_docs_digest_treats_git_directory_path_as_literal(tmp_path):
     project_root = tmp_path / "project"
     selected = project_root / "docs*"
@@ -361,6 +363,7 @@ def test_docs_digest_treats_git_directory_path_as_literal(tmp_path):
     assert snapshot["docs_files"] == ["docs*/design.md"]
 
 
+@pytest.mark.integration  # runs real git
 def test_docs_digest_reads_revision_blob_instead_of_dirty_worktree(tmp_path):
     project_root = tmp_path / "project"
     docs = project_root / "docs"

@@ -445,6 +445,7 @@ def test_doc_directory_uses_only_git_tracked_files_for_revision_source_set(
     assert ".DS_Store" not in source_set
 
 
+@pytest.mark.integration  # runs real git
 def test_doc_directory_rejects_tracked_symlink(tmp_path, monkeypatch):
     from omac.errors import ValidationError
     from omac.pipeline.plan import _read_file
