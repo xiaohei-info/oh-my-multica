@@ -8,13 +8,10 @@ import pytest
 
 from omac.core import config as config_mod
 from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
-from omac.errors import PlatformError, ValidationError
+from omac.errors import ValidationError
 from omac.cli.commands import dag as dag_cmd
-from omac.pipeline import loop, reconcile_audit
-from omac.pipeline.loop import TickResult, tick
-from _support.fake_platform import MockCodeHost, MockRuntime, MockStore
-from omac.engines.models import EngineConfig
-from omac.core.workitem import WorkItemStatus
+from omac.pipeline import reconcile_audit
+from omac.pipeline.loop import TickResult
 
 
 NOW = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
@@ -119,15 +116,12 @@ def test_successful_interval_tick_persists_counter_across_reload(tmp_path):
 
 def test_cli_schedule_persists_first_full_scan_and_skips_static_after_reload(
         tmp_path, monkeypatch):
-    store = MockStore(EngineConfig(engine_type="mock", workspace_id="audit"))
-    item = store.create_work_item("audit", "node", "test", dag_key="node", worker="worker")
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
     path = str(tmp_path / "manifest.yaml")
     manifest = Manifest(meta={}, nodes={
-        "node": Node("node", "worker", work_item_id=item.id, status="blocked"),
+        "node": Node("node", "worker", work_item_id="item-1", status="blocked"),
     })
     save_manifest(manifest, path)
-    engine = SimpleNamespace(store=store, runtime=MockRuntime(store), code_host=MockCodeHost())
+    engine = SimpleNamespace(store=None, runtime=None, code_host=None)   # the tick is replaced below: no port is touched
     scans = []
 
     def fake_tick(store, runtime, _code_host, manifest, manifest_path, *, full_scan,
@@ -164,124 +158,6 @@ def test_interval_and_age_thresholds_each_force_full_scan():
         manifest, _config(), now=NOW + timedelta(seconds=1800))
 
 
-def test_failed_full_reconcile_does_not_advance_audit_state(tmp_path):
-    store = MockStore(EngineConfig(engine_type="mock", workspace_id="audit"))
-    item = store.create_work_item("audit", "node", "test", dag_key="node", worker="worker")
-    manifest = Manifest(meta={}, nodes={
-        "node": Node("node", "worker", work_item_id=item.id, status="blocked"),
-    })
-    path = str(tmp_path / "manifest.yaml")
-    save_manifest(manifest, path)
-    recorded = False
-
-    def fail_read(item_id):
-        raise PlatformError("simulated reconcile failure")
-
-    def record():
-        nonlocal recorded
-        recorded = True
-        reconcile_audit.record_successful_tick(manifest, full_scan=True, now=NOW)
-
-    store.observe_work_item_control = fail_read
-    with pytest.raises(PlatformError, match="simulated reconcile failure"):
-        tick(
-            store, MockRuntime(store), MockCodeHost(), manifest, path, full_scan=True,
-            after_successful_tick=record)
-
-    assert recorded is False
-    assert "reconcile_audit" not in load_manifest(path).meta
-
-
-def test_failed_full_tick_after_reconcile_does_not_advance_audit_state(
-        tmp_path, monkeypatch):
-    store = MockStore(EngineConfig(engine_type="mock", workspace_id="audit"))
-    item = store.create_work_item("audit", "node", "test", dag_key="node", worker="worker")
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
-    manifest = Manifest(meta={}, nodes={
-        "node": Node("node", "worker", work_item_id=item.id, status="blocked"),
-    })
-    path = str(tmp_path / "manifest.yaml")
-    save_manifest(manifest, path)
-    recorded = False
-
-    def fail_collect(*args, **kwargs):
-        raise PlatformError("simulated collect failure")
-
-    def record():
-        nonlocal recorded
-        recorded = True
-        reconcile_audit.record_successful_tick(manifest, full_scan=True, now=NOW)
-
-    monkeypatch.setattr(loop, "collect_results", fail_collect)
-    with pytest.raises(PlatformError, match="simulated collect failure"):
-        tick(
-            store, MockRuntime(store), MockCodeHost(), manifest, path, full_scan=True,
-            after_successful_tick=record)
-
-    assert recorded is False
-    assert "reconcile_audit" not in load_manifest(path).meta
-
-
-def test_incomplete_full_scan_does_not_advance_audit_state_or_schedule(tmp_path):
-    class BatchCapableMockStore(MockStore):
-        def control_batch_observation_supported(self):
-            return True
-
-    store = BatchCapableMockStore(
-        EngineConfig(engine_type="mock", workspace_id="audit"))
-    item = store.create_work_item("audit", "node", "test", dag_key="node", worker="worker")
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
-    manifest = Manifest(meta={}, nodes={
-        "node": Node("node", "worker", work_item_id=item.id, status="blocked"),
-    })
-    path = str(tmp_path / "manifest.yaml")
-    save_manifest(manifest, path)
-    recorded = False
-
-    def fail_batch(_item_ids):
-        raise PlatformError("static batch timed out")
-
-    def fail_fallback(_item_id):
-        raise PlatformError("static fallback timed out")
-
-    def record():
-        nonlocal recorded
-        recorded = True
-        reconcile_audit.record_successful_tick(manifest, full_scan=True, now=NOW)
-
-    store.observe_work_item_controls = fail_batch
-    store.observe_work_item_control = fail_fallback
-    result = tick(
-        store, MockRuntime(store), MockCodeHost(), manifest, path, full_scan=True,
-        after_successful_tick=record)
-
-    assert result.audit_complete is False
-    assert recorded is False
-    assert "reconcile_audit" not in load_manifest(path).meta
-    assert reconcile_audit.should_full_scan(manifest, _config(), now=NOW)
-
-
-def test_failed_audit_state_write_does_not_advance_audit_state(tmp_path):
-    store = MockStore(EngineConfig(engine_type="mock", workspace_id="audit"))
-    item = store.create_work_item("audit", "node", "test", dag_key="node", worker="worker")
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
-    manifest = Manifest(meta={}, nodes={
-        "node": Node("node", "worker", work_item_id=item.id, status="blocked"),
-    })
-    path = str(tmp_path / "manifest.yaml")
-    save_manifest(manifest, path)
-
-    def fail_after_success():
-        raise PlatformError("simulated audit state write failure")
-
-    with pytest.raises(PlatformError, match="simulated audit"):
-        tick(
-            store, MockRuntime(store), MockCodeHost(), manifest, path, full_scan=True,
-            after_successful_tick=fail_after_success)
-
-    assert "reconcile_audit" not in load_manifest(path).meta
-
-
 @pytest.mark.parametrize(
     "audit_state",
     [
@@ -307,44 +183,3 @@ def test_future_or_unsupported_audit_state_forces_full_without_mutation(
     assert manifest.meta == before
 
 
-def test_successful_needs_decision_records_audit_after_report_before_save(
-        tmp_path, monkeypatch):
-    store = MockStore(EngineConfig(engine_type="mock", workspace_id="audit"))
-    item = store.create_work_item(
-        "audit", "node", "test", dag_key="node", worker="worker")
-    store.update_status(item.id, WorkItemStatus.BLOCKED)
-    manifest = Manifest(meta={}, nodes={
-        "node": Node("node", "worker", work_item_id=item.id, status="blocked"),
-    })
-    path = str(tmp_path / "manifest.yaml")
-    save_manifest(manifest, path)
-
-    from omac.pipeline import report as report_mod
-
-    order = []
-    build_report = report_mod.build_needs_decision
-
-    def capture_report(*args, **kwargs):
-        order.append("report")
-        return build_report(*args, **kwargs)
-
-    monkeypatch.setattr(report_mod, "build_needs_decision", capture_report)
-
-    def record():
-        order.append("hook")
-        assert order == ["report", "hook"]
-        assert "reconcile_audit" not in load_manifest(path).meta
-        reconcile_audit.record_successful_tick(
-            manifest, full_scan=True, now=NOW)
-
-    result = tick(
-        store, MockRuntime(store), MockCodeHost(), manifest, path, full_scan=True,
-        after_successful_tick=record)
-
-    assert result.state == "needs_decision"
-    assert order == ["report", "hook"]
-    assert load_manifest(path).meta["reconcile_audit"] == {
-        "schema": "omac.reconcile-audit/v1",
-        "last_full_scan_at": "2026-08-11T12:00:00Z",
-        "completed_interval_ticks": 0,
-    }

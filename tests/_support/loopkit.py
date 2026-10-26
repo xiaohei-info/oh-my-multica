@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from typing import Any, Callable
 
@@ -180,18 +181,19 @@ class Kit:
     def record(self, target, *names) -> list[tuple]:
         """Log (name, args) of each call to the real ``target.<name>`` while still performing it."""
         events: list[tuple] = []
-        depth = [0]  # an adapter method that calls another wrapped method internally is one write for the Loop
+        nested = threading.local()  # an adapter method that calls another wrapped method internally is one write for the Loop
         for name in names:
             original = getattr(target, name)
 
             def wrapper(*args, _name=name, _original=original, **kw):
-                if not depth[0]:
-                    events.append((_name, args, kw))
-                depth[0] += 1
+                depth = getattr(nested, "depth", 0)
+                if not depth:
+                    events.append((_name, args, kw))   # list.append is atomic; the depth is per thread (parallel reads)
+                nested.depth = depth + 1
                 try:
                     return _original(*args, **kw)
                 finally:
-                    depth[0] -= 1
+                    nested.depth = depth
 
             self.monkeypatch.setattr(target, name, wrapper)
         return events
