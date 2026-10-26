@@ -5,6 +5,7 @@ a private HOME (so the ``multica`` CLI never reads ``~/.multica``), a daemon und
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import secrets
@@ -105,7 +106,14 @@ class Stack:
 
     def login(self) -> str:
         email = f"it-{secrets.token_hex(4)}@example.com"  # send-code is rate limited per address
-        self.api("POST", "/auth/send-code", {"email": email}, token="")
+        for attempt in range(10):   # `compose --wait` returns when the container is healthy, a moment before the API serves
+            try:
+                self.api("POST", "/auth/send-code", {"email": email}, token="")
+                break
+            except (ConnectionError, http.client.HTTPException, urllib.error.URLError):
+                if attempt == 9:
+                    raise
+                time.sleep(1.5)
         return self.api("POST", "/auth/verify-code", {"email": email, "code": self.code}, token="")["token"]
 
     # ---- CLI environment used by OMAC (never ~/.multica)

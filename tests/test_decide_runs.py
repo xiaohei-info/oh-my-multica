@@ -1,7 +1,13 @@
 """Which Run facts count as a causal attempt, and which provider failures are worth one more Run. No platform."""
+from dataclasses import replace
+from uuid import uuid4
+
 import pytest
 
+from omac.core.taskmeta import WORKER_HANDOFF_KEY, WorkerHandoffIntent
 from omac.core.workitem import AgentRunObservation
+from omac.engines.metadata_policy import assert_metadata_write_allowed
+from omac.errors import PlatformError
 from omac.pipeline import decide_runs
 
 
@@ -243,3 +249,103 @@ def test_transient_runtime_failure_rejects_non_allowlisted_errors(error):
 def test_transient_runtime_failure_requires_provider_transport_context(error):
     assert not decide_runs.is_retryable_transient_run_failure(AgentRunObservation(
         id="run-1", kind="direct", status="failed", error=error))
+
+
+def test_bounded_direct_run_baseline_keeps_small_lists_uncapped():
+    runs = baseline_history_runs(5, "agent-worker", "agent-reviewer")
+    ids, cutoff = decide_runs.bounded_direct_run_baseline(
+        runs + [AgentRunObservation(id="run-child", kind="child", status="completed")])
+    assert ids == tuple(sorted(run.id for run in runs))
+    assert cutoff is None
+
+
+def test_bounded_direct_run_baseline_caps_to_latest_20_with_cutoff():
+    runs = baseline_history_runs(45, "agent-worker", "agent-reviewer")
+    ids, cutoff = decide_runs.bounded_direct_run_baseline(runs)
+    assert len(ids) == 20
+    assert ids == tuple(sorted(run.id for run in runs[-20:]))
+    assert cutoff == runs[-1].created_at
+
+
+def test_bounded_direct_run_baseline_fails_closed_without_creation_time():
+    runs = baseline_history_runs(25, "agent-worker", "agent-reviewer")
+    runs[0] = replace(runs[0], created_at=None)
+    with pytest.raises(PlatformError):
+        decide_runs.bounded_direct_run_baseline(runs)
+
+
+def test_bounded_direct_run_baseline_gate_drops_only_pre_cutoff_runs():
+    runs = baseline_history_runs(45, "agent-worker", "agent-reviewer")
+    # 门控 cutoff 覆盖全部被裁 Run → 安全封顶,沿用调用方自己的门控。
+    ids, cutoff = decide_runs.bounded_direct_run_baseline(
+        runs, gate_cutoff_created_at=runs[24].created_at)
+    assert ids == tuple(sorted(run.id for run in runs[-20:]))
+    assert cutoff is None
+    # 被裁 Run 晚于门控 cutoff → 无法安全封顶,fail-closed。
+    with pytest.raises(PlatformError):
+        decide_runs.bounded_direct_run_baseline(
+            runs, gate_cutoff_created_at=runs[10].created_at)
+
+
+# ---- a handoff baseline that is capped to fit the platform's metadata limit -------------------------------------------------
+
+def baseline_history_runs(count, worker_id, reviewer_id):
+    """Alternating Worker/Reviewer terminal Runs with strictly increasing creation times."""
+    return [
+        AgentRunObservation(
+            id=f"run-hist-{index:03d}", kind="direct", status="completed", agent_id=worker_id if index % 2 == 0 else reviewer_id,
+            created_at=f"2026-01-{1 + index // 1440:02d}T{(index // 60) % 24:02d}:{index % 60:02d}:00Z")
+        for index in range(count)
+    ]
+
+
+WORKER, REVIEWER = "agent-worker", "agent-reviewer"
+CURRENT = AgentRunObservation(id="run-current", kind="direct", status="failed", agent_id=WORKER, created_at="2026-01-03T00:00:00Z",
+                              error="provider error: HTTP 503 Service Unavailable")
+
+
+def capped_handoff():
+    """40 earlier Runs of two agents, the latest 20 kept as the baseline, and one current failing Run after the cutoff."""
+    history = baseline_history_runs(40, WORKER, REVIEWER)
+    retained, cutoff = decide_runs.bounded_direct_run_baseline(history)
+    return history, retained, cutoff
+
+
+def test_runs_dropped_from_a_capped_baseline_are_still_inside_it_by_time():
+    history, retained, cutoff = capped_handoff()
+    runs = history + [CURRENT]
+
+    attempt = decide_runs.observe_direct_run_attempt(
+        runs, WORKER, baseline_direct_run_ids=retained, cutoff_created_at=cutoff, target_run_id="run-current")
+
+    assert len(retained) == 20 and attempt.state == "terminal" and attempt.terminal.outcome == "transient-failure"
+    assert not decide_runs.foreign_unbaselined_runs(runs, WORKER, retained, decide_runs.parse_platform_time(cutoff))
+
+
+def test_a_stranger_after_the_cutoff_still_breaks_a_capped_baseline():
+    history, retained, cutoff = capped_handoff()
+    stranger = AgentRunObservation(id="run-stranger", kind="direct", status="completed", agent_id=REVIEWER, created_at="2026-01-03T00:30:00Z")
+
+    found = decide_runs.foreign_unbaselined_runs(history + [CURRENT, stranger], WORKER, retained, decide_runs.parse_platform_time(cutoff))
+
+    assert [run.id for run in found] == ["run-stranger"]
+
+
+def test_the_baseline_after_a_retry_is_capped_again_and_advances_its_cutoff():
+    history, _retained, _cutoff = capped_handoff()
+
+    ids, cutoff = decide_runs.bounded_direct_run_baseline(history + [CURRENT])
+
+    assert len(ids) <= 20 and "run-current" in ids and cutoff == CURRENT.created_at
+
+
+def test_a_capped_handoff_fits_the_platforms_metadata_limit():
+    ids = tuple(sorted(str(uuid4()) for _ in range(20)))
+    intent = WorkerHandoffIntent(
+        schema="omac.worker-handoff/v1", state="pending", target_worker="alice", gate="review", source_review_subject_digest="s" * 64,
+        source_review_round=9, target_review_bounce=9, generation="handoff-" + "g" * 16, target_agent_id=str(uuid4()),
+        baseline_direct_run_ids=ids, baseline_cutoff_created_at="2026-01-03T00:00:00Z", baseline_verification_attachment_id=str(uuid4()),
+        baseline_pr_head_sha="h" * 40, target_run_id=str(uuid4()), target_worker_bounce=9, source_review_verdict="reject")
+
+    assert_metadata_write_allowed(WORKER_HANDOFF_KEY, intent.as_dict())
+    assert len(intent.baseline_direct_run_ids) == 20 and replace(intent, target_run_id=None).baseline_direct_run_ids == ids

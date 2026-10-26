@@ -10,7 +10,7 @@ from omac.core.taskmeta import TaskPhase, WorkerHandoffIntent
 from omac.core.workitem import WorkItem, WorkItemControlProjection, WorkItemPayload, WorkItemStatus
 from omac.errors import PlatformError
 from omac.pipeline import loop
-from omac.pipeline.convergence import ResolutionState, resolve_handoff_convergence
+from omac.pipeline.convergence import ResolutionState, check_handoff_ledger_ref, resolve_handoff_convergence
 
 REF = {"attachment_id": "review-ledger-attachment", "sha256": "a" * 64}
 
@@ -119,3 +119,27 @@ def test_a_review_handoff_fetches_the_authoritative_ledger_from_the_third_review
     plan = loop._build_work_item_hydration_plan(replace(node, status="in_progress"), projection)
 
     assert (WorkItemPayload.REVIEW_LEDGER in plan) is requires_ledger
+
+
+# ---- the ledger a handoff was written against ----------------------------------------------------------------------------
+
+def feedback_with_ledger_ref(ref):
+    return {"verdict": "reject", "ledger_ref": ref}
+
+
+@pytest.mark.parametrize(("round_index", "item_ref", "recorded_ref", "refused"), [
+    pytest.param(3, REF, REF, False, id="same-ledger"),
+    pytest.param(3, {**REF, "sha256": "b" * 64}, REF, True, id="ledger-replaced-after-the-handoff"),
+    pytest.param(3, None, REF, True, id="ledger-gone"),
+    pytest.param(3, REF, None, False, id="handoff-recorded-no-ledger"),
+    pytest.param(2, {**REF, "sha256": "b" * 64}, REF, False, id="before-the-third-review-the-ledger-is-not-consulted"),
+])
+def test_a_handoff_must_still_point_at_the_ledger_it_was_written_against(round_index, item_ref, recorded_ref, refused):
+    handoff = replace(intent(round_index), source_review_feedback=feedback_with_ledger_ref(recorded_ref) if recorded_ref else None)
+    item = item_with(None, review_ledger_ref=item_ref)
+
+    if refused:
+        with pytest.raises(PlatformError, match="ledger reference changed"):
+            check_handoff_ledger_ref(item, handoff)
+    else:
+        check_handoff_ledger_ref(item, handoff)

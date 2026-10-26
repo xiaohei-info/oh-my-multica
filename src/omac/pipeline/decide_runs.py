@@ -345,6 +345,18 @@ def formal_dispatch_target(
     return target, None
 
 
+def foreign_unbaselined_runs(
+    runs: List[AgentRunObservation], target_agent_id: str, baseline_direct_run_ids, cutoff,
+) -> List[AgentRunObservation]:
+    """Direct Runs of another agent that the baseline does not cover: they break the causal chain of a handoff."""
+    baseline = set(baseline_direct_run_ids)
+    return [
+        run for run in runs
+        if run.kind == "direct" and run.id not in baseline and run.agent_id != target_agent_id
+        and not run_created_within_baseline(run, cutoff)
+    ]
+
+
 def is_active_formal_run(runs: List[AgentRunObservation], agent_id: str, **baseline) -> bool:
     """Whether the one causally bound Run is still active and was a formal assignment/rerun dispatch."""
     attempt = observe_direct_run_attempt(runs, agent_id, **baseline)

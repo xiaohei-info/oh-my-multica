@@ -97,7 +97,7 @@ from .decide_reviewer import (
     decide_dispatch_baseline, decide_no_submit, decide_reviewer_run, no_submit_grace,
 )
 from .decide_runs import (
-    is_active_formal_run,
+    foreign_unbaselined_runs, is_active_formal_run,
     TRANSIENT_RUNTIME_MAX_RUNS, ExpectedTerminalRun, RunFailure,
     bounded_direct_run_baseline, formal_dispatch_target, is_retryable_transient_run_failure,
     observe_direct_run_attempt, parse_baseline_cutoff, parse_platform_time, run_created_within_baseline,
@@ -2284,12 +2284,7 @@ def _observe_worker_handoff(
         raise PlatformError(
             f"Worker handoff lacks causal identity for work item {item_id}")
 
-    if any(
-        run.kind == "direct" and run.id not in baseline
-        and run.agent_id != intent.target_agent_id
-        and not run_created_within_baseline(run, cutoff)
-        for run in runs
-    ):
+    if foreign_unbaselined_runs(runs, intent.target_agent_id, baseline, cutoff):
         raise PlatformError(
             f"Worker handoff observed non-causal direct Runs for work item {item_id}")
     observed = observe_direct_run_attempt(

@@ -59,6 +59,7 @@ class Kit:
         self.agents("hang")
         self._seq = 0
         self._proxy = None
+        self._merges_at_start = len(stack.gh_calls("merge"))
 
     def close(self) -> None:
         if self._proxy is not None:
@@ -172,7 +173,8 @@ class Kit:
         path.write_text(json.dumps(prs))
 
     def merges(self) -> list[list[str]]:
-        return self.stack.gh_calls("merge")
+        """`gh pr merge` calls made since this test began (the shim's log is shared by every test of the session)."""
+        return self.stack.gh_calls("merge")[self._merges_at_start:]
 
     # ---- wrapping single port methods (fault injection / write order)
     def record(self, target, *names) -> list[tuple]:
@@ -307,14 +309,15 @@ class Kit:
             self.wait_runs_ended(item.id)
         return manifest, path, item
 
-    def in_review(self, *reviewer_runs, rework=()):
+    def in_review(self, *reviewer_runs, rework=(), node_contract=None, others=()):
         """Run the Loop until node `a` is in review and the Reviewer's first Run exists.
         ``reviewer_runs``: one scenario attempt per Reviewer Run; Runs after the last repeat the last attempt.
-        ``rework``: the Worker's attempts after its first (which submits); with none, every Run submits."""
+        ``rework``: the Worker's attempts after its first (which submits); with none, every Run submits.
+        ``node_contract``: the contract of node `a`; ``others``: more nodes of the manifest."""
         self.stack.set_scenario("alice", [[self.stack.tool("worker-submit")], *rework])
         self.agents(list(reviewer_runs) or HANG, names=("bob",))
-        node = self.node("a", reviewer="bob", contract=contract())
-        manifest = self.manifest([node])
+        node = self.node("a", reviewer="bob", contract=node_contract or contract())
+        manifest = self.manifest([node, *others])
         path = self.save(manifest)
         bob = self.store.resolve_agent_id("bob")
 
