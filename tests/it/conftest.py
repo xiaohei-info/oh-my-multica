@@ -1,4 +1,5 @@
 """Fixtures for tests/it: one private Multica per pytest process, scripted agents, an isolated CLI environment."""
+import json
 from pathlib import Path
 
 import pytest
@@ -82,3 +83,21 @@ def kit(stack, engine, store, tmp_path, monkeypatch):
         yield loop_kit
     finally:
         loop_kit.close()
+
+
+@pytest.fixture()
+def node(kit, monkeypatch, capsys):
+    """`omac node <args>` in this process, on the Kit's own store, runtime and code host (so its calls can be recorded and failed).
+
+    Returns ``(exit code, the JSON document printed or None, stderr)``."""
+    import omac.cli.commands.node as node_cmd
+    from omac.cli.main import main
+
+    monkeypatch.setattr(node_cmd, "engine_from_config", lambda *_a, **_k: kit.engine)
+
+    def run(*args):
+        code = main(["node", *args])
+        out = capsys.readouterr()
+        return code, (json.loads(out.out) if out.out.strip().startswith("{") else None), out.err
+
+    return run

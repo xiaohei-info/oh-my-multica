@@ -201,11 +201,15 @@ class Stack:
     def review(self, verdict: str) -> dict:
         return self.tool("reviewer-submit", verdict)
 
-    def gh_calls(self, verb: str) -> list[list[str]]:
-        """Arguments of every `gh pr <verb>` OMAC ran, oldest first."""
+    def gh_calls(self, verb: str, since: int = 0) -> list[list[str]]:
+        """Arguments of every `gh pr <verb>` OMAC ran, oldest first; ``since`` skips that many calls of any verb (see ``gh_call_count``)."""
         path = self.gh_state / "calls.log"
         rows = [json.loads(line)["args"] for line in path.read_text().splitlines()] if path.exists() else []
-        return [row for row in rows if row[:2] == ["pr", verb]]
+        return [row for row in rows[since:] if row[:2] == ["pr", verb]]
+
+    def gh_call_count(self) -> int:
+        path = self.gh_state / "calls.log"
+        return len(path.read_text().splitlines()) if path.exists() else 0
 
     def gh_behavior(self, **behavior) -> None:
         (self.gh_state / "behavior.json").write_text(json.dumps(behavior))

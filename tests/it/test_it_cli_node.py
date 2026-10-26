@@ -4,7 +4,6 @@ What a retry carries over from a review (facts to handoff) is a pure table: test
 tests/test_decide_recovery.py; the argument handling that needs no platform: tests/test_cli_node.py. Here the platform
 proves the state a decision leaves behind, the order of its writes and what a crash in between leaves.
 """
-import json
 import uuid
 from dataclasses import replace
 from types import SimpleNamespace
@@ -23,19 +22,6 @@ from omac.core.workitem import WorkItemStatus
 from omac.errors import PlatformError
 from omac.pipeline import dispatch
 from omac.pipeline.decide_recovery import reviewer_recovery_decision
-
-
-@pytest.fixture()
-def node(kit, monkeypatch, capsys):
-    """`omac node <args>` in this process, on the Kit's own store, runtime and code host (so its calls can be recorded and failed)."""
-    monkeypatch.setattr(node_cmd, "engine_from_config", lambda *_a, **_k: kit.engine)
-
-    def run(*args):
-        code = main(["node", *args])
-        out = capsys.readouterr()
-        return code, (json.loads(out.out) if out.out.strip().startswith("{") else None), out.err
-
-    return run
 
 
 def test_accept_nits_waits_for_a_quiet_reviewer_keeps_its_facts_and_a_retry_clears_the_acceptance(kit, node):
@@ -430,7 +416,7 @@ def test_a_retry_of_a_delivery_from_before_handoffs_existed_binds_the_old_eviden
     assert handoff.target_worker_bounce == retried.bounces.worker and handoff.baseline_verification_attachment_id == old_attachment
     assert retried.artifacts["pr_url"] == old_pr and retried.verification == old_verification
 
-    manifest, checks = load_manifest(path), len(kit.stack.gh_calls("checks"))
+    manifest, checks = load_manifest(path), len(kit.gh_calls("checks"))
     first = kit.tick(manifest, path, max_parallel=1)
 
     dispatched = kit.store.get_work_item(item.id).worker_handoff
@@ -449,7 +435,7 @@ def test_a_retry_of_a_delivery_from_before_handoffs_existed_binds_the_old_eviden
     assert waiting.state == "running" and manifest.nodes["a"].status == "in_progress" and current.phase is TaskPhase.AUTHORING
     assert current.delivery_identity is None and current.worker_handoff.baseline_pr_head_sha is None
     assert current.worker_handoff.baseline_verification_attachment_id == old_attachment
-    assert [call[1][2] for call in assigns] == ["worker"] and len(kit.stack.gh_calls("checks")) == checks
+    assert [call[1][2] for call in assigns] == ["worker"] and len(kit.gh_calls("checks")) == checks
 
 
 def test_a_retry_that_finds_a_rejection_without_any_context_to_carry_asks_for_a_decision_and_changes_nothing(kit, node):

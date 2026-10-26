@@ -62,6 +62,7 @@ class Kit:
         self._proxy = None
         stack.gh_behavior()                      # the code host shim starts every test with its default behaviour
         self._merges_at_start = len(stack.gh_calls("merge"))
+        self._gh_calls_at_start = stack.gh_call_count()
 
     def close(self) -> None:
         if self._proxy is not None:
@@ -174,6 +175,10 @@ class Kit:
         prs = json.loads(path.read_text()) if path.exists() else {}
         prs[url] = {"pushes": pushes, **({"merged": True, "merged_at": "2026-07-26T08:00:00Z"} if merged else {}), **facts}
         path.write_text(json.dumps(prs))
+
+    def gh_calls(self, verb: str) -> list[list[str]]:
+        """`gh pr <verb>` calls made since this test began (the shim's log is shared by every test of the session)."""
+        return self.stack.gh_calls(verb, since=self._gh_calls_at_start)
 
     def merges(self) -> list[list[str]]:
         """`gh pr merge` calls made since this test began (the shim's log is shared by every test of the session)."""

@@ -10,6 +10,7 @@ from omac.core.manifest import load_manifest, save_manifest
 from omac.core.workitem import PullRequestObservation, PullRequestState, WorkItemStatus
 from omac.errors import ValidationError
 from omac.pipeline import loop
+from omac.pipeline.decide_merge import merge_bounce_attempt
 from omac.pipeline.delivery import run_merge_delivery
 
 LIMITS = {"worker": 3, "ci": 3, "review": 3, "merge": 3}
@@ -109,7 +110,7 @@ def test_after_merging_recovery_a_closed_pull_request_spends_the_fresh_merge_bud
 
     result = run_merge_delivery({}, manifest, "bootstrap", kit.store, kit.runtime, kit.code_host, LIMITS, str(path))
 
-    assert result == "bounce" and manifest.nodes["bootstrap"].status == "in_progress"
+    assert result == "bounce" and merge_bounce_attempt(manifest.nodes["bootstrap"].merge_request_state) is not None   # the Loop hands back
     assert kit.store.get_work_item(item.id).bounces.merge == 6
 
 
