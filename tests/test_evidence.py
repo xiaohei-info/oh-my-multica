@@ -315,25 +315,21 @@ def test_review_evidence_passes_with_goals():
     ) == []
 
 
-def test_review_evidence_review_goals_required():
+@pytest.mark.parametrize(("goals", "message"), [
+    (None, "review_goals must be non-empty"),                   # missing
+    ([], "review_goals must be non-empty"),
+    (["valid goal", ""], "non-empty strings"),
+])
+def test_review_evidence_needs_non_empty_review_goals(goals, message):
     report = _good_report()
-    del report["review_goals"]
-    errs = validate_review_evidence(NODE, Item(review_verdict="pass", review_report=report))
-    assert any("review_goals must be non-empty" in e for e in errs)
+    if goals is None:
+        del report["review_goals"]
+    else:
+        report["review_goals"] = goals
 
+    errors = validate_review_evidence(NODE, Item(review_verdict="pass", review_report=report))
 
-def test_review_evidence_review_goals_empty_list_rejected():
-    report = _good_report()
-    report["review_goals"] = []
-    errs = validate_review_evidence(NODE, Item(review_verdict="pass", review_report=report))
-    assert any("review_goals must be non-empty" in e for e in errs)
-
-
-def test_review_evidence_review_goals_blank_entry_rejected():
-    report = _good_report()
-    report["review_goals"] = ["valid goal", ""]
-    errs = validate_review_evidence(NODE, Item(review_verdict="pass", review_report=report))
-    assert any("non-empty strings" in e for e in errs)
+    assert any(message in error for error in errors)
 
 
 def test_review_evidence_requires_full_review_completed():
@@ -397,90 +393,32 @@ def _results(entries):
     return list(entries)
 
 
-def test_acceptance_results_passes_full_cover():
-    results = [
-        {"id": "login", "status": "pass"},
-        {"id": "checkout", "status": "pass"},
-    ]
+PASS_LOGIN, PASS_CHECKOUT = {"id": "login", "status": "pass"}, {"id": "checkout", "status": "pass"}
+
+
+@pytest.mark.parametrize("results", [
+    [PASS_LOGIN, PASS_CHECKOUT],                                                                 # every flow passes
+    [{"id": "login", "status": "fail", "notes": "跳转未发生,返回 500"}, PASS_CHECKOUT],            # a failure with notes is a valid result
+])
+def test_acceptance_results_that_cover_every_flow_are_accepted(results):
     assert validate_acceptance_results(ACCEPTANCE_DOC, results) == []
 
 
-def test_acceptance_results_fail_requires_notes():
-    results = [
-        {"id": "login", "status": "fail"},
-        {"id": "checkout", "status": "pass"},
-    ]
-    errs = validate_acceptance_results(ACCEPTANCE_DOC, results)
-    assert any("failed but has no notes" in e for e in errs)
+@pytest.mark.parametrize(("results", "message"), [
+    ([{"id": "login", "status": "fail"}, PASS_CHECKOUT], "failed but has no notes"),
+    ([{"id": "login", "status": "fail", "notes": "   "}, PASS_CHECKOUT], "failed but has no notes"),
+    ([PASS_LOGIN], "missing acceptance flow: checkout"),
+    ([PASS_LOGIN, PASS_CHECKOUT, {"id": "ghost", "status": "pass"}], "extra flow not in acceptance doc: ghost"),
+    ([{"id": "login", "status": "ok"}, PASS_CHECKOUT], "status must be pass|fail"),
+    ({"login": "pass"}, "must be a list"),
+    (["login", "checkout"], "must be an object"),
+    ([PASS_LOGIN, {"id": "login", "status": "fail", "notes": "dup"}, PASS_CHECKOUT], "duplicate acceptance_result id: login"),
+    ([{"status": "pass"}], "id"),                                                               # an entry needs an id (and the flows are missing)
+])
+def test_acceptance_results_are_refused_with_the_reason(results, message):
+    errors = validate_acceptance_results(ACCEPTANCE_DOC, results)
 
-
-def test_acceptance_results_fail_with_notes_ok():
-    results = [
-        {"id": "login", "status": "fail", "notes": "跳转未发生,返回 500"},
-        {"id": "checkout", "status": "pass"},
-    ]
-    assert validate_acceptance_results(ACCEPTANCE_DOC, results) == []
-
-
-def test_acceptance_results_fail_blank_notes_rejected():
-    results = [
-        {"id": "login", "status": "fail", "notes": "   "},
-        {"id": "checkout", "status": "pass"},
-    ]
-    errs = validate_acceptance_results(ACCEPTANCE_DOC, results)
-    assert any("failed but has no notes" in e for e in errs)
-
-
-def test_acceptance_results_missing_flow_rejected():
-    results = [{"id": "login", "status": "pass"}]
-    errs = validate_acceptance_results(ACCEPTANCE_DOC, results)
-    assert any("missing acceptance flow: checkout" in e for e in errs)
-
-
-def test_acceptance_results_extra_flow_rejected():
-    results = [
-        {"id": "login", "status": "pass"},
-        {"id": "checkout", "status": "pass"},
-        {"id": "ghost", "status": "pass"},
-    ]
-    errs = validate_acceptance_results(ACCEPTANCE_DOC, results)
-    assert any("extra flow not in acceptance doc: ghost" in e for e in errs)
-
-
-def test_acceptance_results_invalid_status_rejected():
-    results = [
-        {"id": "login", "status": "ok"},
-        {"id": "checkout", "status": "pass"},
-    ]
-    errs = validate_acceptance_results(ACCEPTANCE_DOC, results)
-    assert any("status must be pass|fail" in e for e in errs)
-
-
-def test_acceptance_results_not_a_list_rejected():
-    errs = validate_acceptance_results(ACCEPTANCE_DOC, {"login": "pass"})
-    assert any("must be a list" in e for e in errs)
-
-
-def test_acceptance_results_non_object_entry_rejected():
-    results = ["login", "checkout"]
-    errs = validate_acceptance_results(ACCEPTANCE_DOC, results)
-    assert any("must be an object" in e for e in errs)
-
-
-def test_acceptance_results_missing_id_rejected():
-    results = [{"status": "pass"}]
-    errs = validate_acceptance_results(ACCEPTANCE_DOC, results)
-    assert errs  # id required + missing flows
-
-
-def test_acceptance_results_duplicate_id_rejected():
-    results = [
-        {"id": "login", "status": "pass"},
-        {"id": "login", "status": "fail", "notes": "dup"},
-        {"id": "checkout", "status": "pass"},
-    ]
-    errs = validate_acceptance_results(ACCEPTANCE_DOC, results)
-    assert any("duplicate acceptance_result id: login" in e for e in errs)
+    assert any(message in error for error in errors), errors
 
 
 def test_acceptance_results_accepts_raw_dict():
@@ -503,22 +441,13 @@ def _flow(flow_id="f1", name="flow one", step="s"):
     ]}
 
 
-def test_load_acceptance_doc_requires_name():
-    raw = {"flows": [{"id": "f1", "actions": [{"step": "s", "how": "h", "expected": "e"}]}]}
+@pytest.mark.parametrize("name", [None, "   ", 123])            # missing, blank, not a string
+def test_load_acceptance_doc_refuses_a_flow_without_a_usable_name(name):
+    flow = _flow(name=name)
+    if name is None:
+        del flow["name"]
     with pytest.raises(ValueError, match="name is required"):
-        load_acceptance_doc(raw)
-
-
-def test_load_acceptance_doc_blank_name_rejected():
-    raw = {"flows": [_flow(name="   ")]}
-    with pytest.raises(ValueError, match="name is required"):
-        load_acceptance_doc(raw)
-
-
-def test_load_acceptance_doc_non_string_name_rejected():
-    raw = {"flows": [_flow(name=123)]}
-    with pytest.raises(ValueError, match="name is required"):
-        load_acceptance_doc(raw)
+        load_acceptance_doc({"flows": [flow]})
 
 
 def test_load_acceptance_doc_name_preserved_when_valid():

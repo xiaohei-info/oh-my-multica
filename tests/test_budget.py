@@ -1,3 +1,5 @@
+import pytest
+
 from _support import budget
 
 OK = dict(seconds=0.01, tmp_bytes=0, session_tmp_bytes=0, rss_before=0, rss_after=0, kind="unit")
@@ -26,12 +28,9 @@ def test_budget_class_comes_from_markers():
     assert budget.kind_of(["integration", "docker"]) == "docker"
 
 
-def test_twenty_megabytes_in_tmp_path_fails():
-    assert budget.check_call(**{**OK, "tmp_bytes": 20 * budget.MB})
-
-
-def test_session_temp_total_fails():
-    assert budget.check_call(**{**OK, "session_tmp_bytes": 201 * budget.MB})
+@pytest.mark.parametrize("overage", [{"tmp_bytes": 20 * budget.MB}, {"session_tmp_bytes": 201 * budget.MB}])
+def test_temp_files_over_the_per_test_or_session_limit_fail(overage):
+    assert budget.check_call(**{**OK, **overage})
 
 
 def test_rss_blames_only_the_test_that_crosses_the_limit():

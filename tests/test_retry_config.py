@@ -136,12 +136,17 @@ def test_config_set_negative_retry_rejected(tmp_path, monkeypatch, capsys):
     assert "cannot be negative" in err
 
 
-def test_config_set_invalid_reconcile_value_rejected(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize(("key", "value", "message"), [
+    ("reconcile.full_scan_interval_ticks", "0", "must be >= 1"),
+    ("retry.no_submit_runs", "1.5", "no_submit_runs"),
+])
+def test_config_set_refuses_an_invalid_reconcile_or_no_submit_value(tmp_path, monkeypatch, capsys, key, value, message):
     monkeypatch.chdir(tmp_path)
     main(["config", "set", "engine", "multica"])
-    code = main(["config", "set", "reconcile.full_scan_interval_ticks", "0"])
-    assert code == exit_codes.VALIDATION
-    assert "must be >= 1" in capsys.readouterr().err
+
+    assert main(["config", "set", key, value]) == exit_codes.VALIDATION
+
+    assert message in capsys.readouterr().err
 
 
 def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
@@ -259,14 +264,6 @@ def test_config_set_no_submit_runs_rejects_zero(tmp_path, monkeypatch, capsys):
     assert "no_submit_runs" in err
     cfg = config_mod.load_config()
     assert (cfg.get("retry") or {}).get("no_submit_runs") is None
-
-
-def test_config_set_no_submit_runs_rejects_non_int(tmp_path, monkeypatch, capsys):
-    monkeypatch.chdir(tmp_path)
-    main(["config", "set", "engine", "multica"])
-    code = main(["config", "set", "retry.no_submit_runs", "1.5"])
-    assert code == exit_codes.VALIDATION
-    assert "no_submit_runs" in capsys.readouterr().err
 
 
 def test_config_set_no_submit_runs_accepts_positive(tmp_path, monkeypatch, capsys):

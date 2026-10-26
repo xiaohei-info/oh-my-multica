@@ -134,8 +134,9 @@ def test_plan_rejects_manifest_subcommands(capsys):
     err = capsys.readouterr().err
     assert "invalid choice" in err
 
-def test_check_missing_file_is_validation_error(tmp_path):
-    assert main(["dag", "check", str(tmp_path / "nope.yaml")]) == exit_codes.VALIDATION
+@pytest.mark.parametrize("action", ["check", "show"])
+def test_a_missing_manifest_file_is_a_validation_error(tmp_path, action):
+    assert main(["dag", action, str(tmp_path / "nope.yaml")]) == exit_codes.VALIDATION
 
 
 def test_check_requires_engine_config(tmp_path, monkeypatch, capsys):
@@ -167,10 +168,6 @@ def test_check_requires_engine_config(tmp_path, monkeypatch, capsys):
 
 
 # ── dag show ──────────────────────────────────────────────────────────────
-
-def test_show_missing_file_is_validation_error(tmp_path):
-    assert main(["dag", "show", str(tmp_path / "nope.yaml")]) == exit_codes.VALIDATION
-
 
 def test_show_table_summary(tmp_path, capsys):
     path = _write(tmp_path, CLEAN_MANIFEST)
