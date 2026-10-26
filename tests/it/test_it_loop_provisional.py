@@ -214,7 +214,7 @@ def test_a_recovered_active_reviewer_that_rejects_hands_the_worker_its_rework_co
 
 
 def test_restoring_a_worker_stage_validates_the_deferred_review_ledger_before_any_write(kit):
-    from test_decide_recovery import INVALID_LEDGERS
+    from _support.ledgers import INVALID_LEDGERS
 
     manifest, path, item = beside_a_decision(kit, "worker")
     intent = kit.store.get_work_item(item.id).worker_handoff

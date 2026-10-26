@@ -3909,7 +3909,8 @@ def test_multica_runtime_lists_actual_runtime_shape(monkeypatch):
 
 def _rejected_ledger_and_report():
     from omac.core.review_convergence import advance_review_ledger, build_review_obligations
-    from test_review_convergence import _item, _report
+    from _support.ledgers import review_report as _report
+    from _support.reviewkit import _item
 
     blocker = {
         "root_cause_key": "stale-release-lineage", "obligation_id": "dimension:structure",

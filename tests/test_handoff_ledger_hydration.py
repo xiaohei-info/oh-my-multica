@@ -17,14 +17,14 @@ from omac.engines.multica import MulticaStore
 from omac.errors import PlatformError
 from omac.pipeline import loop
 from omac.pipeline.convergence import ResolutionState
-from test_lightweight_reconcile import _RemoteFixture
+from _support.remote import _RemoteFixture
 
 
 def _round3_issue():
     """A mid-authoring node after three rejected reviews whose handoff and ledger are externalized."""
     from omac.core.taskmeta import WorkerHandoffIntent
-    from test_lightweight_reconcile import _issue, _ref
-    from test_review_convergence import _production_multi_blocker_ledger
+    from _support.remote import _issue, _ref
+    from _support.reviewkit import _production_multi_blocker_ledger
 
     item_id = "item-round3"
     raw, attachments = _issue(item_id, status="in_progress", phase="authoring")

@@ -14,6 +14,7 @@ from omac.pipeline.decide_recovery import (
 )
 from omac.pipeline.decide_runs import is_active_formal_run
 from _support.recoverykit import AGENT, CUTOFF, KEY, NODE_CONTRACT, PATH, REVIEWER, delivered_item, manifest
+from _support.ledgers import INVALID_LEDGERS
 
 
 def decision_with(**changes):
@@ -287,26 +288,10 @@ def test_recovery_fails_closed_when_referenced_evidence_did_not_parse(item_field
         check()
 
 
-def cycle(index, **fields):
-    return {"round": index, "open_count": 1, "open_blocker_ids": ["BLK-core"], "reported_blocker_ids": ["BLK-core"], **fields}
 
 
-def blocker(**fields):
-    return {"blocker_id": "BLK-core", "root_cause_key": "core-acceptance", "obligation_id": "dimension:structure",
-            "status": "open", "classification": "unchanged", "first_seen_round": 1, "last_seen_round": 3, "seen_count": 2, **fields}
 
 
-INVALID_LEDGERS = {
-    "wrong-schema": {"schema": "future.review-ledger/v9", "cycles": [{"round": 3, "open_count": 1}], "blockers": []},
-    "cycle-id-underreport": {
-        "schema": "omac.review-ledger/v1",
-        "cycles": [cycle(1), cycle(2, open_blocker_ids=[], reported_blocker_ids=[]), cycle(3)], "blockers": [blocker()]},
-    "open-fixed": {
-        "schema": "omac.review-ledger/v1",
-        "cycles": [cycle(i, new_count=int(i == 1), fixed_count=0, regressed_count=0, unchanged_count=int(i != 1),
-                         prior_open_blocker_ids=[] if i == 1 else ["BLK-core"]) for i in range(1, 4)],
-        "blockers": [blocker(classification="fixed", seen_count=3)]},
-}
 
 
 @pytest.mark.parametrize("name", INVALID_LEDGERS)

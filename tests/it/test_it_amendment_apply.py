@@ -111,7 +111,7 @@ def test_a_runner_restarted_after_a_legacy_convergence_amendment_spends_a_fresh_
 
 
 def test_a_resume_that_crashed_after_the_manifest_apply_still_refuses_while_a_formal_run_is_active(kit, tmp_path):
-    from test_it_amendment_accept import accept, reviewed_resume
+    from _support.amendkit import accept, reviewed_resume
 
     path, target, amendment_file = reviewed_resume(kit, tmp_path, "amend-active-resume")
     original = amendment_mod._resume_apply_ledger

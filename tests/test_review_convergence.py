@@ -27,15 +27,9 @@ from omac.pipeline import dispatch
 from omac.pipeline.convergence import ResolutionState, resolve_convergence
 from omac.core.acceptance import load_acceptance_doc
 from omac.core.manifest import Contract, Manifest, Node
+from _support.reviewkit import _item, _production_multi_blocker_ledger  # noqa: F401
 
 
-def _item(*, contract=None, ledger=None):
-    return SimpleNamespace(
-        kind=TaskKind.DEVELOP,
-        contract=contract,
-        review_ledger=ledger,
-        review_obligations=None,
-    )
 
 
 def _amendment_acceptance_doc():
@@ -608,67 +602,6 @@ def test_unchanged_blocker_counts_once_per_review_cycle():
     assert review_state(ledger)["mode"] == "normal"
 
 
-def _production_multi_blocker_ledger(
-    classifications_by_round,
-    *,
-    obligation_ids=(
-        "dimension:structure",
-        "dimension:execution",
-        "dimension:ownership",
-    ),
-):
-    item = _item()
-    obligations = build_review_obligations(item)
-    roots = ("root-a", "root-b", "root-c")
-    ledger = None
-    for round_index, classifications in enumerate(
-        classifications_by_round, start=1,
-    ):
-        prior = []
-        if ledger is not None:
-            records = {
-                record["root_cause_key"]: record
-                for record in ledger["blockers"]
-            }
-            prior = [
-                {
-                    "blocker_id": records[root]["blocker_id"],
-                    "status": classification,
-                    "evidence": f"round {round_index} still shows {root}",
-                }
-                for root, classification in zip(roots, classifications)
-            ]
-        blockers = [
-            {
-                "root_cause_key": root,
-                "obligation_id": obligation_id,
-                "classification": classification,
-                "owner": f"owner-{root[-1]}",
-                "summary": f"{root} remains open",
-                "evidence": f"round {round_index} evidence for {root}",
-                "required_fix": f"fix {root}",
-            }
-            for root, obligation_id, classification in zip(
-                roots, obligation_ids, classifications,
-            )
-        ]
-        report = _report(
-            obligations,
-            prior=prior,
-            failed=set(obligation_ids),
-            blockers=blockers,
-        )
-        item.review_ledger = ledger
-        item.review_obligations = obligations
-        assert validate_convergence_review(item, "reject", report) == []
-        ledger = advance_review_ledger(
-            ledger,
-            report,
-            verdict="reject",
-            subject_digest=f"v{round_index}",
-            round_index=round_index,
-        )
-    return ledger
 
 
 def test_writer_and_validator_accept_mixed_unchanged_and_deeper_blockers():

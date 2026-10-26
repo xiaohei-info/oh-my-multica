@@ -7,7 +7,7 @@ import pytest
 
 from omac.core.taskmeta import parse_worker_handoff
 from omac.errors import PlatformError
-from test_handoff_control_payload import case  # noqa: F401  (the fixture)
+from _support.handoffcase import case  # noqa: F401  (the fixture)
 
 
 @pytest.mark.parametrize(

@@ -1,9 +1,14 @@
 """Builders for amendment tests: manifests, proposals and acceptance documents (no platform involved)."""
 from __future__ import annotations
 
+import yaml
+
+import omac.pipeline.amendment as amendment_pipeline
 from _support.state import save_literal
 from omac.core.acceptance import load_acceptance_doc
+from omac.core.amendment import build_reviewed_amendment
 from omac.core.manifest import EvidenceMode, MISSING_CONSUMES, ProducedArtifact, load_manifest, save_manifest
+from omac.core.taskmeta import TaskKind, TaskPhase
 
 
 def dag_manifest(tmp_path, ids=None, name="dag"):
@@ -380,3 +385,32 @@ def legacy_synced_authoring_accept_fixture(kit, tmp_path, legacy_convergence_sna
     amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
     kit.store.update_status(amendment_issue.id, WorkItemStatus.DONE)
     return path, amendment_file, target, reviewed
+
+
+
+
+RESUME_AUTHORING = {"op": "resume", "node": "bootstrap", "stage": "authoring"}
+
+
+
+def reviewed_resume(kit, tmp_path, key):
+    """A blocked `bootstrap` node and a confirmed amendment that resumes it at authoring; returns the pieces and the amendment file."""
+    path, target = bootstrap(kit, tmp_path)
+    issue = kit.store.create_work_item(kit.workspace, "amendment", "desc", key, "alice", reviewer="bob", kind=TaskKind.AMENDMENT)
+    kit.store.update_work_item_metadata(issue.id, phase=TaskPhase.CONFIRMATION, review_verdict="pass")
+    reviewed = build_reviewed_amendment(load_manifest(str(path)), proposal(RESUME_AUTHORING), kit.store, issue_id=issue.id,
+                                        reviewer_verdict="pass")
+    amendment_file = tmp_path / f"{key}.amendment.yaml"
+    amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    return path, target, amendment_file
+
+
+
+def accept(kit, path, amendment_file):
+    return amendment_pipeline.accept_amendment(kit.engine, str(path), str(amendment_file), reason="operator accepted", agent_pool=POOL)
+
+
+
+def accept_nits(kit, path, amendment_file, reason="operator accepted nits"):
+    return amendment_pipeline.accept_amendment_nits(kit.engine, str(path), str(amendment_file), reason=reason)
+

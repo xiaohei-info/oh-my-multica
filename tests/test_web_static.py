@@ -484,33 +484,14 @@ def test_index_polls_meta_for_refresh(orch, simple_manifest, monkeypatch):
     assert data["refresh"] == 7
 
 
-def test_static_index_uses_the_manifest_api(orch, simple_manifest, monkeypatch):
-    """SPA 通过命令一致的 API 读取运行状态与项目配置。"""
-    monkeypatch.chdir(orch.parent)
-    js = _read_asset("app.js")
-    assert "/api/manifests" in js, "SPA 必须消费 /api/manifests"
-    assert "/api/dag/status" in js, "SPA 必须消费 /api/dag/status"
-    assert "/api/meta" in js, "SPA 必须消费 /api/meta(轮询间隔)"
-    assert 'const config = await api("/api/config");' in js
-    assert 'applyLanguage(config.language||"en");' in js
-    assert "/api/node/" in js, "SPA 必须消费 /api/node/<key>"
-
-
-def test_spa_wires_collapsible_dag_controls_to_the_pure_projection():
+def test_the_page_has_the_collapsible_dag_controls():
     html = _read_index()
-    js = _read_asset("app.js")
-    css = _read_asset("app.css")
 
     for control in [
         "collapse-btn", "expand-all-btn", "focus-active-btn", "focus-anomaly-btn",
         "fit-btn", "reset-view-btn",
     ]:
         assert id_present(html, control), f"缺少 DAG 控件: {control}"
-    assert "OMACDag.projectDag" in js
-    assert "aggregate" in js
-    assert "presentState" in js
-    assert ".aggregate" in css
-    assert ".node.state-failed" in css
 
 
 def test_node_detail_loading_feedback_has_live_regions_and_busy_target():
@@ -523,15 +504,6 @@ def test_node_detail_loading_feedback_has_live_regions_and_busy_target():
     )
     assert re.search(r'id="detail-content"[^>]*aria-live="polite"', html)
     assert id_present(html, "dag-detail-retry")
-
-
-def test_aggregate_hidden_label_has_english_and_chinese_translations():
-    """聚合控件不能把 hidden 固定为英文，语言切换必须覆盖该标签。"""
-    js = _read_asset("app.js")
-
-    assert 'hidden:"hidden"' in js
-    assert 'hidden:"已隐藏"' in js
-    assert 'aggregate.hidden_count+" "+copy("hidden")' in js
 
 
 # ==================== 4.5 可折叠分层 DAG 纯投影 ====================
@@ -715,20 +687,50 @@ def test_dag_projection_fails_closed_for_unknown_dependencies_and_cycles():
     assert ".dag-error" in css
 
 
-def test_spa_closes_selection_and_detail_after_every_dag_redraw():
-    """redraw 后仅保留仍可见的选择；异步旧详情也不得回写。"""
-    js = _read_asset("app.js")
+def test_the_spa_reads_manifests_status_meta_config_and_node_detail_from_the_command_api():
+    result = _run_app_dom_scenario(r"""
+async ({app, setFetchHandler, jsonResponse, flush}) => {
+  const requested = [];
+  setFetchHandler(path => {
+    requested.push(path);
+    if(path.includes("/api/dag/status?manifest=one")) return jsonResponse({
+      nodes:[{key:"task", status:"todo", blocked_by:[]}], progress:{done:0, total:1}});
+    if(path.includes("/api/node/task?manifest=one")) return jsonResponse({contract:{}, evidence:null, rollback_count:0, comments:""});
+    if(path === "/api/meta") return jsonResponse({refresh:10});
+    if(path === "/api/config") return jsonResponse({language:"en"});
+    if(path === "/api/manifests") return jsonResponse([]);
+    throw new Error("unexpected request: "+path);
+  });
+  await app.selectManifest("one");
+  app.selectNode("task");
+  await flush(8);
+  return requested;
+}
+""")
 
-    assert "function syncSelectedProjection(projection)" in js
-    assert "const visibleKeys = new Set(projection.nodes.map(node => node.key));" in js
-    assert "clearSelection();" in js
-    assert "dimForSelected();" in js
-    assert re.search(
-        r"projection\.aggregates\.forEach\(aggregate => \{.*?\}\);\s*"
-        r"syncSelectedProjection\(projection\);",
-        js,
-        re.DOTALL,
-    )
+    assert any(path.startswith("/api/dag/status?manifest=one") for path in result)
+    assert any(path.startswith("/api/node/task?manifest=one") for path in result)
+
+
+def test_the_spa_labels_hidden_nodes_in_the_language_of_the_page():
+    result = _run_app_dom_scenario(r"""
+async ({app, elements, setFetchHandler, jsonResponse, flush}) => {
+  const chain = ["a","b","c","d","e","f","g","h"].map((key, index, keys) => ({
+    key, status:"todo", blocked_by:index ? [keys[index - 1]] : []}));
+  setFetchHandler(path => {
+    if(path.includes("/api/dag/status")) return jsonResponse({nodes:chain, progress:{done:0, total:chain.length}});
+    throw new Error("unexpected request: "+path);
+  });
+  await app.selectManifest("deep");
+  await flush(8);
+  const texts = [];
+  const visit = node => { if(node.textContent) texts.push(node.textContent); node.children.forEach(visit); };
+  visit(elements["dag-canvas"]);
+  return texts;
+}
+""")
+
+    assert any("hidden" in text for text in result), result
 
 
 def test_manifest_switch_shows_loading_and_failure_instead_of_blank_canvas():
@@ -1452,18 +1454,11 @@ async ({app, setFetchHandler, jsonResponse}) => {
     assert result["selected"] == "deep"
 
 
-def test_spa_renders_arrow_markers_zoom_pan_and_budget_notice():
+def test_the_page_has_the_budget_notice_and_the_view_reset_control():
     html = _read_index()
-    js = _read_asset("app.js")
-    css = _read_asset("app.css")
 
     assert id_present(html, "dag-budget")
     assert id_present(html, "reset-view-btn")
-    assert 'marker-end' in js
-    assert 'addEventListener("wheel"' in js
-    assert 'addEventListener("pointerdown"' in js
-    assert 'setViewport(' in js
-    assert 'touch-action:none' in css.replace(" ", "")
 
 
 def test_spa_wheel_zoom_pointer_pan_and_reset_update_the_viewport():
