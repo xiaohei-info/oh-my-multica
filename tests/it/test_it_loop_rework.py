@@ -14,7 +14,7 @@ from _support.loopkit import HANG, contract
 from omac.core.manifest import load_manifest
 from omac.core.review_convergence import review_subject_digest
 from omac.core.taskmeta import TaskPhase, review_context_binding
-from omac.core.workitem import WorkItemPayload, WorkItemStatus
+from omac.core.workitem import WorkItemControlProjection, WorkItemPayload, WorkItemStatus
 from omac.errors import PlatformError
 from omac.pipeline import loop
 from omac.pipeline.dispatch import _previous_review_context
@@ -22,8 +22,9 @@ from omac.pipeline.dispatch import _previous_review_context
 IDLE = []   # a Run that ends at once without submitting anything
 
 
-def rejected(kit, *rework):
-    manifest, path, item = kit.in_review([{"hang": 3}, kit.stack.review("reject")], *HANG, rework=rework)
+def rejected(kit, *rework, reviews=None):
+    """``reviews``: the Reviewer's attempts (default: reject the first delivery, hang on the next)."""
+    manifest, path, item = kit.in_review(*(reviews or ([{"hang": 3}, kit.stack.review("reject")], *HANG)), rework=rework)
     kit.wait_for(lambda: kit.store.get_work_item(item.id).review_verdict == "reject", what="the rejection")
     kit.wait_runs_ended(item.id)
     return manifest, path, item
@@ -716,3 +717,430 @@ def test_an_active_worker_is_not_restored_before_a_stalled_review_has_its_decisi
     assert "in_progress" not in saved and writes[0][2].get("decision_required", {}).get("reason_code") == "review-convergence-stalled"
     assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked"
     assert blocked.decision_required["reason_code"] == "review-convergence-stalled"
+
+
+# ---- how many times a rejection may go back to the Worker ---------------------------------------------------------------
+
+def test_a_rejection_is_final_when_the_review_budget_is_zero(kit):
+    manifest, path, item = rejected(kit, *HANG)
+    assigns = kit.record(kit.store, "assign_work_item")
+
+    result = kit.tick(manifest, path, retry_limits={"review": 0})
+
+    blocked = kit.store.get_work_item(item.id)
+    assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked"
+    assert blocked.bounces.review == 0 and not workers(assigns)
+    assert any("retry limit" in body for body in kit.comments(item.id))
+
+
+def test_the_second_rejection_exhausts_a_review_budget_of_one(kit):
+    reject = [{"hang": 3}, kit.stack.review("reject")]
+    manifest, path, item = rejected(kit, reviews=(reject, reject))
+    kit.tick(manifest, path, retry_limits={"review": 1})
+    assert manifest.nodes["a"].status == "in_progress" and kit.store.get_work_item(item.id).bounces.review == 1
+    assert kit.store.get_work_item(item.id).review_verdict is None   # the verdict is cleared; the next review starts afresh
+
+    kit.wait_runs_ended(item.id)
+    kit.tick_until(manifest, path, lambda: manifest.nodes["a"].status == "in_review", retry_limits={"review": 1}, what="the second review")
+    kit.wait_for(lambda: kit.store.get_work_item(item.id).review_verdict == "reject", what="the second rejection")
+    kit.wait_runs_ended(item.id)
+    result = kit.tick(manifest, path, retry_limits={"review": 1})
+
+    blocked = kit.store.get_work_item(item.id)
+    assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked" and blocked.bounces.review == 1
+
+
+# ---- nits ---------------------------------------------------------------------------------------------------------------
+
+def nits_review(kit, *, bounces=0, continuation=None):
+    """Node `a` reviewed with pass-with-nits as its ``bounces + 1``-th review; the Loop has not collected the verdict."""
+    manifest, path, item = kit.in_review([{"hang": 4}, kit.stack.review("pass-with-nits")], *HANG)
+    kit.wait_for(lambda: kit.store.get_work_item(item.id).review_verdict == "pass-with-nits", what="the verdict")
+    kit.wait_runs_ended(item.id)
+    if bounces:
+        current = kit.store.get_work_item(item.id)
+        kit.store.update_work_item_metadata(item.id, review_bounce=bounces, **({"review_continuation": continuation} if continuation else {}))
+        subject = review_subject_digest(kit.store.get_work_item(item.id), bounces + 1)
+        kit.store.update_work_item_metadata(item.id, review_subject_digest=subject,
+                                            reviewer_run_baseline=replace(current.reviewer_run_baseline, subject_digest=subject))
+    return manifest, path, item
+
+
+CONTINUATION = {"schema": "omac.review-continuation/v1", "stage": "develop", "mode": "producer-rework", "authorized_through_round": 10,
+                "decision_count": 1, "reason": "operator approved one additional review round"}
+
+
+@pytest.mark.parametrize(("bounces", "limit", "continuation"), [
+    pytest.param(0, None, None, id="first-review"),
+    pytest.param(1, 2, None, id="below-the-review-limit"),
+    pytest.param(9, 9, None, id="at-the-review-limit"),
+    pytest.param(9, 9, CONTINUATION, id="a-continuation-does-not-turn-nits-into-rework"),
+])
+def test_pass_with_nits_waits_for_an_explicit_acceptance_and_never_bounces_the_worker(kit, bounces, limit, continuation):
+    manifest, path, item = nits_review(kit, bounces=bounces, continuation=continuation)
+    reviewed = kit.store.get_work_item(item.id)
+    runs_before, assigns = kit.run_ids(item.id), kit.record(kit.store, "assign_work_item")
+
+    result = kit.tick(manifest, path, **({"retry_limits": {"review": limit}} if limit else {}))
+
+    blocked = kit.store.get_work_item(item.id)
+    assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked" and blocked.status is WorkItemStatus.BLOCKED
+    assert blocked.bounces.review == bounces and blocked.review_verdict == "pass-with-nits" and blocked.review_report == reviewed.review_report
+    assert blocked.worker_handoff is None and blocked.review_nits_acceptance is None
+    decision = blocked.decision_required
+    assert decision["schema"] == "omac.decision-required/v1" and decision["reason_code"] == "review-nits-acceptance-required"
+    assert (decision["kind"], decision["phase"], decision["gate"]) == ("develop", "review", "review-nits")
+    assert decision["resume_issue_id"] == item.id and decision["node_id"] == "a" and decision["verdict"] == "pass-with-nits"
+    assert decision["review_subject_digest"] == blocked.review_subject_digest and decision["review_report_ref"] == blocked.review_report_ref
+    assert f"omac node accept-nits {path} a" in result.report["failed_nodes"][0]["reason"]
+    again = kit.tick(manifest, path, **({"retry_limits": {"review": limit}} if limit else {}))   # the decision is persisted by now
+    assert f"omac node accept-nits {path} a" in again.report["next_actions"]
+    assert not workers(assigns) and kit.run_ids(item.id) == runs_before
+
+
+def test_a_legacy_partial_nits_report_cannot_skip_the_obligation_evidence_gate(kit):
+    manifest, path, item = rejected(kit, *HANG)
+    kit.store.update_work_item_metadata(item.id, review_verdict="pass-with-nits", review_report={
+        "review_goals": ["partial legacy report"], "diff_reviewed": True, "tests_rerun": True, "coverage_checked": True,
+        "full_review_completed": True, "acceptance_mapping": [{"acceptance": "works", "status": "pass"}], "blockers": [],
+        "nits": ["looks fine"]})
+
+    result = kit.tick(manifest, path)
+
+    got = kit.store.get_work_item(item.id)
+    assert result.state == "running" and got.status is WorkItemStatus.IN_PROGRESS and got.review_verdict is None and got.bounces.review == 1
+
+
+@pytest.mark.parametrize("break_ref", [
+    pytest.param(lambda ref: None, id="legacy-inline-only"),
+    pytest.param(lambda ref: {**ref, "attachment_id": ""}, id="wrong-attachment"),
+    pytest.param(lambda ref: {**ref, "sha256": "not-a-sha"}, id="wrong-sha"),
+])
+def test_a_nits_handoff_without_the_exact_report_reference_changes_nothing(kit, break_ref):
+    manifest, path, item = nits_review(kit)
+    before = kit.store.get_work_item(item.id)
+    shown = kit.distort(kit.store, "observe_work_item_control", lambda projection: replace(
+        projection, work_item=replace(projection.work_item, review_report_ref=break_ref(before.review_report_ref))), times=100)
+    kit.forbid(kit.store, "update_work_item_metadata", "reset_review", "update_status", "assign_work_item")
+    kit.forbid(kit.runtime, "wake", "list_runs")
+
+    with pytest.raises(PlatformError, match="review report ref|feedback|declared SHA-256"):
+        loop._dispatch_worker_handoff(kit.store, kit.runtime, kit.code_host, manifest, "a", review_bounce=1, gate="review-nits")
+
+    shown["armed"] = False   # reads are real again
+    after = kit.store.get_work_item(item.id)
+    assert (after.status, after.phase, after.bounces, after.review_verdict, after.worker_handoff) == (
+        before.status, before.phase, before.bounces, before.review_verdict, before.worker_handoff)
+
+
+def test_a_nits_handoff_may_be_answered_on_the_same_head_and_goes_to_review(kit):
+    manifest, path, item = nits_review(kit)
+    kit.stack.set_scenario("alice", [[kit.stack.tool("worker-submit")], [kit.stack.tool("worker-submit", "--no-push")]])
+    loop._dispatch_worker_handoff(kit.store, kit.runtime, kit.code_host, manifest, "a", review_bounce=1, gate="review-nits")
+    handoff = kit.store.get_work_item(item.id).worker_handoff
+    assert handoff.gate == "review-nits" and handoff.source_review_verdict == "pass-with-nits"
+    manifest.nodes["a"].status = "in_progress"
+    kit.save(manifest)
+    kit.wait_runs_ended(item.id)
+    assigns = kit.record(kit.store, "assign_work_item")
+
+    kit.tick_until(manifest, path, lambda: manifest.nodes["a"].status == "in_review", what="the answer to be reviewed")
+
+    recovered = kit.store.get_work_item(item.id)
+    assert recovered.worker_handoff is None and len(reviewers(assigns)) == 1 and not workers(assigns)
+
+
+# ---- states the platform and the manifest can disagree about ---------------------------------------------------------------
+
+def test_a_done_node_whose_issue_was_moved_back_to_review_is_corrected_to_done(kit):
+    manifest, path, item = kit.in_review()
+    url = item.artifacts["pr_url"]
+    kit.pr(url, pushes=json.loads((kit.stack.gh_state / "prs.json").read_text())[url]["pushes"], merged=True)
+    manifest.nodes["a"].status, manifest.nodes["a"].merged, manifest.nodes["a"].merged_at = "done", True, "2026-07-26T08:00:00Z"
+    kit.save(manifest)
+    kit.store.update_work_item_metadata(item.id, review_verdict="pass-with-nits", worker_handoff={}, reviewer_run_baseline={}, decision_required={})
+    kit.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+    result = kit.tick(manifest, path)
+
+    assert result.state == "converged" and manifest.nodes["a"].status == "done"
+    assert kit.store.get_work_item(item.id).status is WorkItemStatus.DONE
+
+
+def test_a_done_node_with_a_reject_verdict_goes_back_to_the_worker(kit):
+    """An older version could mark a legitimate rejection done; resuming must recognise it."""
+    manifest, path, item = rejected(kit, *HANG)
+    manifest.nodes["a"].status = "done"
+    kit.save(manifest)
+    kit.store.update_status(item.id, WorkItemStatus.DONE)
+
+    result = kit.tick(manifest, path)
+
+    got = kit.store.get_work_item(item.id)
+    assert result.state == "running" and manifest.nodes["a"].status == "in_progress"
+    assert got.status is WorkItemStatus.IN_PROGRESS and got.review_verdict is None and got.bounces.review == 1
+
+
+@pytest.mark.parametrize("stale", ["todo", "blocked", "done"])
+def test_a_reworked_delivery_is_reviewed_even_when_the_manifest_still_shows_an_old_state(kit, stale):
+    manifest, path, item = delivered_again(kit)
+    manifest.nodes["a"].status = stale
+    kit.save(manifest)
+
+    result = kit.tick(manifest, path)
+
+    got = kit.store.get_work_item(item.id)
+    assert result.state == "running" and manifest.nodes["a"].status == "in_review"
+    assert got.status is WorkItemStatus.IN_REVIEW and got.phase is TaskPhase.REVIEW
+
+
+def test_a_rejection_is_collected_while_the_manifest_still_shows_the_node_in_progress(kit):
+    manifest, path, item = rejected(kit, *HANG)
+    manifest.nodes["a"].status = "in_progress"
+    kit.save(manifest)
+    kit.store.update_status(item.id, WorkItemStatus.IN_REVIEW)
+
+    result = kit.tick(manifest, path)
+
+    got = kit.store.get_work_item(item.id)
+    assert result.state == "running" and manifest.nodes["a"].status == "in_progress"
+    assert got.status is WorkItemStatus.IN_PROGRESS and got.worker_handoff is not None and got.bounces.review == 1
+
+
+# ---- preparing the handoff -------------------------------------------------------------------------------------------------
+
+class AssignmentReached(Exception):
+    pass
+
+
+def unassigned_handoff(kit):
+    """Node `a` with a Worker handoff that has not started a Run yet (everything before the assignment is done)."""
+    kit.monkeypatch.setattr(loop, "_HANDOFF_OBSERVATION_INTERVAL", 0.0)
+    manifest, path, item = kit.dispatched(wait=False)
+    current = kit.store.get_work_item(item.id)
+    baseline = tuple(sorted(run.id for run in kit.runtime.list_runs(item.id) if run.kind == "direct"))
+    kit.store.update_work_item_metadata(item.id, worker_handoff=replace(
+        current.worker_handoff, target_run_id=None, baseline_direct_run_ids=baseline))
+    return manifest, path, item
+
+
+def residual_reviewer_baseline(kit, item):
+    from omac.core.taskmeta import ReviewerRunBaseline
+
+    return ReviewerRunBaseline(
+        schema="omac.reviewer-run-baseline/v1", subject_digest="old-subject", target_reviewer="bob",
+        target_agent_id=kit.store.resolve_agent_id("bob"), cutoff_created_at="2026-08-01T00:00:00Z", generation="review-old", attempt=1)
+
+
+def test_the_handoff_clears_a_residual_reviewer_baseline_before_it_assigns_the_worker(kit):
+    manifest, path, item = unassigned_handoff(kit)
+    kit.store.update_work_item_metadata(item.id, reviewer_run_baseline=residual_reviewer_baseline(kit, item))
+    resets = kit.record(kit.store, "reset_review")
+
+    def baseline_is_gone(*_args, **_kw):
+        assert kit.store.get_work_item(item.id).reviewer_run_baseline is None
+        raise AssignmentReached
+
+    kit.before(kit.store, "assign_work_item", baseline_is_gone)
+
+    with pytest.raises(AssignmentReached):
+        loop._dispatch_worker_handoff(kit.store, kit.runtime, kit.code_host, manifest, "a")
+
+    assert len(resets) == 1
+
+
+def test_a_reviewer_baseline_that_appears_during_preparation_stops_the_assignment(kit):
+    manifest, path, item = unassigned_handoff(kit)
+    drift = kit.after(kit.store, "update_work_item_metadata", lambda *_, **__: kit.store.update_work_item_metadata(
+        item.id, reviewer_run_baseline=residual_reviewer_baseline(kit, item)), only=lambda _id, **m: "description" in m)
+    kit.forbid(kit.store, "assign_work_item")
+    kit.forbid(kit.runtime, "wake")
+
+    result = loop._dispatch_worker_handoff(kit.store, kit.runtime, kit.code_host, manifest, "a")
+
+    assert drift["calls"] == 1 and result.state == "pending-preparation"
+    assert kit.store.get_work_item(item.id).reviewer_run_baseline is not None
+
+
+@pytest.mark.parametrize("field", ["machine_feedback_ref", "review_report_ref"])
+@pytest.mark.parametrize("raw", [[], ["fact"]], ids=["empty-list", "list"])
+def test_a_review_reference_that_turns_invalid_during_preparation_stops_the_assignment(kit, field, raw):
+    manifest, path, item = unassigned_handoff(kit)
+    shown = []
+
+    def arm(*_args, **_kw):
+        for name, transform in (
+            ("get_work_item", lambda current: replace(current, **{field: raw})),
+            ("observe_work_item_control", lambda projection: replace(projection, work_item=replace(projection.work_item, **{field: raw}))),
+        ):
+            shown.append(kit.distort(kit.store, name, transform, times=100))
+
+    kit.after(kit.store, "update_work_item_metadata", arm, only=lambda _id, **m: "description" in m)
+    kit.forbid(kit.store, "assign_work_item")
+    kit.forbid(kit.runtime, "wake")
+
+    result = loop._dispatch_worker_handoff(kit.store, kit.runtime, kit.code_host, manifest, "a")
+
+    assert shown and result.state == "pending-preparation"
+
+
+@pytest.mark.parametrize("payload", [WorkItemPayload.VERIFICATION, WorkItemPayload.DELIVERABLE, WorkItemPayload.PROJECT_RULES])
+@pytest.mark.parametrize("source", ["current", "head-drift", "unreadable"])
+def test_a_new_review_handoff_reads_the_fresh_subject_before_it_writes_anything(kit, payload, source):
+    manifest, path, item = rejected(kit, *HANG)
+    kit.store.update_work_item_metadata(item.id, deliverable="exact delivery", project_rules="exact rules")
+    current = kit.store.get_work_item(item.id)
+    kit.store.update_work_item_metadata(item.id, review_subject_digest=review_subject_digest(current, current.bounces.review + 1))
+    current = kit.store.get_work_item(item.id)
+    stale_head = replace(current, artifacts={**current.artifacts, "head_sha": "c" * 40}) if source == "head-drift" else current
+    deferred = WorkItemControlProjection(replace(stale_head, **{payload.value: None}), deferred_payloads=frozenset({payload}))
+    plans = []
+
+    def hydrate(shown, plan):
+        plans.append(plan)
+        return replace(shown.work_item, **{payload.value: None if source == "unreadable" else getattr(current, payload.value)})
+
+    kit.monkeypatch.setattr(kit.store, "hydrate_work_item_evidence", hydrate)
+    kit.distort(kit.store, "observe_work_item_control", lambda _fresh: deferred, times=1)
+    writes = []
+
+    def stop_before_write(_id, **metadata):
+        writes.append(metadata)
+        raise RuntimeError("source accepted before the first write")
+
+    kit.monkeypatch.setattr(kit.store, "update_work_item_metadata", stop_before_write)
+    kit.forbid(kit.store, "update_status", "assign_work_item")
+    kit.forbid(kit.runtime, "wake")
+
+    error, message = (RuntimeError, "source accepted") if source == "current" else (PlatformError, "source is stale")
+    with pytest.raises(error, match=message):
+        loop._dispatch_worker_handoff(kit.store, kit.runtime, kit.code_host, manifest, "a", review_bounce=current.bounces.review + 1,
+                                      gate="review", projection=WorkItemControlProjection(current))
+
+    assert plans == [frozenset({payload})] and bool(writes) is (source == "current")
+
+
+def test_a_handoff_intent_that_cannot_be_written_never_retires_the_delivery(kit):
+    manifest, path, item = rejected(kit, *HANG)
+    before = kit.store.get_work_item(item.id)
+    assert before.delivery_identity is not None
+    kit.fault(kit.store, "update_work_item_metadata", when="before", error=PlatformError("metadata exceeds the 8KB size limit"),
+              only=lambda _id, **m: bool(m.get("worker_handoff")))
+
+    with pytest.raises(PlatformError, match="8KB"):
+        loop._dispatch_worker_handoff(kit.store, kit.runtime, kit.code_host, manifest, "a", review_bounce=before.bounces.review + 1, gate="review")
+
+    current = kit.store.get_work_item(item.id)
+    assert current.delivery_identity == before.delivery_identity and current.worker_handoff is None
+    assert current.bounces == before.bounces and current.review_verdict == before.review_verdict
+
+
+@pytest.mark.parametrize("drift", [False, True])
+def test_the_intent_is_durable_before_the_delivery_is_retired_and_resumes_strictly(kit, drift):
+    manifest, path, item = rejected(kit, *HANG)
+    before = kit.store.get_work_item(item.id)
+    kit.monkeypatch.setattr(kit.store, "is_transient_transport_error", lambda exc: "connection reset by peer" in str(exc))
+    state = {"lost": False, "crashed": False}
+    original = kit.store.update_work_item_metadata
+
+    def interrupt(item_id, **metadata):
+        if metadata.get("worker_handoff") and not state["lost"]:
+            state["lost"] = True
+            original(item_id, **metadata)
+            raise PlatformError("connection reset by peer")     # written, but the answer is lost
+        if metadata.get("delivery_identity") == {} and not state["crashed"]:
+            assert kit.store.get_work_item(item_id).worker_handoff is not None, "the intent must be durable first"
+            state["crashed"] = True
+            raise RuntimeError("crash before the source delivery is retired")
+        return original(item_id, **metadata)
+
+    kit.monkeypatch.setattr(kit.store, "update_work_item_metadata", interrupt)
+    with pytest.raises(RuntimeError, match="before the source delivery is retired"):
+        loop._dispatch_worker_handoff(kit.store, kit.runtime, kit.code_host, manifest, "a", review_bounce=before.bounces.review + 1, gate="review")
+    staged = kit.store.get_work_item(item.id)
+    generation = staged.worker_handoff.generation
+    assert staged.delivery_identity == before.delivery_identity and staged.bounces == before.bounces
+    kit.monkeypatch.setattr(kit.store, "update_work_item_metadata", original)
+
+    if drift:
+        kit.distort(kit.store, "observe_work_item_control", lambda projection: replace(projection, work_item=replace(
+            projection.work_item, artifacts={**projection.work_item.artifacts, "head_sha": "foreign-head"})), times=100)
+        with pytest.raises(PlatformError, match="source.*changed|source.*stale"):
+            loop._dispatch_worker_handoff(kit.store, kit.runtime, kit.code_host, manifest, "a")
+    else:
+        loop._dispatch_worker_handoff(kit.store, kit.runtime, kit.code_host, manifest, "a")
+        current = kit.store.get_work_item(item.id)
+        assert current.delivery_identity is None and current.worker_handoff.generation == generation
+        assert current.bounces.worker == before.bounces.worker and current.bounces.review == before.bounces.review + 1
+
+
+def test_a_source_that_stays_stale_fails_the_handoff_before_any_write(kit):
+    manifest, path, item = rejected(kit, *HANG)
+    current = kit.store.get_work_item(item.id)
+    stale = WorkItemControlProjection(replace(current, bounces=replace(current.bounces, review=current.bounces.review + 1)))
+    kit.distort(kit.store, "observe_work_item_control", lambda _fresh: stale, times=100)
+    kit.forbid(kit.store, "update_work_item_metadata", "update_status", "assign_work_item")
+    kit.forbid(kit.runtime, "wake")
+
+    with pytest.raises(PlatformError, match="source is stale"):
+        loop._dispatch_worker_handoff(kit.store, kit.runtime, kit.code_host, manifest, "a", review_bounce=current.bounces.review + 1,
+                                      gate="review", projection=stale)
+
+
+def test_a_rejection_then_a_pass_converges_with_the_whole_review_history(kit):
+    manifest, path, item = rejected(kit, reviews=([{"hang": 3}, kit.stack.review("reject")], [kit.stack.review("pass")]))
+
+    result = kit.settle(manifest, path, timeout=120, retry_limits={"review": 3})
+
+    done = kit.store.get_work_item(item.id)
+    assert result.state == "converged" and manifest.nodes["a"].status == "done" and manifest.nodes["a"].merged is True
+    assert done.status is WorkItemStatus.DONE and done.bounces.review == 1
+    assert [cycle["verdict"] for cycle in done.review_ledger["cycles"]] == ["reject", "pass"]
+    assert len({cycle["subject_digest"] for cycle in done.review_ledger["cycles"]}) == 2
+    assert len(kit.merges()) == 1
+
+
+@pytest.mark.parametrize("changed", ["artifacts", "verification"])
+def test_a_delivery_that_changes_without_a_causal_run_does_not_replace_the_target_worker(kit, changed):
+    manifest, path, item = rejected(kit, *HANG)
+    ledger_before = kit.store.get_work_item(item.id).review_ledger
+    crash = CHECKPOINTS["bounce"](kit)
+    with pytest.raises(RuntimeError, match="crash"):
+        kit.tick(manifest, path)
+    crash["armed"] = False
+    if changed == "artifacts":
+        kit.store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://example.test/pr/changed"})
+    else:
+        document = {"commands": [{"cmd": "pytest changed", "exit_code": 0}], "pr_base": "main", "coverage": 91}
+        kit.store.update_work_item_metadata(item.id, verification=document, verification_source=json.dumps(document))
+    assigns = kit.record(kit.store, "assign_work_item")
+    persisted = load_manifest(path)
+
+    result = kit.tick(persisted, path)
+
+    recovered = kit.store.get_work_item(item.id)
+    assert result.state == "running" and persisted.nodes["a"].status == "in_progress" and recovered.worker_handoff is not None
+    assert recovered.review_ledger == ledger_before and len(workers(assigns)) == 1 and not reviewers(assigns)
+
+
+def test_an_authoring_recovery_collects_a_submit_on_the_same_head_without_a_worker_retry(kit):
+    from omac.core.stage_recovery import prepare_stage_recovery
+
+    manifest, path, item = rejected(kit, [kit.stack.tool("worker-submit", "--no-push")], *HANG)
+    prepare_stage_recovery(manifest.nodes["a"], kit.store, "authoring")
+    kit.store.update_work_item_metadata(item.id, worker_bounce=15)
+    manifest.nodes["a"].status = "todo"
+    kit.save(manifest)
+    head = kit.store.get_work_item(item.id).artifacts["head_sha"]
+    kit.tick(manifest, path, retry_limits={"worker": 15})
+    intent = kit.store.get_work_item(item.id).worker_handoff
+    assert intent.gate == "explicit-dispatch" and intent.source_review_verdict is None and intent.baseline_verification_attachment_id
+    kit.wait_runs_ended(item.id)
+    assigns = kit.record(kit.store, "assign_work_item")
+
+    kit.tick_until(manifest, path, lambda: manifest.nodes["a"].status == "in_review", retry_limits={"worker": 15}, what="the submit to be reviewed")
+
+    recovered = kit.store.get_work_item(item.id)
+    assert recovered.worker_handoff is None and recovered.delivery_identity.pr_head_sha == head
+    assert recovered.verification_ref["attachment_id"] != intent.baseline_verification_attachment_id
+    assert recovered.bounces.worker == 15 and len(reviewers(assigns)) == 1 and not workers(assigns)

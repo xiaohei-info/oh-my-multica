@@ -98,3 +98,11 @@ def shown(**fields):
 ])
 def test_the_sealed_delivery_is_still_the_one_the_item_shows(change, expected):
     assert control_matches_handoff_candidate(shown(**change), intent("explicit-dispatch"), sealed()) is expected
+
+
+@pytest.mark.parametrize(("item", "handoff", "expected"), [
+    pytest.param(delivered(), replace(intent("review"), baseline_pr_head_sha=None), True, id="legacy-review-gate-without-a-baseline-head"),
+    pytest.param(delivered(), intent("review", "pass-with-nits", head=None), True, id="legacy-nits-gate-without-a-baseline-head"),
+])
+def test_handoffs_from_before_the_baseline_head_existed_are_judged_by_their_verdict(item, handoff, expected):
+    assert handoff_has_new_delivery(item, handoff) is expected
