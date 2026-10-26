@@ -233,6 +233,12 @@ every call logged), and a **fault proxy** between `omac` and the backend (`fail_
 `tests/it/test_it_crash_matrix.py` enumerates every write a one-node DAG makes and, for each, kills `omac` or loses the
 response after the server applied it, then restarts: one live issue, at most one Run per explicit authorization, convergence.
 
+**CI shape and timeouts.** On a 10-core development Mac the unit and integration tests take 21 s (18 CPU-s) and the 789 Docker
+tests 9 min 38 s with `-n 4` (about 25 CPU-minutes). A 2 vCPU runner cannot do 25 CPU-minutes in 10 minutes, so `ci.yml` runs
+the non-Docker tests (Python 3.10 and 3.12, 10-minute timeout) and the Docker tests as three parallel shards on Python 3.12
+(`pytest tests/it --shard I/3`, every third file by path; one shard measured 6 min 17 s with `-n 2`, 7.2 CPU-minutes,
+timeout 25 minutes). The setup a maintainer must do on GitHub is listed in `docs/github-setup.md`.
+
 Per-test limits (`tests/_support/budget.py`) are enforced by `tests/conftest.py`; `EXEMPT_FILES` is empty. Docker is required
 for `tests/it` and is never skipped silently. The smoke run's spend is capped at 20 USD per month: a metered key with a
 hard limit in the provider console is the main gate, `tests/smoke/ledger.py` refuses to start at the cap.

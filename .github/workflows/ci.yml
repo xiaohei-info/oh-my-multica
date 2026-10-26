@@ -8,11 +8,18 @@ on:
 permissions:
   contents: read
 
+# Timeouts are sized for the smallest runner GitHub may give this repository (2 vCPU, 7 GB; private repositories),
+# not for the 4 vCPU runner of public ones. Basis, measured on a 10-core development Mac (see docs/design/README.md section 11):
+#   unit + integration tests   18 CPU-seconds, 21 s wall with -n 2            -> 10 min is ~20x
+#   Docker tests               ~25 CPU-minutes in total, 9.6 min wall with -n 4 on 10 cores
+# 25 CPU-minutes on 2 vCPU cannot finish in 10 minutes, so the Docker tests run as 3 shards in parallel jobs (every third
+# file, tests/_support/shard.py). One shard is ~8 CPU-minutes: >= 4 min if CPU-bound, ~7 min if latency-bound (-n 2),
+# plus ~2 min for the CLI download, image pull and stack start. 25 minutes is about twice that.
 jobs:
   test:
-    name: pytest (Python ${{ matrix.python-version }})
+    name: unit and integration tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +39,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test]" import-linter
 
+      - name: Check import layering
+        run: lint-imports
+
+      - name: Run the tests that need no Docker (live tests need a real platform and are skipped)
+        run: pytest tests/ -m "not docker and not live" -n 2 --dist loadfile
+
+  docker:
+    name: Docker tests, shard ${{ matrix.shard }} of 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package and test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
       - name: Install the Multica CLI that matches the test server (tests/it/compose.yml)
         run: |
           version=0.6.5
@@ -47,8 +83,5 @@ jobs:
       - name: Pull the test server images
         run: OMAC_IT_SECRET=pull OMAC_IT_CODE=000000 docker compose -p omac-it-pull -f tests/it/compose.yml pull
 
-      - name: Check import layering
-        run: lint-imports
-
-      - name: Run all tests (unit, integration, Docker; live tests need a real platform and are skipped)
-        run: pytest tests/ -m "not live" -n 4 --dist loadfile
+      - name: Run this shard of the Docker tests
+        run: pytest tests/it -m "not live" -n 2 --dist loadfile --shard ${{ matrix.shard }}/3

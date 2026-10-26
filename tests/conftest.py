@@ -7,9 +7,23 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from _support import budget  # noqa: E402
+from _support import budget, shard  # noqa: E402
 
 _session_tmp_bytes = 0
+
+
+def pytest_addoption(parser):
+    parser.addoption("--shard", default=None, metavar="I/N",
+                     help="run only every N-th test file (sorted by path), starting at the I-th: CI splits tests/it this way")
+
+
+def pytest_collection_modifyitems(config, items):
+    spec = config.getoption("--shard")
+    if spec:
+        keep = shard.mine((str(item.fspath) for item in items), spec)
+        dropped = [item for item in items if str(item.fspath) not in keep]
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = [item for item in items if str(item.fspath) in keep]
 
 
 @pytest.hookimpl(hookwrapper=True)
