@@ -60,6 +60,7 @@ class Kit:
         self.agents("hang")
         self._seq = 0
         self._proxy = None
+        stack.gh_behavior()                      # the code host shim starts every test with its default behaviour
         self._merges_at_start = len(stack.gh_calls("merge"))
 
     def close(self) -> None:

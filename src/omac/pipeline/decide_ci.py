@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from ..core.workitem import WorkItemStatus
 from ..i18n import ui
-from .decide_effects import AddComment, Assign, Plan, SetNode, UpdateMetadata, UpdateStatus, Wake
+from .decide_effects import AddComment, Plan, SetNode, UpdateMetadata, UpdateStatus
 
 
 def plan_ci_start(*, node_key: str, item_id: str, pr_url: str) -> Plan:
@@ -46,4 +46,6 @@ def plan_ci_result(
     if limit == 0 or next_bounce >= limit:
         return Plan(head + (SetNode(node_key, {"status": "blocked"}),
                             UpdateStatus(item_id, WorkItemStatus.BLOCKED)), "blocked")
-    return Plan(head + back + (Assign(item_id, worker, "worker"), Wake(item_id, worker, "worker")), "bounce")
+    # The Worker is not woken here: the Loop dispatches it through a persisted handoff intent (the delivery identity must be
+    # retired and the next delivery sealed against the new Run), exactly as for a review rework.
+    return Plan(head + back, "bounce")

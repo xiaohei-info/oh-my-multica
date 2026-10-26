@@ -33,8 +33,8 @@ CI = dict(node_key="a", item_id="i", worker="w", label="CI check failed (exit co
 
 @pytest.mark.parametrize("passed,bounces,limit,outcome,kind_list", [
     (True, 0, 3, "pass", ["SetNode", "UpdateStatus"]),
-    (False, 0, 3, "bounce", ["AddComment", "UpdateMetadata", "SetNode", "UpdateStatus", "Assign", "Wake"]),
-    (False, 1, 3, "bounce", ["AddComment", "UpdateMetadata", "SetNode", "UpdateStatus", "Assign", "Wake"]),
+    (False, 0, 3, "bounce", ["AddComment", "UpdateMetadata", "SetNode", "UpdateStatus"]),
+    (False, 1, 3, "bounce", ["AddComment", "UpdateMetadata", "SetNode", "UpdateStatus"]),
     (False, 2, 3, "blocked", ["AddComment", "UpdateMetadata", "SetNode", "UpdateStatus"]),
     (False, 0, 0, "blocked", ["AddComment", "UpdateMetadata", "SetNode", "UpdateStatus"]),
 ])

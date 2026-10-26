@@ -1298,6 +1298,7 @@ def test_late_submit_contract_hydration_failure_keeps_handoff_uncommitted(
     remote.calls.clear()
     monkeypatch.setattr(loop, "validate_worker_evidence", lambda *_args: [])
     monkeypatch.setattr(loop, "advance_delivery", lambda *_args, **_kwargs: "bounce")
+    monkeypatch.setattr(loop, "_return_to_worker", lambda *_args: None)   # these tests stop after the late handoff is sealed
 
     loop.tick(
         store,
@@ -1362,6 +1363,7 @@ def test_late_submit_commits_handoff_only_after_complete_worker_evidence(
         lambda _node, item: evidence.append(item) or [],
     )
     monkeypatch.setattr(loop, "advance_delivery", lambda *_args, **_kwargs: "bounce")
+    monkeypatch.setattr(loop, "_return_to_worker", lambda *_args: None)   # these tests stop after the late handoff is sealed
     manifest, path = _manifest_path(tmp_path, {
         item_id: Node(
             id=item_id,

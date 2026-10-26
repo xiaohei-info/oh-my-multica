@@ -2,7 +2,7 @@
 """`gh` shim for integration tests: pull requests live in $OMAC_GH_STATE/prs.json, every call is logged to
 $OMAC_GH_STATE/calls.log, and $OMAC_GH_STATE/behavior.json can make `pr merge` fail ({"merge": "fail"}).
 
-Supports exactly what OMAC calls: `gh pr view <url> --json ...` and `gh pr merge <url> ...`, `gh pr create` (for real
+Supports exactly what OMAC calls: `gh pr view <url> --json ...`, `gh pr merge <url> ...` and `gh pr checks <url>` ({"checks": "fail"} makes it fail), `gh pr create` (for real
 agents in the smoke run), plus the test-only
 `gh __push <url>` that a scripted worker uses to move the PR head like a real push would."""
 import hashlib, json, os, sys, time
@@ -26,6 +26,10 @@ elif args[:2] == ["pr", "merge"] and len(args) > 2:
     prs[args[2]] = {**prs.get(args[2], {}), "merged": True, "merged_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     prs_path.write_text(json.dumps(prs))
     print("merged")
+elif args[:2] == ["pr", "checks"] and len(args) > 2:
+    if behavior.get("checks") == "fail":
+        sys.exit("check failed: ci/build")
+    print("all checks passed")
 elif args[:2] == ["pr", "create"]:
     number = len(prs) + 1
     url = f"https://github.com/example/repo/pull/{number}"

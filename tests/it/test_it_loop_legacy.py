@@ -1,5 +1,6 @@
 """Work that predates the causal handoff and delivery identity: the Loop must stop and ask, never guess."""
 import copy
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -183,3 +184,22 @@ def test_legacy_decision_restart_does_not_duplicate_comment_or_dispatch(kit):
 
     assert result.state == "needs_decision" and restarted.nodes[node.id].status == "blocked"
     assert len(kit.comments(item.id)) == len(baseline) + 1
+
+
+def test_a_worker_that_submits_between_the_item_read_and_the_run_read_is_not_a_legacy_case(kit):
+    """The Loop read the item while the Worker ran; by the time it listed the Runs the Worker had submitted and ended."""
+    kit.stack.set_scenario("alice", [[kit.stack.tool("worker-submit")]])
+    manifest = kit.manifest([kit.node("a", contract=contract())])
+    path = kit.save(manifest)
+    kit.tick(manifest, path, max_parallel=1)
+    item_id = manifest.nodes["a"].work_item_id
+    # what the Loop read: in progress, and with no handoff intent (a bounce re-wakes the Worker without one)
+    stale = replace(kit.store.get_work_item(item_id), status=WorkItemStatus.IN_PROGRESS, worker_handoff=None)
+    kit.wait_runs_ended(item_id)
+    assert kit.store.get_work_item(item_id).status is WorkItemStatus.DONE
+    decisions = kit.record(kit.store, "update_work_item_metadata")
+
+    recovered, failure = loop._recover_legacy_initial_worker(kit.store, kit.runtime, manifest, "a", stale, path)
+
+    assert failure is None and recovered is stale and not decisions
+    assert kit.store.get_work_item(item_id).decision_required is None

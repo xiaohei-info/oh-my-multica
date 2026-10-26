@@ -101,6 +101,7 @@ def test_a_pr_head_that_moves_after_the_seal_blocks_the_reviewer_dispatch(kit):
 
 def test_the_ordinary_ci_gate_still_applies_to_a_reworked_delivery(kit):
     manifest, path, item = delivered_again(kit)
+    kit.stack.gh_behavior(checks="fail")          # the reworked delivery fails its checks
     assigns = kit.record(kit.store, "assign_work_item")
     checks = kit.record(kit.code_host, "check_pull_request")
 

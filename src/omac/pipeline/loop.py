@@ -1399,7 +1399,9 @@ def _handoff_hydrate_contract(run: _HandoffRun, gate: str | None) -> None:
     # Every new handoff binds the materialized Store contract. A deferred
     # control projection's None is not an authoritative null contract.
     required_payloads = {WorkItemPayload.CONTRACT}
-    if gate in _HANDOFF_REVIEW_GATES:
+    # An explicit dispatch over an already sealed delivery (a CI bounce) binds the same evidence that retiring the old
+    # identity re-reads, so its subject digest must be computed from the hydrated evidence too.
+    if gate in _HANDOFF_REVIEW_GATES or (gate == "explicit-dispatch" and run.current.delivery_identity is not None):
         # The locked fresh projection defers the exact review subject's
         # delivery and feedback bodies, even if collect already read them.
         required_payloads.update(_REVIEW_CONFIRMATION_PAYLOADS)
@@ -2398,6 +2400,10 @@ def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path):
             UpdateMetadata(item.id, {'worker_handoff': intent}),
         ], Ports(store=store))
         return store.observe_work_item_control(item.id).work_item, None
+    # The item was read before the Runs: a Worker that submitted in between ended its Run normally. Judge only a fresh read.
+    fresh = store.observe_work_item_control(item.id).work_item
+    if fresh.status != WorkItemStatus.IN_PROGRESS or fresh.worker_handoff is not None or fresh.decision_required:
+        return item, None
     retry = f"omac node retry {path} {key}"
     reason = ui(
         f"Legacy Worker Run causality is unsafe; inspect Runs, then use `{retry}`.",
@@ -3199,6 +3205,19 @@ def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
     return False
 
 
+def _return_to_worker(c: _Collect, n: _Node) -> None:
+    """Hand a delivery that failed a gate after Worker evidence (CI) back to its Worker through a persisted handoff.
+
+    The handoff retires the sealed delivery identity of the failed delivery and binds the next delivery to the new Run;
+    a bare assign + wake would leave the resubmission unsealed and the review stage unable to prove its subject."""
+    n.handoff = _dispatch_worker_handoff(
+        c.store, c.runtime, c.code_host, c.manifest, n.key,
+        review_bounce=n.item.bounces.review, gate="explicit-dispatch", projection=n.projection)
+    if n.handoff.state == "complete":
+        _finalize_worker_handoff_or_defer(c.store, c.manifest, n.key, n.node, n.handoff)
+    set_node(c.manifest, n.key, status="in_progress")
+
+
 def _collect_in_progress(c: _Collect, n: _Node) -> None:
     """Worker stage: collect a finished delivery through the evidence, CI and merge gates."""
     key, node = n.key, n.node
@@ -3240,6 +3259,7 @@ def _collect_in_progress(c: _Collect, n: _Node) -> None:
                 "CI 未通过,已转回 worker(上界未耗尽,待重交)")
             log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key,
                      id=node.work_item_id, gate="ci")
+            _return_to_worker(c, n)
         elif after is AfterCi.BLOCK:
             c.failures[key] = ui(
                 "CI failed and retry.ci is exhausted.",
