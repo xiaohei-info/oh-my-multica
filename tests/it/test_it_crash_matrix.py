@@ -84,8 +84,14 @@ def test_a_fault_after_write_k_never_duplicates_an_effect(project, stack, k, fau
     live = [i for i in _issues(stack, name) if i["status"] != "cancelled"]
     assert len(live) == 1, "exactly one live issue for the node"
     runs = json.loads(stack.multica("issue", "runs", live[0]["id"], "--output", "json"))
-    assert 1 <= len(runs) <= 1 + retried, (
-        "the Worker is dispatched once, plus at most once per explicit retry; OMAC's writes in the faulted process: "
+    runs.sort(key=lambda r: r.get("created_at") or "")
+    # A faulted process that stopped the node with a decision (exit 20) while the assignment's Run was already live races with that Run's
+    # own submit: when the submit lost, the plain rerun the decision names starts one more Run (the Worker retry budget), and never while the
+    # earlier one still runs. Anything else is a duplicated dispatch.
+    allowed = 1 + retried + (first.returncode == 20)
+    serial = all((later.get("created_at") or "") >= (earlier.get("completed_at") or "~") for earlier, later in zip(runs, runs[1:]))
+    assert 1 <= len(runs) <= allowed and serial, (
+        "the Worker is dispatched once, plus at most once per explicit retry or rerun of a stopped node, never two at a time; OMAC's writes in the faulted process: "
         f"{[(m, p.split('/', 4)[-1], b[:90]) for m, p, b in proxy.bodies]}; first exit {first.returncode}, resumed {resumes}; "
         f"Runs: {[(r.get('id'), r.get('status'), r.get('created_at'), r.get('completed_at'), (r.get('attribution') or {}).get('evidence')) for r in runs]}; "
         f"first stderr: {first_err[-1500:]}")
