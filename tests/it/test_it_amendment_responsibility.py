@@ -1,5 +1,6 @@
 """Responsibility and historical-correction amendments on a real Multica: what apply writes, what it must not touch, and how it resumes."""
 import copy
+import json
 
 import pytest
 import yaml
@@ -137,10 +138,16 @@ def test_a_historical_apply_fails_closed_when_review_or_reference_evidence_drift
     reviewed = build_reviewed_amendment(manifest, proposal(responsibility_update(historical=True)), kit.store,
                                         issue_id="amendment-issue", reviewer_verdict="pass", acceptance=responsibility_acceptance_doc())
 
+    refs = {key: value for key, value in json.loads(kit.stack.multica("issue", "get", item.id, "--output", "json"))["metadata"].items()
+            if key.endswith("_ref")}
     drift(kit, item)
 
-    with pytest.raises(refusal[0], match=refusal[1]):
-        apply_amendment(str(path), reviewed, kit.store, POOL, acceptance=responsibility_acceptance_doc())
+    try:
+        with pytest.raises(refusal[0], match=refusal[1]):
+            apply_amendment(str(path), reviewed, kit.store, POOL, acceptance=responsibility_acceptance_doc())
+    finally:   # the workspace is shared by the session: leave no forged reference behind for the tests that list every issue
+        for key, value in refs.items():
+            kit.stack.multica("issue", "metadata", "set", item.id, "--key", key, "--value", value)
     unchanged = load_manifest(str(path))
     assert unchanged.meta.get("amendment_apply") is None and unchanged.meta.get("last_amendment_id") is None
 
