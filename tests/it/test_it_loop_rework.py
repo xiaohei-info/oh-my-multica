@@ -8,11 +8,12 @@ from dataclasses import replace
 
 import pytest
 
-from _support.loopkit import HANG
+from _support.loopkit import HANG, contract
 from omac.core.manifest import load_manifest
 from omac.core.taskmeta import TaskPhase, review_context_binding
-from omac.core.workitem import WorkItemStatus
+from omac.core.workitem import WorkItemPayload, WorkItemStatus
 from omac.errors import PlatformError
+from omac.pipeline import loop
 from omac.pipeline.dispatch import _previous_review_context
 
 IDLE = []   # a Run that ends at once without submitting anything
@@ -375,3 +376,174 @@ def test_a_delivery_without_commands_is_stopped_by_the_ordinary_evidence_gate(ki
     result = kit.tick(manifest, path)
 
     assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked" and not reviewers(assigns)
+
+
+# ---- reads that lag or disagree --------------------------------------------------------------------------------------
+
+def stale_status(item):
+    return replace(item, status=WorkItemStatus.TODO)
+
+
+def stale_projection(projection):
+    return replace(projection, work_item=stale_status(projection.work_item))
+
+
+def test_a_stale_status_readback_after_the_assignment_does_not_restart_the_handoff(kit):
+    manifest, path, item = rejected(kit, *HANG)
+    stale = []
+    kit.after(kit.store, "assign_work_item", lambda *_, **__: stale.extend([
+        kit.distort(kit.store, "get_work_item", stale_status), kit.distort(kit.store, "observe_work_item_control", stale_projection)]),
+        only=lambda _id, _who, role, **k: role == "worker")
+    assigns, wakes = kit.record(kit.store, "assign_work_item"), kit.record(kit.runtime, "wake")
+
+    result = kit.tick(manifest, path)
+
+    recovered = kit.store.get_work_item(item.id)
+    assert stale and result.state == "running" and manifest.nodes["a"].status == "in_progress"
+    assert recovered.worker_handoff is not None and recovered.phase is TaskPhase.AUTHORING and recovered.status is WorkItemStatus.IN_PROGRESS
+    assert len(workers(assigns)) == 1 and not [w for w in wakes if w[1][2] == "worker"] and not reviewers(assigns)
+
+
+def test_two_stale_reads_after_a_lost_assignment_response_are_followed_by_the_real_delivery(kit):
+    manifest, path, item = rejected(kit)
+    stale_projection_before_the_delivery = kit.store.observe_work_item_control(item.id)
+    lag = []
+
+    def worker_finishes_and_the_response_is_lost(_result, _id, _assignee, role, **_kw):
+        kit.wait_runs_ended(item.id)   # the delivery exists, but the next two reads still show the item as it was
+        lag.append(kit.distort(kit.store, "observe_work_item_control", lambda _fresh: stale_projection_before_the_delivery, times=2))
+        raise PlatformError("assignment response unknown")
+
+    kit.after(kit.store, "assign_work_item", worker_finishes_and_the_response_is_lost, only=lambda _id, _who, role, **k: role == "worker")
+    assigns = kit.record(kit.store, "assign_work_item")
+
+    result = kit.tick(manifest, path)
+    kit.tick_until(manifest, path, lambda: manifest.nodes["a"].status == "in_review", what="the delivery to be sealed")
+
+    assert lag[0]["calls"] == 2 and result.state == "running"
+    assert len(workers(assigns)) == 1 and len(reviewers(assigns)) == 1
+    assert kit.store.get_work_item(item.id).worker_handoff is None
+
+
+def test_a_delivery_that_changes_while_it_is_being_sealed_defers_one_tick_and_is_sealed_the_next(kit):
+    manifest, path, item = delivered_again(kit)
+    changed = kit.store.get_work_item(item.id)
+    other_pr = replace(changed, artifacts={**changed.artifacts, "pr_url": changed.artifacts["pr_url"] + "-other"})
+    # the read right before the seal is committed shows another pull request
+    window = kit.distort(kit.store, "observe_work_item_control", lambda projection: replace(projection, work_item=other_pr),
+                         skip=2, times=1)
+    assigns = kit.record(kit.store, "assign_work_item")
+
+    first = kit.tick(manifest, path)
+
+    deferred = kit.store.get_work_item(item.id)
+    assert window["calls"] == 1 and first.state == "running" and manifest.nodes["a"].status == "in_progress"
+    assert deferred.worker_handoff is not None and deferred.delivery_identity is None and not reviewers(assigns)
+
+    second = kit.tick(manifest, path)
+
+    recovered = kit.store.get_work_item(item.id)
+    assert second.state == "running" and manifest.nodes["a"].status == "in_review"
+    assert recovered.worker_handoff is None and recovered.delivery_identity is not None and len(reviewers(assigns)) == 1
+
+
+def test_a_verification_projection_that_disagrees_with_the_attachment_is_never_sealed(kit):
+    manifest, path, item = delivered_again(kit)
+
+    def tampered(projection):
+        shown = replace(projection.work_item, verification={"commands": []})
+        return replace(projection, work_item=shown, deferred_payloads=projection.deferred_payloads - {WorkItemPayload.VERIFICATION})
+
+    kit.distort(kit.store, "observe_work_item_control", tampered, times=50)
+    assigns = kit.record(kit.store, "assign_work_item")
+
+    with pytest.raises(PlatformError, match="projection|attachment"):
+        kit.tick(manifest, path)
+
+    assert not reviewers(assigns)
+
+
+# ---- intents and verdicts that cannot be trusted ----------------------------------------------------------------------
+
+def causal_intent(item, **fields):
+    return {"schema": "omac.worker-handoff/v1", "state": "pending", "target_worker": "alice", "gate": "review",
+            "source_review_subject_digest": item.review_subject_digest, "source_review_round": 1, "target_review_bounce": 1, **fields}
+
+
+@pytest.mark.parametrize("kind", ["malformed", "another-worker-and-subject", "stale-after-a-bounce"])
+def test_a_handoff_intent_without_a_causal_identity_fails_closed_and_is_kept(kit, kind):
+    manifest, path, item = rejected(kit, *HANG)
+    current = kit.store.get_work_item(item.id)
+    intent = {
+        "malformed": {"schema": "omac.worker-handoff/v1", "state": "pending"},
+        "another-worker-and-subject": causal_intent(current, target_worker="charlie", source_review_subject_digest="wrong-subject"),
+        "stale-after-a-bounce": causal_intent(current),
+    }[kind]
+    kit.store.update_work_item_metadata(item.id, worker_handoff=intent)
+    if kind == "stale-after-a-bounce":
+        kit.store.update_work_item_metadata(item.id, review_bounce=1, artifacts={"pr_url": current.artifacts["pr_url"] + "-stale"})
+    assigns = kit.record(kit.store, "assign_work_item")
+    kit.forbid(kit.runtime, "wake")
+
+    with pytest.raises(PlatformError, match="causal|identity|predates"):
+        kit.tick(manifest, path)
+
+    assert kit.store.get_work_item(item.id).worker_handoff is not None and not assigns
+
+
+def test_a_review_handoff_whose_bounce_is_zero_changes_nothing(kit):
+    manifest, path, item = rejected(kit, *HANG)
+    current = kit.store.get_work_item(item.id)
+    baseline = tuple(sorted(run.id for run in kit.runtime.list_runs(item.id) if run.kind == "direct"))
+    kit.store.update_work_item_metadata(item.id, worker_handoff=causal_intent(
+        current, target_review_bounce=0, generation="handoff-zero-bounce", target_agent_id=kit.store.resolve_agent_id("alice"),
+        baseline_direct_run_ids=list(baseline), baseline_verification_attachment_id=current.verification_ref["attachment_id"],
+        target_worker_bounce=current.bounces.worker))
+    kit.forbid(kit.store, "reset_review", "update_status", "assign_work_item")
+    kit.forbid(kit.runtime, "wake")
+
+    with pytest.raises(PlatformError, match="causal identity"):
+        loop._dispatch_worker_handoff(kit.store, kit.runtime, kit.code_host, manifest, "a")
+
+
+@pytest.mark.parametrize("legacy", [True, False], ids=["no-handoff-no-seal", "handoff-can-seal"])
+def test_a_pass_left_over_from_an_older_subject_never_merges_a_new_delivery(kit, legacy):
+    """With a handoff the new delivery is sealed and reviewed afresh; without one (a delivery from before handoffs
+    existed) the Reviewer cannot be bound to a Run and the node asks for a decision. Either way nothing merges."""
+    kit.stack.set_scenario("alice", [[kit.stack.tool("worker-submit")]])
+    node = kit.node("a", reviewer="bob", contract=contract())
+    manifest = kit.manifest([node])
+    path = kit.save(manifest)
+    kit.tick(manifest, path)
+    item = kit.store.get_work_item(node.work_item_id)
+    kit.wait_runs_ended(item.id)
+    kit.store.update_work_item_metadata(item.id, review_verdict="pass", delivery_identity={}, **({"worker_handoff": {}} if legacy else {}),
+                                        review_report={"review_goals": ["a pass for an older delivery"], "diff_reviewed": True,
+                                                       "tests_rerun": True, "coverage_checked": True, "full_review_completed": True,
+                                                       "blockers": [], "nits": []})
+
+    result = kit.tick(manifest, path)
+
+    recovered = kit.store.get_work_item(item.id)
+    assert recovered.review_verdict is None and not kit.merges()
+    if legacy:
+        assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked" and recovered.status is WorkItemStatus.BLOCKED
+        assert recovered.decision_required["reason_code"] == "reviewer-run-baseline-unavailable"
+    else:
+        assert result.state == "running" and manifest.nodes["a"].status == "in_review" and recovered.phase is TaskPhase.REVIEW
+
+
+def test_a_reviewer_already_running_on_the_same_subject_is_not_assigned_or_woken_again(kit):
+    manifest, path, item = kit.in_review()
+    subject = kit.store.get_work_item(item.id).review_subject_digest
+    manifest.nodes["a"].status = "in_progress"   # the manifest is behind the platform
+    kit.save(manifest)
+    kit.fault(kit.store, "assign_work_item", when="before", error=AssertionError("must not assign"))
+    kit.fault(kit.runtime, "wake", when="before", error=AssertionError("must not wake"))
+    kit.fault(kit.store, "update_work_item_metadata", when="before", error=AssertionError("must not refresh the issue body"),
+              only=lambda _id, **m: "description" in m)
+
+    result = kit.tick(manifest, path)
+
+    assert result.state == "running" and manifest.nodes["a"].status == "in_review"
+    assert kit.store.get_work_item(item.id).review_subject_digest == subject and len(kit.reviewer_runs(item.id)) == 1

@@ -3,9 +3,9 @@ from dataclasses import replace
 
 import pytest
 
-from omac.core.taskmeta import TaskPhase, WorkerHandoffIntent
+from omac.core.taskmeta import DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity, TaskPhase, WorkerHandoffIntent
 from omac.core.workitem import WorkItem, WorkItemStatus
-from omac.pipeline.decide_worker import handoff_has_new_delivery
+from omac.pipeline.decide_worker import control_matches_handoff_candidate, handoff_has_new_delivery
 
 PR = "https://example.test/pr/1"
 
@@ -61,3 +61,40 @@ def intent(gate, verdict=None, head="head-old", attachment="attachment-old", **f
 ])
 def test_a_handoff_has_a_new_delivery_only_when_the_control_facts_prove_it(item, handoff, expected):
     assert handoff_has_new_delivery(item, handoff) is expected
+
+
+# ---- is the delivery that was sealed still the one the item shows? ------------------------------------------------------
+
+def sealed(**fields):
+    return DeliveryIdentity(
+        schema=DELIVERY_IDENTITY_SCHEMA, handoff_generation="g1", worker="alice", agent_id="agent-alice", run_id="run-1",
+        pr_url=PR, pr_head_sha="head-new", verification_sha256="sha-new", verification_attachment_id="attachment-new",
+        verification_comment_id="comment-new", verification_task_id="run-1", verification_created_at="2026-08-03T00:00:00Z", **fields)
+
+
+def shown(**fields):
+    base = delivered(head="head-new", attachment="attachment-new", worker_handoff=intent("explicit-dispatch"))
+    ref = {"attachment_id": "attachment-new", "comment_id": "comment-new", "sha256": "sha-new"}
+    return replace(base, **{"verification_ref": ref, **fields})
+
+
+@pytest.mark.parametrize(("change", "expected"), [
+    pytest.param({}, True, id="same-delivery"),
+    pytest.param({"artifacts": {"pr_url": PR, "head_sha": "head-new"}}, True, id="artifacts-spelled-the-same"),
+    pytest.param({"artifacts": {"pr_url": "https://example.test/pr/2", "head_sha": "head-new"}}, False, id="other-pull-request"),
+    pytest.param({"artifacts": {"pr_url": PR, "head_sha": "head-newer"}}, False, id="head-moved"),
+    pytest.param({"verification_ref": {"attachment_id": "attachment-newer", "comment_id": "comment-new", "sha256": "sha-new"}}, False,
+                 id="other-attachment"),
+    pytest.param({"verification_ref": {"attachment_id": "attachment-new", "comment_id": "comment-newer", "sha256": "sha-new"}}, False,
+                 id="other-comment"),
+    pytest.param({"verification_ref": {"attachment_id": "attachment-new", "comment_id": "comment-new", "sha256": "sha-newer"}}, False,
+                 id="other-digest"),
+    pytest.param({"worker_handoff": replace(intent("explicit-dispatch"), generation="g2")}, False, id="another-handoff-generation"),
+    pytest.param({"worker_handoff": replace(intent("explicit-dispatch"), terminal_observed_at="2026-08-03T00:00:00+00:00")}, True,
+                 id="observing-the-end-of-the-run-does-not-change-the-handoff"),
+    pytest.param({"worker_handoff": None}, False, id="handoff-already-retired"),
+    pytest.param({"verification_ref": {"attachment_id": "attachment-old", "comment_id": "comment-new", "sha256": "sha-new"}}, False,
+                 id="not-new-relative-to-the-baseline"),
+])
+def test_the_sealed_delivery_is_still_the_one_the_item_shows(change, expected):
+    assert control_matches_handoff_candidate(shown(**change), intent("explicit-dispatch"), sealed()) is expected

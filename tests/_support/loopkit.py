@@ -220,16 +220,18 @@ class Kit:
 
         self.monkeypatch.setattr(target, name, wrapper)
 
-    def distort(self, target, name, transform: Callable, *, times: int = 1, only: Callable | None = None):
-        """Return ``transform(real_result)`` instead of the real result for ``times`` calls (a stale or inconsistent
-        read), then behave normally. Returns a dict with the call count."""
-        original, state = getattr(target, name), {"calls": 0}
+    def distort(self, target, name, transform: Callable, *, times: int = 1, skip: int = 0, only: Callable | None = None):
+        """Return ``transform(real_result)`` instead of the real result for ``times`` calls after the first ``skip`` ones
+        (a stale or inconsistent read), then behave normally. Returns a dict with the counts."""
+        original, state = getattr(target, name), {"calls": 0, "seen": 0}
 
         def wrapper(*args, **kw):
             result = original(*args, **kw)
-            if (only is None or only(*args, **kw)) and state["calls"] < times:
-                state["calls"] += 1
-                return transform(result)
+            if only is None or only(*args, **kw):
+                state["seen"] += 1
+                if state["seen"] > skip and state["calls"] < times:
+                    state["calls"] += 1
+                    return transform(result)
             return result
 
         self.monkeypatch.setattr(target, name, wrapper)

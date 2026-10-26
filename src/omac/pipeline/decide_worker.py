@@ -5,10 +5,10 @@ and ``loop._worker_finished_without_submit`` observe, call these, then apply the
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 
-from ..core.taskmeta import TaskPhase, WorkerHandoffIntent
+from ..core.taskmeta import DeliveryIdentity, TaskPhase, WorkerHandoffIntent
 from ..core.workitem import WorkItemStatus
 from .decide_effects import Observation
 
@@ -115,3 +115,28 @@ def handoff_has_new_delivery(item, intent: WorkerHandoffIntent) -> bool:
     # pass-with-nits is an explicit non-blocking review path: a new verification
     # attachment may legitimately reuse the same code head.
     return intent.source_review_verdict == "pass-with-nits"
+
+
+def control_matches_handoff_candidate(
+    item, intent: WorkerHandoffIntent, identity: DeliveryIdentity,
+) -> bool:
+    artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
+    verification_ref = (
+        item.verification_ref if isinstance(item.verification_ref, dict) else {}
+    )
+    current_intent = item.worker_handoff
+    same_causal_intent = bool(
+        current_intent is not None
+        and replace(current_intent, terminal_observed_at=None)
+        == replace(intent, terminal_observed_at=None)
+    )
+    return bool(
+        same_causal_intent
+        and handoff_has_new_delivery(item, intent)
+        and identity.pr_url == (artifacts.get("pr_url") or artifacts.get("pr"))
+        and identity.pr_head_sha == artifacts.get("head_sha")
+        and identity.verification_attachment_id
+        == verification_ref.get("attachment_id")
+        and identity.verification_comment_id == verification_ref.get("comment_id")
+        and identity.verification_sha256 == verification_ref.get("sha256")
+    )

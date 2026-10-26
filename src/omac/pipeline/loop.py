@@ -60,7 +60,7 @@ from ..errors import AuthError, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from .decide_review import VerdictObservation, VerdictPath, decide_verdict_path
 from .decide_worker import (
-    handoff_has_new_delivery,
+    control_matches_handoff_candidate, handoff_has_new_delivery,
     AfterCi, AfterCiObservation, NoSubmit, NoSubmitObservation, decide_after_ci, decide_worker_no_submit,
 )
 from .decide_merge import merge_bounce_attempt, merge_request_state_is_valid
@@ -2125,31 +2125,6 @@ def _observe_handoff_verification(
     )
 
 
-def _control_matches_handoff_candidate(
-    item, intent: WorkerHandoffIntent, identity: DeliveryIdentity,
-) -> bool:
-    artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
-    verification_ref = (
-        item.verification_ref if isinstance(item.verification_ref, dict) else {}
-    )
-    current_intent = item.worker_handoff
-    same_causal_intent = bool(
-        current_intent is not None
-        and replace(current_intent, terminal_observed_at=None)
-        == replace(intent, terminal_observed_at=None)
-    )
-    return bool(
-        same_causal_intent
-        and handoff_has_new_delivery(item, intent)
-        and identity.pr_url == (artifacts.get("pr_url") or artifacts.get("pr"))
-        and identity.pr_head_sha == artifacts.get("head_sha")
-        and identity.verification_attachment_id
-        == verification_ref.get("attachment_id")
-        and identity.verification_comment_id == verification_ref.get("comment_id")
-        and identity.verification_sha256 == verification_ref.get("sha256")
-    )
-
-
 def _commit_worker_handoff_delivery(
     store: WorkItemStore,
     item_id: str,
@@ -2162,7 +2137,7 @@ def _commit_worker_handoff_delivery(
             f"Worker handoff delivery candidate is incomplete for work item {item_id}")
     current = store.observe_work_item_control(item_id).work_item
     existing = _delivery_identity(current)
-    if not _control_matches_handoff_candidate(current, result.intent, identity):
+    if not control_matches_handoff_candidate(current, result.intent, identity):
         if existing is None:
             raise _WorkerHandoffCandidateChanged(
                 f"Worker handoff delivery candidate changed before commit for "
