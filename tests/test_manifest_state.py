@@ -5,7 +5,7 @@ import pytest
 import yaml
 
 from omac.core.manifest import (
-    Manifest, Node, load_manifest, manifest_files, save_manifest, state_dir,
+    Manifest, Node, STATE_FILE_MAX, load_manifest, manifest_files, save_manifest, state_dir,
 )
 from omac.errors import ValidationError
 
@@ -63,6 +63,19 @@ def test_tick_on_a_500_node_dag_writes_kilobytes_not_the_whole_state(tmp_path):
     rewritten = [p for p in tmp_path.rglob("*") if p.is_file() and before.get(p.name) != p.stat().st_ino]
     assert {p.name for p in rewritten} == {"n10.yaml", "n11.yaml", "n12.yaml"}
     assert sum(p.stat().st_size for p in rewritten) < 100 * 1024
+
+
+def test_a_500_node_dag_with_every_runtime_fact_set_averages_under_4kb_per_node_state_file(tmp_path):
+    path = str(tmp_path / "dag.yaml")
+    manifest = _dag(500)
+    for node in manifest.nodes.values():     # the largest a node's state gets: every runtime fact present
+        node.work_item_id, node.status = "01a17891-a4e5-761b-a249-d1e381a4ccf8", "in_review"
+        node.merged, node.merged_at, node.merge_request_state, node.recovery_marker = True, "2026-10-26T14:16:15.005519Z", "requested", True
+    save_manifest(manifest, path)
+
+    sizes = [p.stat().st_size for p in (tmp_path / "dag.state").iterdir()]
+
+    assert len(sizes) == 500 and sum(sizes) / len(sizes) <= 4 * 1024 and max(sizes) < STATE_FILE_MAX
 
 
 def test_killed_save_leaves_every_state_file_old_or_new_but_complete(tmp_path, monkeypatch):

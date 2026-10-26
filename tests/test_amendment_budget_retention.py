@@ -111,3 +111,18 @@ def test_retained_authority_requires_matching_accepted_ledger_identity(bad_ident
     if bad_identity in (None, 7):
         manifest.meta['last_amendment_id'] = bad_identity
     assert consumed_bounces(manifest, 'dispatch', item, 'review') == 22
+
+
+def test_the_apply_ledger_is_replaced_by_every_amendment_so_the_manifest_does_not_grow_with_their_number():
+    import yaml
+
+    manifest, _item = fixture()
+    for index in range(5):
+        manifest.nodes[f"harness-{index}"] = Node(id=f"harness-{index}", worker="worker")
+    sizes = []
+    for number in range(120):
+        advance(manifest, UnusedStore(), f"amend-{number}", {"authoring": [f"harness-{number % 5}"]})
+        sizes.append(len(yaml.safe_dump(manifest.meta)))
+
+    assert len(manifest.meta["amendment_apply"]["nodes"]) == 1
+    assert max(sizes[20:]) <= max(sizes[:20]) * 1.1          # a plateau after the first few amendments, not a line that keeps rising

@@ -72,6 +72,10 @@ A DAG is two things on disk, both plain text, both committed to git:
 * **Bounded size.** A node's state file is limited to 64 KiB at save time (the error says to keep large payloads as
   platform attachments). The definition holds no run history; the amendment ledger in `meta` is replaced per amendment.
   Large payloads (captured sources, transcripts) are attachments on the platform, referenced by digest.
+* **No journal to archive.** Effect intents (worker handoff, review cycle, merge request) live on the platform issue; a node file
+  keeps six runtime facts, and the only DAG-level record is the amendment ledger above. Nothing accumulates, so nothing is
+  archived: `tests/test_manifest_state.py` (500 nodes with every fact set average well under 4 KiB) and
+  `tests/test_amendment_budget_retention.py` (120 amendments leave the manifest the size of the first few) pin it.
 * **No 1.x compatibility.** A single-file 1.x manifest (inline `work_item_id`, or the old compressed envelope) is not read
   or modified: the error says to finish that run with 1.x or abandon it, then run `omac plan create` with 2.0.
 * **Node ids** become file names: letters, digits, `.`, `_`, `-`.
