@@ -547,3 +547,63 @@ def test_a_reviewer_already_running_on_the_same_subject_is_not_assigned_or_woken
 
     assert result.state == "running" and manifest.nodes["a"].status == "in_review"
     assert kit.store.get_work_item(item.id).review_subject_digest == subject and len(kit.reviewer_runs(item.id)) == 1
+
+
+# ---- a submit that becomes visible after the Run ended ----------------------------------------------------------------
+
+def slow_submit(kit):
+    return [{"hang": 3}, kit.stack.tool("worker-submit")]
+
+
+def test_a_submit_that_shows_up_after_the_budget_is_spent_still_beats_the_no_submit_guard(kit):
+    kit.proxy   # the Loop's reads go through a recording proxy so that they can lag
+    manifest, path, item = rejected(kit, slow_submit(kit))
+    limit = 20
+    kit.store.update_work_item_metadata(item.id, worker_bounce=limit)
+    kit.tick(manifest, path, retry_limits={"worker": limit})
+    kit.lag_reads_of(item.id)         # what the item showed before the submit
+    kit.wait_runs_ended(item.id)      # the Run is over and its submit exists, but reads still show the old item ...
+    kit.after(kit.runtime, "list_runs", lambda *_: kit.catch_up(), times=1)   # ... until the Loop has looked at the Run
+    assigns = kit.record(kit.store, "assign_work_item")
+
+    first = kit.tick(manifest, path, retry_limits={"worker": limit})
+    kit.tick_until(manifest, path, lambda: manifest.nodes["a"].status == "in_review", retry_limits={"worker": limit},
+                   what="the late delivery to be reviewed")
+
+    recovered = kit.store.get_work_item(item.id)
+    assert first.failed == [] and recovered.status is WorkItemStatus.IN_REVIEW
+    assert recovered.worker_handoff is None and recovered.delivery_identity is not None
+    assert recovered.bounces.worker == limit and not workers(assigns)
+
+
+def test_a_submit_that_arrives_within_the_observation_window_is_collected(kit):
+    kit.monkeypatch.setattr(loop, "_HANDOFF_TERMINAL_GRACE_SECONDS", 120)
+    kit.proxy
+    manifest, path, item = rejected(kit, slow_submit(kit))
+    kit.tick(manifest, path)
+    kit.lag_reads_of(item.id)
+    kit.wait_runs_ended(item.id)
+    assigns = kit.record(kit.store, "assign_work_item")
+
+    kit.tick(manifest, path)
+    assert kit.store.get_work_item(item.id).worker_handoff is not None   # reads lag: the delivery is not visible yet
+    kit.catch_up()
+    kit.tick_until(manifest, path, lambda: manifest.nodes["a"].status == "in_review", what="the delivery to be collected")
+
+    recovered = kit.store.get_work_item(item.id)
+    assert recovered.worker_handoff is None and recovered.bounces.worker == 0 and not workers(assigns)
+
+
+def test_a_node_blocked_by_an_old_projection_is_collected_when_its_handoff_delivered(kit):
+    manifest, path, item = delivered_again(kit)
+    kit.store.update_status(item.id, WorkItemStatus.BLOCKED)
+    manifest.nodes["a"].status, manifest.nodes["a"].recovery_marker = "blocked", True
+    kit.save(manifest)
+    assigns = kit.record(kit.store, "assign_work_item")
+
+    result = kit.tick(manifest, path)
+
+    recovered = kit.store.get_work_item(item.id)
+    assert result.state == "running" and result.failed == [] and manifest.nodes["a"].status == "in_review"
+    assert recovered.status is WorkItemStatus.IN_REVIEW and recovered.worker_handoff is None and recovered.delivery_identity is not None
+    assert len(reviewers(assigns)) == 1

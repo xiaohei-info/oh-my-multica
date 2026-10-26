@@ -1,7 +1,7 @@
 """Commands a scripted agent runs inside a Run. They read the task with `omac work show`, exactly as the
 issue text tells a real agent to, and submit through `omac work submit` (OMAC is the only write path).
 
-usage: tools.py worker-submit [--no-push] [--empty-commands] <issue> | reviewer-submit <verdict> <issue> | dump <issue>
+usage: tools.py worker-submit [--no-push] [--empty-commands] [--after SECONDS] <issue> | reviewer-submit <verdict> <issue> | dump <issue>
 """
 import json
 import os
@@ -75,6 +75,18 @@ if __name__ == "__main__":
     command, *rest = sys.argv[1:]
     if command == "reviewer-submit":  # reviewer-submit <verdict> <issue>
         sys.exit(reviewer_submit(rest[1], rest[0]))
-    if command == "worker-submit":  # worker-submit [--no-push] [--empty-commands] <issue>
+    if command == "worker-submit":  # worker-submit [--no-push] [--empty-commands] [--after SECONDS] <issue>
+        flags = dict(push="--no-push" not in rest, empty_commands="--empty-commands" in rest)
+        if "--after" in rest:
+            # Submit from a detached process after the Run is over: the delivery becomes visible later than the Run's end.
+            delay = rest[rest.index("--after") + 1]
+            log = open(Path(os.environ["OMAC_FAKE_DUMP"], "late-submit.log"), "ab")
+            subprocess.Popen([sys.executable, __file__, "late-worker-submit", delay, *rest[:rest.index("--after")], rest[-1]],
+                             stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+            sys.exit(0)
+        sys.exit(worker_submit(rest[-1], **flags))
+    if command == "late-worker-submit":  # late-worker-submit <seconds> [flags] <issue>
+        import time
+        time.sleep(float(rest[0]))
         sys.exit(worker_submit(rest[-1], push="--no-push" not in rest, empty_commands="--empty-commands" in rest))
     sys.exit(dump(rest[0]))

@@ -77,4 +77,8 @@ def kit(stack, engine, store, tmp_path, monkeypatch):
     """The Loop driven in-process against the private Multica: real store, runtime and gh shim (tests/_support/loopkit.py)."""
     from _support.loopkit import Kit
 
-    return Kit(stack, engine, tmp_path, monkeypatch)
+    loop_kit = Kit(stack, engine, tmp_path, monkeypatch)
+    try:
+        yield loop_kit
+    finally:
+        loop_kit.close()

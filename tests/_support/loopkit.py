@@ -58,6 +58,29 @@ class Kit:
         monkeypatch.chdir(self.project.work)
         self.agents("hang")
         self._seq = 0
+        self._proxy = None
+
+    def close(self) -> None:
+        if self._proxy is not None:
+            self.monkeypatch.setenv("MULTICA_SERVER_URL", self.stack.url)   # the cleanup after this test talks to the backend directly
+            self._proxy.stop()
+
+    @property
+    def proxy(self):
+        """A recording proxy between the Loop's `multica` calls and the backend; start it before the reads you want to freeze."""
+        if self._proxy is None:
+            from _support.it_proxy import Proxy
+
+            self._proxy = Proxy(self.stack.url).start()
+            self.monkeypatch.setenv("MULTICA_SERVER_URL", self._proxy.url)
+        return self._proxy
+
+    def lag_reads_of(self, item_id: str) -> None:
+        """Reads of this issue (but not of its Runs) keep answering with what they showed a moment ago."""
+        self.proxy.freeze(item_id, exclude=r"/(runs|tasks)|/task-runs")
+
+    def catch_up(self) -> None:
+        self.proxy.thaw()
 
     # ---- scripted agents
     def agents(self, mode: str | list, *, names=AGENTS) -> None:
@@ -220,14 +243,18 @@ class Kit:
 
         self.monkeypatch.setattr(target, name, wrapper)
 
-    def distort(self, target, name, transform: Callable, *, times: int = 1, skip: int = 0, only: Callable | None = None):
+    def distort(self, target, name, transform: Callable, *, times: int = 1, skip: int = 0, only: Callable | None = None,
+                state: dict | None = None):
         """Return ``transform(real_result)`` instead of the real result for ``times`` calls after the first ``skip`` ones
-        (a stale or inconsistent read), then behave normally. Returns a dict with the counts."""
-        original, state = getattr(target, name), {"calls": 0, "seen": 0}
+        (a stale or inconsistent read), then behave normally; ``state["armed"] = False`` stops it earlier. Pass the same
+        ``state`` dict to several calls to switch them together. Returns the dict with the counts."""
+        original = getattr(target, name)
+        state = state if state is not None else {}
+        state.update({"calls": 0, "seen": 0, "armed": True, **state})
 
         def wrapper(*args, **kw):
             result = original(*args, **kw)
-            if only is None or only(*args, **kw):
+            if state["armed"] and (only is None or only(*args, **kw)):
                 state["seen"] += 1
                 if state["seen"] > skip and state["calls"] < times:
                     state["calls"] += 1
