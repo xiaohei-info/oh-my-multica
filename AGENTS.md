@@ -36,7 +36,7 @@
 | 节点 Node | 定义（`id`、`worker`、`blocked_by`、`reviewer`、`gate`、`contract`…）+ 运行时状态 | `core/manifest.py::Node` | 定义见上；运行时状态**只由 omac Loop 写**（单写者锁） |
 | 节点状态文件 | 每节点 6 个运行时事实：`work_item_id`、`status`、`merged`、`merged_at`、`merge_request_state`、`recovery_marker` | `.omac/<name>.state/<node>.yaml`（`_RUNTIME_KEYS`） | omac Loop |
 | 契约 Contract | 目标、验收、非目标、验证命令、集成门、`pr_base`、覆盖率门 | `core/manifest.py::Contract`，派单时下发到工作项 | orchestrator 产出，经评审与 lint |
-| 工作项 Work item | 平台上的一个 issue，承载一个完整阶段（产出、评审、回退往返都在同一条上） | `core/workitem.py::WorkItem` | omac 经 `apply` 写；Agent 只经 `omac work submit|block` 写 |
+| 工作项 Work item | 平台上的一个 issue，承载一个完整阶段（产出、评审、回退往返都在同一条上） | `core/workitem.py::WorkItem` | omac 只经 `apply` 写；Agent 只经 `omac work submit|block` 提交 |
 | 任务类型 TaskKind | `plan`、`acceptance`、`decompose`、`amendment`、`develop`、`final-acceptance` | `core/taskmeta.py` | — |
 | 任务阶段 TaskPhase | `authoring`、`review`、`confirmation`（评审是阶段，不是独立 issue） | `core/taskmeta.py` | omac |
 | Run | Agent 在平台上的一次执行 | `core/workitem.py::AgentRunObservation`，`engines/runtime.py` | 平台；omac 只 `wake` / `cancel` / 观察 |
@@ -46,7 +46,7 @@
 | 验收文档 | 业务流与证明它们的证据 | `.omac/<name>.acceptance.yaml`，`core/acceptance*.py` | planner 产出；acceptor 执行 |
 | 修订 Amendment | 运行中改 DAG：绑定基线 manifest digest 的已评审提案 + 账本 | `core/amendment.py`，`pipeline/amendment.py` | `omac dag amend propose|accept` |
 | 机制角色 | `planner`、`orchestrator`、`worker`、`reviewer`、`acceptor`（`pipeline/dispatch.py::KIND_ROLE`） | `src/omac/guide/roles/` | 配置在 `roles` 中映射到具体 Agent |
-| Agent 模板 | 通用能力画像（architect、backend-eng…），**不是**机制角色 | `src/omac/agents/` | `omac init` 用它创建 Agent |
+| Agent 模板 | 通用能力画像（architect、backend-eng…），**不是**机制角色 | `src/omac/agents/`，`cli/agent_templates.py` | `omac init` 用它创建 Agent |
 
 关系：一个 Manifest 有多个 Node；`blocked_by` 构成 DAG。一个 Node 对应至多一个当前工作项
 （`work_item_id`）；一个工作项有多个 Run，按 Kind × Phase 自描述；develop 工作项关联一个 PR。
@@ -62,13 +62,17 @@ blocked ── omac node retry ──► todo        blocked ── omac node ab
 blocked / in_review ── omac node accept ──► done        上游修复后被连坐的下游 ──► todo（unblock）
 ```
 
-- **就绪节点**：`status == todo` 且每个 `blocked_by` 都是 `done` 或 `abandoned`（`core/graph.py::ready_nodes`）。
-- **收敛**：没有进行中、`blocked`、`failed` 节点；`done`、`abandoned`、`cancelled` 计为收敛。
+- **状态分类只在 `core/graph.py` 定义**：`RUNNING`（`in_progress`、`ci_check`、`in_review`、`merging`）、
+  `NEEDS_DECISION`（`blocked`、`failed`）、`SATISFIED`（`done`、`abandoned`）；其余是 `todo`。不要在别处另建状态集合。
+- **就绪节点**：`status == todo` 且每个 `blocked_by` 都属于 `SATISFIED`（`graph.ready_nodes`）。
+- **DAG 收敛**：没有 `RUNNING` 与 `NEEDS_DECISION` 节点。`blocked` 可经 `omac node retry` 回到 `todo`，不是终态。
 - 平台映射：`pipeline/delivery.py::MANIFEST_TO_PLATFORM_STATUS`（`ci_check→IN_PROGRESS`，`merging→IN_REVIEW`）；
-  平台侧 `WorkItemStatus` 为 `TODO/IN_PROGRESS/IN_REVIEW/DONE/FAILED/BLOCKED`。
+  平台侧 `WorkItemStatus` 为 `TODO/IN_PROGRESS/IN_REVIEW/DONE/FAILED/BLOCKED`。`abandoned` 只存在于 manifest
+  （`omac node abandon` 写入，reconcile 跳过）；`failed` 只从平台映射进来；平台的 `cancelled` 被适配器映射为 `BLOCKED`。
 - 合并子状态机 `merge_request_state`：`None → intent → requested →` 观察到 PR MERGED（写 `merged`、`merged_at`）。
   `intent` 之后绝不发第二次合并请求；结果未知则 blocked，由 `omac node retry` 显式决定。
-- 写状态的只有 Loop（经 Effect，见 §3.4）和人的显式决策命令（`omac node retry|abandon|accept|accept-nits`）。
+- 写节点状态的只有 Loop 和人的显式决策命令（`omac node retry|abandon|accept|accept-nits`）。新增的 manifest 写一律是
+  Plan 里的 `SetNode` + `SaveState`；存量直接写（`set_node`、`save_manifest`）由 `MANIFEST_WRITE_BASELINE` 锁定，只减不增（§3.4）。
 
 ### 2.3 编写型任务（plan / acceptance / decompose / amendment）的阶段机
 
@@ -108,50 +112,57 @@ blocked / in_review ── omac node accept ──► done        上游修复�
                                ▼
                            core（领域模型、manifest I/O、校验、证据、图、gitsync）──► 本地 git、.omac/
                                ▼
-                           i18n → errors
+                           guide（打包指南）→ i18n → errors
 ```
 
 ### 3.2 依赖方向（CI 强制）
 
-只能向下依赖：`web → cli → pipeline → engines → core → i18n → errors`。
+只能向下依赖：`web → cli → pipeline → engines → core → guide → i18n → errors`（除包入口 `omac/__init__.py`、`__main__.py` 外，`src/omac` 下每个模块都属于某一层）。
 
 - 函数级（惰性）import 同样计入；不能用惰性 import 绕过分层，要把代码挪到正确的层。
 - 具体适配器 `omac.engines.multica`、`omac.engines.github` 只能被 `engines` 工厂导入（contract `adapters-via-factory`）。
 - CLI 只通过 `engines.engine_from_config` 组装引擎；`create_engine` 只在 `engines/` 内调用（规则 `engine_assembly`）。
-- 唯一永久例外：`omac.cli.commands.web -> omac.web.server`（`omac web` 启动服务）。`ignore_imports` 基线只能缩小，目前为空。
+- 永久例外只有两条：import 方向上 `omac.cli.commands.web -> omac.web.server`（`omac web` 启动服务）；端口写方向上
+  `cli/commands/init_cmd.py`（交互式向导直接创建 project 与 Agent，`EFFECT_EXEMPT`）。`ignore_imports` 基线只能缩小，目前为空。
 - `decide_*` 模块不得 import `omac.engines` 或 `subprocess`（`decide_imports`）。
 
 ### 3.3 模块职责与边界
 
 | 模块 | 职责 | 边界（不能做） |
 |---|---|---|
-| `web/`（`api.py`、`server.py`、`static/`） | 只读看板；路由解析参数、调用命令函数、原样返回 JSON | 不读 manifest、不调引擎、不转换数据、不吞异常 |
-| `cli/`（`main.py`、`commands/<noun>.py`、`exit_codes.py`、`output.py`） | 名词-动词命令树、参数校验、退出码、组装引擎 | `sys.exit` 只在 `cli/main.py`；不直接写端口（`init_cmd.py` 向导除外） |
-| `pipeline/` | Loop：reconcile、结果收集、门、派单、交付、验收、plan、amendment | 端口写只在 `apply.py`；不执行平台 CLI |
+| `web/`（`api.py`、`server.py`、`static/`） | 只读看板；路由解析参数、调用命令函数（如 `dag list`、`dag snapshot`）、原样返回 JSON | 不读 manifest、不调引擎、不转换数据、不吞异常 |
+| `cli/`（`main.py`、`commands/<noun>.py`、`exit_codes.py`、`output.py`、`agent_templates.py`） | 名词-动词命令树、参数校验、退出码、组装引擎、发现内置 Agent 模板 | `sys.exit` 只在 `cli/main.py`；不直接写端口（`init_cmd.py` 向导除外） |
+| `pipeline/` | Loop：reconcile、结果收集、门、派单、交付、验收、plan、amendment、显式阶段恢复（`stage_recovery.py`） | 端口写只在 `apply.py`；不执行平台 CLI |
 | `pipeline/decide_*.py` | 纯决策：`Observation` 进，`Plan` 出 | 无 I/O，不碰引擎与子进程 |
 | `pipeline/apply.py` | 唯一把 Effect 变成端口调用的地方 | 不重试、不吞异常 |
 | `engines/store.py`、`runtime.py`、`codehost.py` | 三个端口（抽象接口，措辞平台中立） | 不写平台专有说明 |
 | `engines/multica.py`、`github.py` | 适配器：唯一执行平台 CLI、解析平台输出的地方 | 不含业务决策 |
 | `engines/models.py` | 引擎层数据类型（`EngineConfig`、`AgentInfo`…），不是端口 | — |
-| `core/` | 领域模型、manifest I/O 与锁、lint、证据 schema、图算法、git 状态同步、日志 | 不知道任何平台 |
+| `core/` | 领域模型、manifest I/O 与锁、lint、证据 schema、图算法与状态分类、git 状态同步、日志 | 不知道任何平台，不调用端口写方法；需要写入的流程由 pipeline 注入写函数（如 `apply_amendment(recover=...)`） |
 | `i18n.py` | `ui(english, chinese)`、`t(key)`、语言解析（默认英文） | — |
 | `errors.py` | `OmacError` 层级，与退出码一一对应 | — |
-| `guide/`、`agents/` | 打包的、机器消费的双语指南与 Agent 模板 | 只写机制（交什么、什么格式），不写项目策略 |
-| `agent_templates.py` | 发现与校验内置 Agent 模板（供 `omac init`） | 见 §7 第 6 条 |
+| `guide/`、`agents/` | 打包的、机器消费的双语指南与 Agent 模板（`guide` 是分层中的一层，只依赖 `i18n`） | 只写机制（交什么、什么格式），不写项目策略 |
 
-### 3.4 Observation → Plan → apply（Loop 的唯一形状）
+### 3.4 Observation → Plan → apply
 
 决策函数读冻结的 `Observation`，返回 `Plan`（有序的冻结 `Effect` 元组 + 结果名）；
-外壳"读 → 决策 → `apply(plan, ports, state)`"，一次一个效果、严格按序、每个效果一个结果。
+外壳"读 → 决策 → `apply(plan, ports, state)`"，一次一个效果、严格按序、每个效果一个结果。可检验的规则：
+
+- 端口写只在 `pipeline/apply.py`（`inline_effects` 扫描整个 `src/omac`，适配器与 `init_cmd.py` 除外；写方法清单是
+  `arch_rules.WRITE_METHODS`）。
+- 新的决策与状态转移用 `Observation → Plan → apply`；与端口写交错、或结果可能未知的 manifest 写，必须作为
+  `SetNode` + `SaveState` 放进同一个 Plan（`RequestMerge` 前的意图由 `validate_plan` 强制）。
+- 存量直接 manifest 写的每文件次数记在 `tests/test_architecture.py::MANIFEST_WRITE_BASELINE`，新增即 CI 失败，删减时同步调低。
 
 | Effect | 端口 |
 |---|---|
-| `UpdateStatus`、`UpdateMetadata`、`AddComment`、`Assign`、`ClearAssignment`、`ResetReview`、`PrepareReviewCycle`、`CreateWorkItem`、`SetNodeContract`、`SetAuthoringIdentity`、`NormalizeConfirmedMerge` | `WorkItemStore` |
+| `UpdateStatus`、`UpdateMetadata`、`AddComment`、`Assign`、`ClearAssignment`、`ResetReview`、`PrepareReviewCycle`、`CreateWorkItem`、`SetNodeContract`、`SetAuthoringIdentity`、`NormalizeConfirmedMerge`、`RestoreAuthoringGeneration` | `WorkItemStore` |
 | `Wake`、`AcknowledgeAssignment`、`DispatchReviewer`、`CancelRun` | `AgentRuntime` |
 | `RequestMerge` | `CodeHost` |
 | `SetNode`、`SaveState` | manifest（先内存，再原子落盘） |
 
 一个决策若中间必须插一次读取，就在读取处拆成两次 `apply`；读取是显式阶段，不能藏进 Effect（设计 §7.3.1）。
+Worker/Reviewer 交接检查点是守护协议：每次 `apply` 只带一个效果，之后做一次可中止交接的控制读取。
 
 ### 3.5 外部系统的唯一接入点
 
@@ -179,6 +190,7 @@ blocked / in_review ── omac node accept ──► done        上游修复�
 ## 4. 统一架构词汇表
 
 代码标识符、错误信息、指南、提示词、测试名和文档都必须用下列术语，**不允许同义异名**。
+"终态""收敛""决策"必须带限定词使用；节点状态不说"终态"，用进行中 / 待决策 / 满足依赖。
 
 | 术语（中 / 英） | 定义 | 代码对应 |
 |---|---|---|
@@ -186,13 +198,19 @@ blocked / in_review ── omac node accept ──► done        上游修复�
 | tick / 一轮 | Loop 的一次完整推进 | `omac dag tick`、`loop.py` |
 | reconcile / 对账 | 读进行中节点与平台事实，修复 manifest/平台漂移；低频全量审计 | `loop.py`、`pipeline/reconcile_audit.py` |
 | 结果收集 / result collection | 逐个推进进行中节点、收回其结果 | `loop.py::collect_results`（禁用 harvest） |
-| 进行中节点 / running nodes | 状态在 `in_progress`、`ci_check`、`in_review`、`merging` 的节点 | `loop.py::RUNNING_STATUSES`（禁用 in-flight、在飞） |
-| 就绪节点 / ready nodes | `todo` 且所有上游 `done`/`abandoned` | `core/graph.py::ready_nodes`（禁用 frontier） |
-| 收敛 / converged | 无进行中、blocked、failed 节点 | 退出码 0；`EVT_CONVERGED` |
+| 进行中节点 / running nodes | 状态属于 `RUNNING`（`in_progress`、`ci_check`、`in_review`、`merging`）的节点 | `core/graph.py::RUNNING`、`running_nodes()`（禁用 in-flight、在飞） |
+| 待决策节点 / needs-decision nodes | 状态属于 `NEEDS_DECISION`（`blocked`、`failed`）的节点；不是终态 | `core/graph.py::NEEDS_DECISION` |
+| 就绪节点 / ready nodes | `todo` 且所有上游属于 `SATISFIED`（`done`、`abandoned`） | `core/graph.py::ready_nodes`（禁用 frontier） |
+| DAG 收敛 / DAG converged | 没有进行中节点与待决策节点 | 退出码 0；`decide_loop.decide_tick_state`、`EVT_CONVERGED` |
+| 评审收敛 / review convergence | Reviewer 处置有限的义务集合，由代码判断评审往返是否停止；与 DAG 收敛无关 | `core/review_convergence.py`、`decide_task.Fact.CONVERGENCE_STOP` |
+| 阶段终态 / stage terminal | 编写型任务阶段机的 `STOPPED`、`DONE` | `decide_task.TERMINAL` |
+| Run 终态 / run terminal | Run 已 `completed`、`failed` 或 `cancelled` | `AgentRunObservation.terminal` |
 | 派单 / dispatch | 为就绪节点创建或复用工作项并唤醒 Agent | `pipeline/dispatch.py` |
 | 门 / gate | 机器检查：lint、证据 schema、CI、合并观察、覆盖率 | `core/lint.py`、`core/evidence.py`、`pipeline/delivery.py` |
 | 回退 / rework（bounce） | 有界、计数地把交付退回产出者 | `retry.worker|ci|review|merge`，`WorkItem.bounces` |
-| 显式决策 / decision | 只能由人或调用方做的选择，exit 20 + 结构化报告 | `NeedsDecision`、`omac node retry|abandon|accept|accept-nits` |
+| 决策函数 / decision function | 代码中的纯函数：事实进，`Plan` 或动作名出 | `pipeline/decide_*.py` |
+| 显式决策 / explicit decision | 只能由人或调用方做的选择，exit 20 + 结构化报告 | `NeedsDecision`、`omac node retry|abandon|accept|accept-nits` |
+| Worker 阻断 / worker blocker | Agent 请求人做显式决策的结构化报告；是否 exit 20 由代码判定 | `omac work block`、`pipeline/worker_blocker.py`（`omac.worker-blocker/v2`） |
 | 观察 / Observation | 决策读取的冻结事实 | `pipeline/decide_effects.py::Observation` |
 | 计划 / Plan | 有序的 Effect 元组 + 结果名 | `decide_effects.py::Plan`、`validate_plan` |
 | 效果 / Effect | 一个端口调用或 manifest 写入的值对象 | `decide_effects.py`，执行于 `pipeline/apply.py::apply` |
@@ -210,7 +228,7 @@ blocked / in_review ── omac node accept ──► done        上游修复�
 | 恢复标记 / recovery marker | 平台上有待消费恢复事实的轻量标记 | `Node.recovery_marker` |
 | 修订 / amendment | 运行中对 DAG 的已评审变更 | `omac dag amend`、`core/amendment.py` |
 | 机制角色 / role | planner、orchestrator、worker、reviewer、acceptor | `dispatch.py::KIND_ROLE` |
-| Agent 模板 / agent template | 通用能力画像，不是机制角色 | `src/omac/agents/`、`agent_templates.py` |
+| Agent 模板 / agent template | 通用能力画像，不是机制角色 | `src/omac/agents/`、`cli/agent_templates.py` |
 | 运维工具 / operator tooling | 针对单次事故、写在包外、用完即删的脚本 | 不进 `src/omac` |
 
 ## 5. 工程规范与约束
@@ -259,7 +277,7 @@ blocked / in_review ── omac node accept ──► done        上游修复�
 - 码值定义在 `cli/exit_codes.py`；业务层只 `raise` `errors.py` 中的子类，`sys.exit` 只出现在 `cli/main.py`。契约必须向后兼容。
 - **报错即教学**：错误要说清缺什么、怎么修，并给出可复制的命令；参数错误时打印错误 + 该命令完整 help，
   让 Agent 错一次就能自我纠正。所有用户可见文本都经过 `omac.i18n.ui(english, chinese)`（默认英文）。
-- exit 20 的 JSON 报告形如 `{failed_nodes, blocked_downstream, next_actions}`，`next_actions` 是可复制命令。
+- JSON 输出形状（含 `dag run` 与 exit 20 的报告）见设计 §5.2；`next_actions` 是可复制命令。
 
 ### 5.4 幂等、并发与超时
 
@@ -273,30 +291,26 @@ blocked / in_review ── omac node accept ──► done        上游修复�
   同一工作项的 Worker 控制与 Reviewer 派单用本机锁（`worker_control_lock`、`reviewer_dispatch_lock`），
   持锁后仍必须做一次权威读取；这些锁不是平台级 CAS。多机经 `origin/main` 同步；推送冲突只在每个未推送提交
   都只涉及 manifest 定义与状态目录时才自动 rebase（不 rebase 用户业务提交），推送退避 10 s 起、上限 300 s。
-- **超时与预算默认值**（`core/config.py` 等）：`poll_interval` 30 s；`max_parallel` 4；`ci.timeout_minutes`、
-  `merge.timeout_minutes` 30；交接终态宽限 30 s（`loop.py`）；Reviewer 未提交宽限 30 s（`decide_reviewer.py`）；
-  `retry.worker|ci|review|merge` 各 3（0 表示立即 blocked）；`retry.no_submit_runs` 2（必须 ≥ 1）；
-  `acceptance.max_rounds` 3；`reconcile.full_scan_interval_ticks` 20、`full_scan_max_age_seconds` 1800。
-  新的超时或预算必须可配置并写进设计 §6，不能散落魔法数。
+- **超时与预算**：默认值以 `core/config.py` 和设计 §6 为准；新的超时或预算必须可配置并写进设计 §6，不能散落魔法数。
 
 ### 5.5 确定性代码 vs 模型
 
 | 必须由代码确定性完成 | 允许交给模型（Agent），但必须过机器门 |
 |---|---|
-| 控制流、状态转移、就绪 / 收敛判断 | 设计方案、验收文档、manifest 拆解（plan / acceptance / decompose） |
+| 控制流、状态转移、就绪与 DAG 收敛判断、评审往返何时停止 | 设计方案、验收文档、manifest 拆解（plan / acceptance / decompose） |
 | 回退计数与预算、何时 blocked、exit 20 报告 | 代码实现与 PR、verification 证据 |
 | 门：lint、证据 schema、CI 退出码、PR 观察、覆盖率 | 评审 verdict 与 report（只对其 subject digest 有效） |
-| 合并请求的发起与结论、交付身份封存 | 验收结果、修订提案 |
-| manifest / 平台写入（只经 `apply`） | — |
+| 合并请求的发起与结论、交付身份封存 | 验收结果、修订提案、Worker 阻断报告 |
+| 端口写只经 `apply`；新增 manifest 写只用 `SetNode`/`SaveState`（§3.4，CI 强制） | — |
 
-Agent 不决定控制流，不自审自放行；角色指南（`guide/`）与模板（`agents/`）只写机制，不写项目策略。
+Agent 的产出只经 `omac work submit|block` 进入，一律是待校验的证据或请求，不是指令：Agent 不决定控制流，
+不自审自放行。角色指南（`guide/`）与模板（`agents/`）只写机制，不写项目策略。
 
 ### 5.6 日志与可观测
 
 - 两条输出线：**数据线**（stdout，命令 payload、汇总表，`cli/output.py`）和**进度线**（stderr，structlog 事件，`core/logsetup.py`）。进度永远不进 stdout。
 - 事件名是机器契约：使用 `logsetup.EVT_*` 常量（`dispatch`、`verdict`、`node_done`、`needs_decision`…），不要内联新字符串；新增事件要加常量。
 - 格式：`--log-format text|json`、`--json-logs`、`OMAC_LOG_FORMAT`；命令输出 `--output json|table`，Agent 与 web 用 JSON。
-- `dag run --output json` 打印 `{state, done, running, failed, dispatched, report}`。
 
 ### 5.7 隐私与安全红线
 
@@ -316,14 +330,15 @@ Agent 不决定控制流，不自审自放行；角色指南（`guide/`）与模
 | 禁止 | 原因 |
 |---|---|
 | 在适配器外执行或拼接平台 CLI 参数 | 平台语法会泄漏到业务层，换平台要改 Loop |
-| 在 `apply.py` 外写端口（CI 规则 `inline_effects`） | 崩溃一致性依赖效果顺序；散落的写入无法审计 |
+| 在 `apply.py` 外写端口（CI 规则 `inline_effects`）；新增直接 `set_node`/`save_manifest`（`MANIFEST_WRITE_BASELINE`） | 崩溃一致性依赖效果顺序；散落的写入无法审计 |
+| 在别处另建节点状态集合 | 多套集合会分叉；唯一定义在 `core/graph.py` |
 | 在 `decide_*` 中做 I/O | 决策必须能脱离平台做表驱动测试 |
 | 用惰性 import 绕过分层；扩大 `ignore_imports` 或 `TRANSITIONAL` | 基线只能缩小 |
 | 为单次事故加特例或常量 | 产品只放通用机制（硬规则 4） |
 | 重放结果未知的写入；从命令退出码推断合并成功 | 会产生重复 PR 合并或错误收敛 |
 | 让 Agent 决定下一步、或让产出者评审自己 | 违背确定性 Loop 与独立评审 |
 | 把转录、源文件等大载荷写进 manifest | manifest 要保持很小、可合并 |
-| web 读 manifest、调引擎或改数据 | 人、Agent、web 必须看到同一份事实 |
+| web 读 manifest、调引擎、改数据或吞异常 | 人、Agent、web 必须看到同一份事实 |
 | 削弱架构测试来让改动通过 | 守护规则就是本文件的执行面 |
 
 ## 6. 如何做改动
@@ -333,8 +348,9 @@ Agent 不决定控制流，不自审自放行；角色指南（`guide/`）与模
 | 改动 | 顺序 |
 |---|---|
 | 新的 Loop 决策 / 转移 | 1) 在 `tests/test_decide_*.py` 写表驱动用例 → 2) 在 `pipeline/decide_*.py` 加 `Observation` 与返回 `Plan` 的纯函数 → 3) 外壳（`loop.py`、`tasks.py`、`delivery.py`）读事实、调用决策、`apply` |
-| 新的副作用 | 在 `decide_effects.py` 加冻结 `Effect` → 在 `apply.py::_RUNNERS` 加一行 → 写方法名加入 `tests/_support/arch_rules.py::WRITE_METHODS`（只增不减）→ 更新设计 §7.3.1 效果表 |
-| 新的平台事实或写操作 | 端口抽象方法（`engines/store.py|runtime.py|codehost.py`，平台中立措辞）→ 适配器实现 → 用预制 CLI 输出做解析单测（只替换平台 CLI 调用）→ 需要真实平台行为的放 `tests/it` |
+| 新的副作用 | 在 `decide_effects.py` 加冻结 `Effect` → 在 `apply.py::_RUNNERS` 加一行（`tests/test_apply.py::EFFECT_CALLS` 加一行）→ 更新设计 §7.3.1 与本文件 §3.4 效果表 |
+| 新的平台事实或写操作 | 端口抽象方法（`engines/store.py|runtime.py|codehost.py`，平台中立措辞）→ 写方法名加入 `tests/_support/arch_rules.py::WRITE_METHODS` → 适配器实现 → 用预制 CLI 输出做解析单测（只替换平台 CLI 调用）→ 需要真实平台行为的放 `tests/it` |
+| `core` 里的流程需要写平台 | 纯校验留在 `core`；写入放 `pipeline` 经 `apply`，再把写函数注入 `core`（范例：`pipeline/stage_recovery.py`、`pipeline/amendment.apply_amendment`） |
 | 新的 CLI 命令 / 参数 | `cli/commands/<noun>.py` 的 `register`/`run` → 错误用 `OmacError` 子类 + `ui()` → 支持 `--output json` → 英文 help 加到 `cli/main.py` 的 `_EN_SUBCOMMAND_HELP`/`_EN_ARGUMENT_HELP` → `tests/test_cli_*.py` → 更新 README / 指南 |
 | web 需要新数据 | 先加 CLI 命令（`--output json`），再在 `web/api.py` 加原样转发的路由 |
 | 新配置键 | `core/config.py`（默认值 + 模块 docstring）→ 设计 §6 → 按 文件 < `OMAC_*` < 参数 的优先级解析 |
@@ -342,7 +358,7 @@ Agent 不决定控制流，不自审自放行；角色指南（`guide/`）与模
 | 打包文档（`guide/**`、`agents/**`） | 中英两份同时改；跑 `tests/test_guide.py`、`tests/test_i18n.py`、`tests/test_agent_templates.py` |
 
 **不能碰**：退出码含义、`--output json` 的既有字段、三个端口的名字与语义、`lint-imports` 的 `ignore_imports` 基线、
-`TRANSITIONAL`、1.x 兼容（不加回）、`docs/dev/`（本地目录，Git 忽略，代码与本文件都不得引用）。
+`TRANSITIONAL` 与 `MANIFEST_WRITE_BASELINE`（只能缩小）、1.x 兼容（不加回）、`docs/dev/`（本地目录，Git 忽略，代码与本文件都不得引用）。
 
 ### 6.2 测试规则
 
@@ -361,7 +377,8 @@ Agent 不决定控制流，不自审自放行；角色指南（`guide/`）与模
 ### 6.3 验证（按改动类型）
 
 - 源码、测试、构建 / 打包配置、schema 或可执行行为：CI 等价 pytest 全绿，且 `lint-imports` 通过。
-  环境准备：`python -m pip install -e ".[test]" import-linter`。
+  环境准备：`python -m pip install -e ".[test]" import-linter`。改版本或发布元数据时加跑
+  `python scripts/check_release.py --tag v<pyproject 中的版本>`。
 - 纯文档（Markdown、静态图）：`git diff --check`，检查本地链接与资源，有工具时解析 / 渲染改动的格式；涉及打包文档时加跑 §6.2 第 8 条。
 - 写完代码不算完成；完成需要测试、构建或实际命令输出这类客观证据。
 
@@ -384,22 +401,17 @@ Agent 不决定控制流，不自审自放行；角色指南（`guide/`）与模
 
 ## 7. 已知取舍与历史包袱（不要当成规范）
 
-1. **"进行中 / 终态"有多套定义**：`core/graph.py` 的 `RUNNING = {in_progress, in_review}`、`TERMINAL = {done, cancelled, abandoned}`；
-   `pipeline/loop.py` 的 `RUNNING_STATUSES` 还包含 `ci_check`、`merging`，`TERMINAL_STATUSES` 还包含 `blocked`、`failed`；
-   `pipeline/report.py` 另有 `TERMINAL_ALL`。新代码判断进行中节点以 `loop.RUNNING_STATUSES` 为准，不要再新建一套集合。
-2. **`running_nodes` 标识符在代码中不存在**；术语表沿用设计 §10.2 的名字，代码里对应 `RUNNING_STATUSES`、`_running_observations`。
-3. **`failed`、`abandoned`、`cancelled` 不在 `delivery.VALID_MANIFEST_STATUSES` 中**，不能经 `to_platform_status` 同步到平台；
-   平台的 `cancelled` 由 Multica 适配器映射为 `BLOCKED`。
-4. **`loop.py` 中仍有多处直接调用 `core.manifest.set_node`** 改节点状态，没有走 `SetNode` Effect；`inline_effects` 只拦端口写，不拦 manifest 写。
-   新代码应在 Plan 中用 `SetNode` + `SaveState`。
-5. **`AcknowledgeAssignment`** 已在 `apply.py` 中实现，但设计 §7.3.1 的效果表未列出，且 `acknowledge_assignment` 不在 `WRITE_METHODS` 里。
-6. **`omac.agent_templates` 位于包根**，不属于任何 `lint-imports` 层，却 import 了 `engines.models`，分层契约管不到它。
-7. **`lsof`**：旧 AGENTS.md 与设计 §3 把它列为允许的本地工具，但 `src/omac` 中已没有调用；`engines/models.py` 曾被列为端口，实际只是数据类型。
-8. **`cli/commands/init_cmd.py`** 是 `inline_effects` 的豁免（交互式向导直接创建 project 和 Agent）；不要把它当成其他命令的范例。
-9. **语言混用**：代码注释、docstring 和 argparse help 多为中文，英文 help 由 `cli/main.py` 的映射表替换；用户可见文本以 `ui()` 为准，默认英文。
-10. **超大模块**：`pipeline/loop.py`（约 4.4k 行）、`engines/multica.py`（约 2.8k 行）、`pipeline/dispatch.py`、`pipeline/tasks.py`。
-    只限制函数长度（150 行），不限制文件长度。新逻辑优先放进对应的 `decide_*` 或 `core` 模块。
-11. **`Contract.acceptance`** 是保留的旧版全流程声明字段，新 manifest 用显式的责任语义（`core/acceptance_responsibility.py`）。
-12. **`tests/README.md` 已过时**：仍提到不存在的 `e2e` 标记和 "mock adapters"；以本文件 §6.2 和 `pyproject.toml` 的标记为准。
-13. **`.gitignore` 中的 `.orchestrator/`** 是旧的 manifest 位置，现行位置是 `.omac/`。
-14. **待确认**：manifest 节点 `status` 何时会被写成 `cancelled`（未找到写入点，仅计入收敛）；分支命名是否有约定（目前只有主题分支惯例）。
+1. **存量直接 manifest 写**：`pipeline/loop.py` 51 处、`cli/commands/node.py` 5 处、`core/amendment.py` 2 处、
+   `pipeline/acceptance.py` 与 `pipeline/plan.py` 各 1 处仍直接调用 `set_node`/`save_manifest`，没有走 `SetNode`/`SaveState`。
+   迁移成本高，收益只在与端口写交错处，因此暂留；`MANIFEST_WRITE_BASELINE` 只许减少。不要模仿。
+2. **`core/amendment.py::apply_amendment` 是放在 `core` 的编排**：它读工作项、写 manifest 账本，平台写入由注入的
+   `recover`（`pipeline/stage_recovery.prepare_stage_recovery`）完成。调用方用 `pipeline.amendment.apply_amendment`。
+3. **`web/api.py::get_plan_acceptance` 仍直接读验收文档 YAML**，没有对应命令；`web/server.py` 的参数名
+   `orchestrator_dir` 是旧目录名。改它时按 §6.1 先加 CLI 命令。
+4. **超大模块**：`pipeline/loop.py`（约 4.3k 行）、`engines/multica.py`（约 2.8k）、`pipeline/amendment.py` 与
+   `core/amendment.py`（约 1–1.9k）、`pipeline/dispatch.py`、`pipeline/tasks.py`。只限制函数长度（150 行），不限制文件长度；
+   新逻辑优先放进对应的 `decide_*` 或 `core` 模块。
+5. **语言混用**：代码注释、docstring 和 argparse help 多为中文，英文 help 由 `cli/main.py` 的映射表替换；用户可见文本以 `ui()` 为准，默认英文。
+6. **`Contract.acceptance`** 是保留的旧版全流程声明字段（`core/manifest.py` 注释），新 manifest 用显式的责任语义
+   （`core/acceptance_responsibility.py`）。
+7. **待确认**：分支命名是否有约定（目前只有从 `main` 拉主题分支的惯例）。

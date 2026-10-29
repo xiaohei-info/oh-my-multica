@@ -34,7 +34,7 @@ source and tests; the pull-request template asks the same question.
 ## 3. Structure and layering
 
 ```
-web → cli → pipeline → engines → core → i18n → errors
+web → cli → pipeline → engines → core → guide → i18n → errors
 ```
 
 | Layer | Role |
@@ -43,11 +43,12 @@ web → cli → pipeline → engines → core → i18n → errors
 | `cli` | Argument parsing, exit codes (`cli/exit_codes.py`, `sys.exit` only in `cli/main.py`), engine assembly. |
 | `pipeline` | The Loop: reconcile, result collection, gates, dispatch, delivery, acceptance, plan, amendment. |
 | `engines` | Ports (`store.py`, `runtime.py`, `codehost.py`) and adapters (`multica.py`, `github.py`). |
-| `core` | Domain model, manifest I/O, validation, evidence, graph, git state sync. No platform knowledge. |
+| `core` | Domain model, manifest I/O, validation, evidence, graph, git state sync. No platform knowledge and no port writes. |
+| `guide` | Packaged, bilingual, machine-consumed guides (9). |
 
 Enforced by `lint-imports` (contracts in `pyproject.toml`, function-level imports count) and by
-`tests/test_architecture.py`: platform CLIs (`multica`, `gh`, `curl`) run only inside adapters; `git`, `bash -n` and
-`lsof` are the only other subprocess users, on an explicit allowlist; `decide_*` modules import neither `engines` nor
+`tests/test_architecture.py`: platform CLIs (`multica`, `gh`, `curl`) run only inside adapters; `git` and `bash -n` are
+the only other subprocess users, on an explicit allowlist; `decide_*` modules import neither `engines` nor
 `subprocess`; `create_engine` is called only inside `engines`. The single permanent layering exception is the `omac web`
 command starting the web server.
 
@@ -86,7 +87,7 @@ A DAG is two things on disk, both plain text, both committed to git:
 
 | Code | Meaning |
 |---|---|
-| 0 | The DAG converged (nothing running, blocked or failed; `done`, `abandoned`, `cancelled` count) and, when required, final acceptance passed. |
+| 0 | The DAG converged (nothing running, blocked or failed; `done` and `abandoned` count) and, when required, final acceptance passed. |
 | 1 | General error. |
 | 2 | Platform or network error, including a missing work item. |
 | 3 | Authentication error (platform CLI not signed in). |
@@ -149,12 +150,14 @@ Every decision has the same shape. A frozen **`Observation`** holds the facts a 
 the decision returns a **`Plan`**: an ordered tuple of frozen **`Effect`** values plus the outcome name the caller reports.
 `pipeline/apply.py::apply(effects, ports, state)` is the only code that turns an effect into a port call: strictly in
 order, one at a time, one result per effect, never retrying and never swallowing an exception. `tests/test_architecture.py`
-(`inline_effects`) fails the build on a `store`/`runtime`/`code_host` write anywhere else in `pipeline` or `cli`.
+(`inline_effects`) fails the build on a `store`/`runtime`/`code_host` write anywhere else in `src/omac` (the adapters and
+the interactive `omac init` wizard excepted). Direct manifest writes (`set_node`, `save_manifest`) that predate `SetNode`
+remain in a few shell modules; `MANIFEST_WRITE_BASELINE` in the same test pins their count per file, which may only shrink.
 
 | Effect | Port call |
 |---|---|
-| `UpdateStatus`, `UpdateMetadata`, `AddComment`, `Assign`, `ClearAssignment`, `ResetReview`, `PrepareReviewCycle`, `CreateWorkItem`, `SetNodeContract`, `SetAuthoringIdentity`, `NormalizeConfirmedMerge` | `WorkItemStore` |
-| `Wake`, `DispatchReviewer`, `CancelRun` | `AgentRuntime` |
+| `UpdateStatus`, `UpdateMetadata`, `AddComment`, `Assign`, `ClearAssignment`, `ResetReview`, `PrepareReviewCycle`, `CreateWorkItem`, `SetNodeContract`, `SetAuthoringIdentity`, `NormalizeConfirmedMerge`, `RestoreAuthoringGeneration` | `WorkItemStore` |
+| `Wake`, `AcknowledgeAssignment`, `DispatchReviewer`, `CancelRun` | `AgentRuntime` |
 | `RequestMerge` | `CodeHost` |
 | `SetNode`, `SaveState` | the manifest (in memory, then atomically on disk) |
 
@@ -174,6 +177,10 @@ sit between two effects are split at that read; the read is a stage or an explic
   plans (`plan_block`, `decide_done_develop`, `rework_to_producer`...). The Worker/Reviewer handoff checkpoints in `loop.py`
   are guarded protocols: one effect per checkpoint, each followed by a control read that can stop the handoff, so each
   `apply` there carries exactly one effect and the guard between two checkpoints is an explicit observation point.
+* **Explicit stage recovery** (`omac node retry`, amendment apply; `pipeline/stage_recovery.py`): the checks and digests
+  are pure (`core/stage_recovery.py`); the writes are `plan_stage_reset` → read the review subject → `plan_enter_review`,
+  and an authoring retry publishes its recovering intent, then restores the generation, each write read back before the
+  next. `core.amendment.apply_amendment` receives this writer as `recover`, so `core` itself writes nothing.
 
 ### 7.4 Stage handoff
 
@@ -217,6 +224,10 @@ objective, acceptance, non-goals, verification commands, integration gates, `pr_
 
 Use *result collection* (`collect_results`, 结果收集), *running nodes* (`running_nodes`, 进行中节点) and *ready nodes*
 (`ready_nodes`, 就绪节点) in identifiers, errors, guides and documents.
+
+Node status classes are defined once, in `core/graph.py`: `RUNNING` (`in_progress`, `ci_check`, `in_review`, `merging`),
+`NEEDS_DECISION` (`blocked`, `failed`; `blocked` returns to `todo` on `omac node retry`, so it is not terminal) and
+`SATISFIED` (`done`, `abandoned`). The DAG converges when no node is `RUNNING` or `NEEDS_DECISION`.
 
 ## 11. Testing architecture
 
