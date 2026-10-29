@@ -37,9 +37,9 @@ per-test time or memory budget to satisfy.
 
 `tests/it` runs against a private Multica started with Docker (compose project `omac-it-*`, loopback port, removed
 afterwards) and needs the `multica` CLI on `PATH`; it fails with the fix when Docker is missing instead of skipping.
-Run `python tests/it/cleanup.py` to remove stacks left behind by a killed run. The weekly real-agent smoke run
-(`tests/smoke`, `.github/workflows/smoke.yml`) costs money, never runs for pull requests, and is capped at 20 USD per
-month. Tests marked `live` need a real platform and are skipped by default.
+Run `python tests/it/cleanup.py` to remove stacks left behind by a killed run. The optional real-agent smoke run
+(`tests/smoke`, `.github/workflows/smoke.yml`) is started by hand on the self-hosted runner, uses the Codex or Pi
+already signed in there, and never runs for pull requests. Tests marked `live` need a real platform and are skipped by default.
 Do not include credentials, machine paths, workspace IDs, Agent IDs, or user
 email addresses in tests, fixtures, screenshots, or logs. The design is in `docs/design/README.md`.
 

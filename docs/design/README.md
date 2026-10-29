@@ -225,7 +225,7 @@ Use *result collection* (`collect_results`, 结果收集), *running nodes* (`run
 | Unit | Pure `decide_*` tables, state store, schemas, lint, projections over synthetic work items, and adapter parsing over canned platform-CLI output (only the platform CLI call is replaced). There is no in-memory platform double: anything that needs platform behaviour is a Docker test |
 | Integration | Real git, a real local HTTP server, subprocesses, 145-node scale cases (`@pytest.mark.integration`) |
 | Docker | `tests/it`: a private Multica (compose project `omac-it-*`, label `omac.it=1`, loopback port, `down -v`) |
-| Smoke | `tests/smoke`: a real Coding Agent on the same stack, weekly, never for pull requests |
+| Smoke | `tests/smoke`: a real Coding Agent (Codex or Pi on the self-hosted runner) on the same stack, by hand only, never for pull requests |
 
 Unit tests are small and fast because of this architecture (pure decisions, ports at the boundary), not because of a
 per-test metric; the markers only select what runs.
@@ -242,8 +242,7 @@ the non-Docker tests (Python 3.10 and 3.12, 10-minute timeout) and the Docker te
 (`pytest tests/it --shard I/3`, every third file by path; one shard measured 6 min 17 s with `-n 2`, 7.2 CPU-minutes,
 timeout 25 minutes). The setup a maintainer must do on GitHub is listed in `docs/github-setup.md`.
 
-Docker is required for `tests/it` and is never skipped silently. The smoke run's spend is capped at 20 USD per month: a metered key with a
-hard limit in the provider console is the main gate, `tests/smoke/ledger.py` refuses to start at the cap.
+Docker is required for `tests/it` and is never skipped silently.
 
 ## 12. Engines
 

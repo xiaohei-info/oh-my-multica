@@ -43,7 +43,7 @@ def require_docker() -> None:
 class Stack:
     def __init__(self, root: Path, *, real_agent: bool = False):
         """``real_agent``: the daemon launches the Coding Agent CLI found on PATH instead of the scripted one
-        (weekly smoke run only; needs that CLI signed in or an API key in the environment)."""
+        (smoke run only; ``OMAC_SMOKE_RUNTIME`` names its provider, e.g. codex or pi, signed in on this machine)."""
         self.real_agent = real_agent
         self.root = Path(root)
         self.run_id = secrets.token_hex(3)
@@ -154,18 +154,22 @@ class Stack:
         env = {**os.environ, **self.cli_env(), **self.omac_env(),
                "MULTICA_DAEMON_ID": f"omac-it-{self.run_id}", "MULTICA_DAEMON_POLL_INTERVAL": "200ms",
                "MULTICA_WORKSPACES_ROOT": str(self.root / "runs"), "OMAC_FAKE_LOG": str(self.fake_log)}
+        provider = os.environ.get("OMAC_SMOKE_RUNTIME", "claude") if self.real_agent else "claude"
+        if self.real_agent:  # HOME is private; the real Agent keeps its sign-in in the machine's own config
+            env.setdefault("CODEX_HOME", str(Path.home() / ".codex"))
+            env.setdefault("PI_CODING_AGENT_DIR", str(Path.home() / ".pi" / "agent"))
         self.daemon = subprocess.Popen(
             ["multica", "--profile", self.profile, "daemon", "start", "--foreground", "--no-auto-update", "--no-auto-reload"],
             env=env, stdout=(self.root / "daemon.log").open("w"), stderr=subprocess.STDOUT, start_new_session=True)
         deadline = time.time() + 60
         while time.time() < deadline:
             runtimes = json.loads(self.multica("runtime", "list", "--output", "json", profile=True) or "[]")
-            claude = [r for r in runtimes if "claude" in (r.get("launch_header") or "")]
-            if claude:
-                self.runtime_id = claude[0]["id"]
+            found = [r for r in runtimes if r.get("provider") == provider]
+            if found:
+                self.runtime_id = found[0]["id"]
                 return
             time.sleep(0.5)
-        raise StackError(f"The Multica daemon did not register the scripted agent runtime; see {self.root / 'daemon.log'}")
+        raise StackError(f"The Multica daemon did not register the {provider} agent runtime; see {self.root / 'daemon.log'}")
 
     def agent(self, name: str, scenario: list[list[dict]] | None = None) -> str:
         """Create (or return) an agent whose Runs execute ``scenario`` (a list of attempts, each a list of steps)."""

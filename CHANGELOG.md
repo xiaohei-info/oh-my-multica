@@ -11,6 +11,8 @@ This file records public changes to oh-my-multica. The format follows
 - Tests: the per-test CPU time, memory and temp-file budgets and the fixture size limits are removed; unit tests stay
   fast through the architecture, and markers only select what runs.
 - Releases no longer wait for a successful smoke run on the tagged commit.
+- The smoke run is manual only and runs on the self-hosted Linux runner with the Codex or Pi already signed in there;
+  the metered API key and the monthly spend ledger are removed.
 
 ## [2.0.0] — 2026-10-25
 

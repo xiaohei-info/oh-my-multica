@@ -17,7 +17,7 @@ the rest are review requirements.
 | `src/omac/core/` | Domain model, manifest I/O, validation, Git state sync. |
 | `src/omac/guide/`, `src/omac/agents/` | Packaged, machine-consumed guides and Agent templates. |
 | `scripts/check_release.py` | Release metadata check used by `release.yml`. |
-| `tests/` | pytest suite; markers `integration`, `docker`, `live` (see `pyproject.toml`). `tests/it` runs a private Docker Multica; `tests/smoke` is the weekly real-agent run. |
+| `tests/` | pytest suite; markers `integration`, `docker`, `live` (see `pyproject.toml`). `tests/it` runs a private Docker Multica; `tests/smoke` is the optional, manually started real-agent run. |
 | `docs/design/README.md` | The current design; code comments cite its section numbers. |
 
 ## Hard Rules
@@ -140,8 +140,8 @@ goes through `omac.i18n.ui(english, chinese)`.
    decisions, ports at the boundary), not because a metric enforces it; markers
    `integration`, `docker`, `live` only select what runs.
 7. Tests that need the real server go to `tests/it` (private Docker Multica; never
-   skipped silently). The real-agent smoke run costs money and never runs for pull
-   requests.
+   skipped silently). The real-agent smoke run is started by hand, does not gate
+   releases, and never runs for pull requests.
 8. Changes to packaged documents (`src/omac/guide/**`, `src/omac/agents/**`)
    run `tests/test_guide.py`, `tests/test_i18n.py`, and
    `tests/test_agent_templates.py`.
