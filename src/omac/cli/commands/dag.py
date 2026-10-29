@@ -10,7 +10,7 @@ import time
 from .. import exit_codes
 from ..output import add_output_flag, hint, print_json, print_table
 from ...core.config import (
-    CONFIG_PATH, DEFAULTS,
+    CONFIG_DIR, CONFIG_PATH, DEFAULTS,
     load_config, resolve_no_submit_runs,
     resolve_reconcile, resolve_retry,
 )
@@ -109,6 +109,10 @@ def register(parser):
     check.add_argument("--engine", help="引擎类型(multica),缺省按 config.yaml / 环境变量 OMAC_ENGINE")
     check.add_argument("--workspace", help="工作空间 id,缺省按 config.yaml / 环境变量 OMAC_WORKSPACE_ID")
     add_output_flag(check)
+
+    list_p = sub.add_parser("list", help="列出目录中的 DAG manifest 及进度")
+    list_p.add_argument("--dir", default=CONFIG_DIR, help="manifest 所在目录(缺省 .omac)")
+    add_output_flag(list_p)
 
     show = sub.add_parser("show", help="查看 manifest 摘要")
     show.add_argument("manifest", help="manifest 文件路径")
@@ -484,6 +488,27 @@ def snapshot(args) -> int:
     return exit_codes.OK
 
 
+def list_manifests(args) -> int:
+    """DAG manifests under ``--dir`` (config and acceptance files and empty DAGs excluded) with their progress.
+
+    A manifest that cannot be loaded fails the command with its teaching error instead of being skipped.
+    """
+    directory = Path(args.dir)
+    rows = []
+    for path in sorted(directory.glob("*.yaml")) if directory.is_dir() else []:
+        if path.name == "config.yaml" or path.name.endswith(".acceptance.yaml"):
+            continue
+        manifest = load_manifest(str(path))
+        if manifest.nodes:
+            progress = build_manifest_status_report(manifest, str(path))["progress"]
+            rows.append({"path": str(path), "name": path.stem, **progress})
+    if args.output == "json":
+        print_json(rows)
+    else:
+        print_table(["name", "done", "total", "path"], [[r["name"], r["done"], r["total"], r["path"]] for r in rows])
+    return exit_codes.OK
+
+
 def amend(args) -> int:
     if args.amend_action == "budget-preview":
         return _amend_locked(args)
@@ -799,6 +824,8 @@ def run(args) -> int:
     """
     if args.action == "check":
         return check(args)
+    if args.action == "list":
+        return list_manifests(args)
     if args.action == "show":
         return show(args)
     if args.action == "status":

@@ -108,34 +108,10 @@ def _cli_json(run_fn: Callable, args) -> Any:
 # ==================== 端点(每个对应一条 CLI 命令) ====================
 
 
-def get_manifests(orchestrator_dir: Path) -> list[dict]:
-    """GET /api/manifests:只列含节点的 DAG manifest，排除配置与验收产物。"""
-    if not orchestrator_dir.is_dir():
-        return []
-    results = []
-    from omac.core.manifest import load_manifest
-    for p in sorted(orchestrator_dir.glob("*.yaml")):
-        if p.name == "config.yaml" or p.name.endswith(".acceptance.yaml"):
-            continue
-        try:
-            m = load_manifest(str(p))
-        except Exception:
-            continue  # 解析失败的文件跳过,不阻塞其它 manifest
-        total = len(m.nodes)
-        if total == 0:
-            continue
-        done = sum(1 for n in m.nodes.values() if n.status == "done")
-        abandoned = sum(1 for n in m.nodes.values() if n.status == "abandoned")
-        results.append({
-            "path": str(p),
-            "name": p.stem,
-            "total": total,
-            "done": done,
-            "abandoned": abandoned,
-            "done_ratio": done / total if total else 0.0,
-            "undone": total - done - abandoned,
-        })
-    return results
+def get_manifests(omac_dir: Path) -> Any:
+    """GET /api/manifests ← dag list --dir <omac_dir> --output json。"""
+    args = _ns(action="list", dir=str(omac_dir), output="json")
+    return _cli_json(_cmd().dag.run, args)
 
 
 def get_config() -> Any:

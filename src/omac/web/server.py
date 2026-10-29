@@ -230,7 +230,10 @@ class _JSONResponder:
                 "version": _version(),
             })
         if path == "/api/manifests":
-            return self._send_json(200, api.get_manifests(orchestrator_dir))
+            try:
+                return self._send_json(200, api.get_manifests(orchestrator_dir))
+            except BaseException as e:
+                return self._fail(self._status_for_error(e), e)
         if path == "/api/config":
             try:
                 return self._send_json(200, api.get_config())
