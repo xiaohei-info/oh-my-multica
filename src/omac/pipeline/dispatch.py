@@ -540,7 +540,7 @@ def _show_review_context(item: Any, context: Dict[str, Any], ledger: Any, resolu
 def _show_blocker_control(item: Any, kind: TaskKind, phase: TaskPhase, control: Dict[str, Any]) -> None:
     if kind == TaskKind.DEVELOP and phase == TaskPhase.AUTHORING:
         control["report_blocker"] = f"omac work block {item.id} --report-file <blocker.yaml>"
-        from .worker_decision import blocker_template
+        from .worker_blocker import blocker_template
         template = blocker_template(item)
         if template is not None:
             control["blocker_report_template"] = template
@@ -1106,7 +1106,7 @@ def report_worker_blocker(store: WorkItemStore, issue_id: str, report_file: str,
         from .amendment_scope_gap import report_scope_gap
         return report_scope_gap(store, runtime, issue_id, report)
     if isinstance(report, dict) and report.get("schema") == "omac.worker-blocker/v2":
-        from .worker_decision import report_decision
+        from .worker_blocker import report_decision
         return report_decision(store, runtime, issue_id, report)
     fields = {"schema", "reason_code", "upstream_issue_id", "operation", "exit_code"}
     if (

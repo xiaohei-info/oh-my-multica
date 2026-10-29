@@ -1,5 +1,5 @@
 """A Worker's request for a decision, persisted on a real Multica: one causal stop, never replayed, never a delivery.
-(Which reports and Runs are accepted is decided by pure functions: tests/test_worker_decision.py.)"""
+(Which reports and Runs are accepted is decided by pure functions: tests/test_worker_blocker.py.)"""
 import json
 import subprocess
 import sys

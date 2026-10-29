@@ -3827,7 +3827,7 @@ def test_multica_runtime_reruns_completed_same_assignee_assignment(monkeypatch):
 
 
 def test_multica_runtime_provisions_missing_skill_then_creates_agent(tmp_path, monkeypatch):
-    from omac.agent_templates import SkillTemplate
+    from omac.cli.agent_templates import SkillTemplate
     from omac.engines.models import AgentProvisionSpec
     from omac.engines.multica import MulticaRuntime
 

@@ -18,7 +18,7 @@ import shutil
 import sys
 from typing import List, Optional
 
-from ...agent_templates import AgentTemplateCatalog
+from ..agent_templates import AgentTemplateCatalog
 from ...core import config as config_mod
 from ...engines import ENGINE_TYPES, engine_from_config
 from ...engines.models import AgentProvisionSpec, RuntimeTarget, WorkspaceInfo
