@@ -122,10 +122,6 @@ log = logsetup.get_logger(__name__)
 # dag 节点统一 kind(事件字段;与 run_task 的 plan/decompose/acceptance 区分)
 _DAG_KIND = "develop"
 
-# manifest status 字符串常量
-RUNNING_STATUSES = {"in_progress", "ci_check", "in_review", "merging"}
-FAILED_STATUSES = {"blocked", "failed"}
-TERMINAL_STATUSES = {"done", "blocked", "failed", "cancelled", "abandoned"}
 
 # WorkItemStatus(平台枚举)→ manifest status 字符串
 _PLATFORM_TO_MANIFEST: Dict[str, str] = {
@@ -490,7 +486,7 @@ def _build_work_item_hydration_plan(
         )
     )
     manifest_allows_lifecycle_progress = (
-        node.status not in FAILED_STATUSES and node.status != "abandoned"
+        node.status not in graph.NEEDS_DECISION and node.status != "abandoned"
     )
     review_or_confirmation = bool(
         node.status in {"in_review", "merging"}
@@ -2487,7 +2483,7 @@ def reconcile_active_keys(manifest: Manifest) -> set[str]:
     """计算 reconcile 间隔轮需要观察的活跃集（按需读取，P2）。
 
     活跃集成员（宁多勿漏）：
-    - RUNNING_STATUSES：collect_results 在 tick 路径要求 running 节点的
+    - graph.RUNNING：collect_results 在 tick 路径要求 running 节点的
       observation 完整（硬约束，活跃集必须 ⊇ running 集）；
     - todo：即将派发，需旧投影保护；依赖刚满足、本轮将被 dispatch 的节点
       是 ready 的 todo 节点（graph.ready_nodes 只返回 todo），已被本规则覆盖；
@@ -2509,7 +2505,7 @@ def reconcile_active_keys(manifest: Manifest) -> set[str]:
         if status == "abandoned":
             continue
         if (
-            status in RUNNING_STATUSES
+            status in graph.RUNNING
             or status == "todo"
             or node.recovery_marker
         ):
@@ -2521,7 +2517,7 @@ def reconcile_active_keys(manifest: Manifest) -> set[str]:
         if status == "done":
             # confirmed-merge 已收口的 done 属于静态集,留给全量审计轮。
             continue
-        if status not in FAILED_STATUSES:
+        if status not in graph.NEEDS_DECISION:
             active.add(key)
     return active
 
@@ -2743,7 +2739,7 @@ def _reconcile_observed_node(store: WorkItemStore, manifest: Manifest, manifest_
     # 此时不能把平台 DONE 直接同步成业务 done，必须回到 collect_results
     # 重新过证据门并派发 reviewer。
     if (
-        node.status in FAILED_STATUSES or node.status in {"todo", "done"}
+        node.status in graph.NEEDS_DECISION or node.status in {"todo", "done"}
     ) and _has_unreviewed_worker_delivery(node, item):
         set_node(manifest, key, status="in_progress")
         return True
@@ -2752,7 +2748,7 @@ def _reconcile_observed_node(store: WorkItemStore, manifest: Manifest, manifest_
     # manifest-first 转换后、平台状态写入前崩溃而短暂滞后；不能用这个
     # 旧投影反向解锁节点。显式 node retry 会先把 manifest 改为 todo，
     # 合法的新 worker 交付则由上面的证据分支接管。
-    if node.status in FAILED_STATUSES:
+    if node.status in graph.NEEDS_DECISION:
         return False
 
     # todo 是首次派发、operator retry 或 amendment recovery 的显式意图。
@@ -2768,7 +2764,7 @@ def _reconcile_observed_node(store: WorkItemStore, manifest: Manifest, manifest_
     # 运行中节点的终态回收归 collect_results(证据门 + 阶段交接)；
     # abandoned 是调用者显式决策(omac node abandon),不归 reconcile 同步,
     # 否则平台侧仍 DONE/BLOCKED 的 work_item 会把 manifest 的 abandoned 覆盖回 done/blocked
-    if node.status in RUNNING_STATUSES or node.status == "abandoned":
+    if node.status in graph.RUNNING or node.status == "abandoned":
         return False
 
     if node.status == "done":
@@ -3700,12 +3696,12 @@ def _running_observations(store, manifest, observations):
         return {
             key: WorkItemControlProjection(store.get_work_item(node.work_item_id))
             for key, node in manifest.nodes.items()
-            if node.status in RUNNING_STATUSES and node.work_item_id
+            if node.status in graph.RUNNING and node.work_item_id
         }
     else:
         running_observations = {}
         for key, node in manifest.nodes.items():
-            if node.status not in RUNNING_STATUSES or not node.work_item_id:
+            if node.status not in graph.RUNNING or not node.work_item_id:
                 continue
             projection = observations.get(key)
             if projection is None:
@@ -3789,7 +3785,7 @@ def collect_results(
         # 与基础设施瞬时失败预算 TRANSIENT_RUNTIME_MAX_RUNS 语义不同,后者固定。
         resolve_no_submit_runs(config or {}))
     for key, node in manifest.nodes.items():
-        if node.status not in RUNNING_STATUSES or not node.work_item_id:
+        if node.status not in graph.RUNNING or not node.work_item_id:
             continue
         projection = running[key]
         _collect_node(c, _Node(key, node, projection, projection.work_item))
@@ -3814,9 +3810,9 @@ def _mark_downstream_blocked(
             if node.status != "done":
                 set_node(manifest, key, status="done")
             continue
-        if node.status in RUNNING_STATUSES:
+        if node.status in graph.RUNNING:
             continue
-        if node.status not in TERMINAL_STATUSES:
+        if node.status not in graph.NEEDS_DECISION and node.status != "abandoned":
             set_node(manifest, key, status="blocked")
             newly_blocked.add(key)
     if newly_blocked:
@@ -3909,7 +3905,7 @@ def _dispatch(
     """
     workspace_id = store.config.workspace_id
     running_count = sum(
-        1 for n in manifest.nodes.values() if n.status in RUNNING_STATUSES
+        1 for n in manifest.nodes.values() if n.status in graph.RUNNING
     )
     slots = max(0, max_parallel - running_count)
     to_dispatch = ready[:slots]
@@ -4049,7 +4045,7 @@ def _active_formal_run_nodes(
     """Use the reconcile snapshot to prove causally bound active Runs."""
     active = []
     for key, node in manifest.nodes.items():
-        if node.status not in FAILED_STATUSES:
+        if node.status not in graph.NEEDS_DECISION:
             continue
         projection = observations.get(key)
         if not node.work_item_id or projection is None:
@@ -4120,7 +4116,7 @@ def _restore_active_formal_run_stages(
     ] = {}
     for key, node in manifest.nodes.items():
         projection = prepared.get(key)
-        if node.status not in FAILED_STATUSES or projection is None:
+        if node.status not in graph.NEEDS_DECISION or projection is None:
             continue
         item = projection.work_item
         intent = item.worker_handoff
@@ -4145,7 +4141,7 @@ def _restore_active_formal_run_stages(
         if key in blocked:
             continue
         node = manifest.nodes[key]
-        if node.status not in FAILED_STATUSES:
+        if node.status not in graph.NEEDS_DECISION:
             continue
         projection = prepared[key]
         item = projection.work_item
@@ -4280,7 +4276,7 @@ def tick(
     # 3. 收集全部失败节点(含本轮新失败 + 历史已 blocked/failed)
     all_failed: Set[str] = set(new_failures.keys())
     for key, node in manifest.nodes.items():
-        if node.status in FAILED_STATUSES:
+        if node.status in graph.NEEDS_DECISION:
             all_failed.add(key)
 
     # 失败隔离: 下游标 blocked
@@ -4300,8 +4296,8 @@ def tick(
 
     # 6. 构建 TickResult
     done = [k for k, n in manifest.nodes.items() if n.status == "done"]
-    running = [k for k, n in manifest.nodes.items() if n.status in RUNNING_STATUSES]
-    failed_keys = [k for k, n in manifest.nodes.items() if n.status in FAILED_STATUSES]
+    running = graph.running_nodes(manifest.nodes)
+    failed_keys = [k for k, n in manifest.nodes.items() if n.status in graph.NEEDS_DECISION]
 
     # 状态判定:running 优先(有正式运行继续协调),其次 needs_decision(有失败),
     # 最后 converged(全部 done)

@@ -39,6 +39,7 @@ from omac.core.workitem import (
 )
 from omac.engines.multica import MulticaStore
 from omac.errors import AuthError, PlatformError, WorkItemNotFoundError
+from omac.core import graph
 from omac.pipeline import loop
 from omac.pipeline.report import build_status_report
 from omac.pipeline.tasks import _pristine_amendment_activity_projection
@@ -961,7 +962,7 @@ def test_146_node_full_tick_reuses_reconcile_observations_for_collect(
     assert wakes == []
     assert merges == [True]
     assert sum(
-        node.status in loop.RUNNING_STATUSES and node.work_item_id is not None
+        node.status in graph.RUNNING and node.work_item_id is not None
         for node in manifest.nodes.values()
     ) == 8
     assert (
@@ -1401,7 +1402,7 @@ def test_reconcile_observations_cover_collect_required_evidence(tmp_path):
     result = loop.reconcile_with_observations(store, remote, manifest, path)
 
     for key, node in manifest.nodes.items():
-        if node.status not in loop.RUNNING_STATUSES or not node.work_item_id:
+        if node.status not in graph.RUNNING or not node.work_item_id:
             continue
         projection = result.observations[key]
         assert projection is not None

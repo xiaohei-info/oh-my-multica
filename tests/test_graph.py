@@ -1,5 +1,7 @@
 """core.graph:就绪节点、失败下游、终态判定。"""
-from omac.core.graph import all_terminal, downstream_of, node_waves, ready_nodes
+from types import SimpleNamespace
+
+from omac.core.graph import downstream_of, node_waves, ready_nodes, running_nodes
 
 
 def _issues(**kw):
@@ -21,9 +23,10 @@ def test_downstream_of_transitive():
     assert downstream_of(issues, {"a"}) == {"b", "c"}
 
 
-def test_all_terminal():
-    assert all_terminal(_issues(a=("done", []), b=("abandoned", [])))
-    assert not all_terminal(_issues(a=("done", []), b=("in_review", [])))
+def test_running_nodes_include_the_manifest_sub_states_and_nothing_waiting_for_a_decision():
+    nodes = {k: SimpleNamespace(status=k) for k in
+             ("todo", "in_progress", "ci_check", "in_review", "merging", "done", "blocked", "failed", "abandoned")}
+    assert running_nodes(nodes) == ["in_progress", "ci_check", "in_review", "merging"]
 
 
 def test_ready_nodes_abandoned_satisfies_dep():

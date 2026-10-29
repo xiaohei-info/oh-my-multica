@@ -1,21 +1,20 @@
-"""DAG 图算法。
+"""DAG 图算法与节点状态分类(唯一定义处)。
 
-术语约定(docs/design/README.md §10.2):就绪节点(ready_nodes)、进行中节点(running)。
+术语约定(docs/design/README.md §10.2):就绪节点(ready_nodes)、进行中节点(running_nodes)。
+节点状态分三类,其余是 todo:
+- RUNNING:进行中节点(ci_check / merging 是 manifest 侧细分态,平台侧映射见 pipeline.delivery);
+- NEEDS_DECISION:等调用者显式决策(exit 20);blocked 可经 `omac node retry` 回到 todo,不是终态;
+- SATISFIED:满足下游依赖;abandoned 视同满足(§7.5)。DAG 收敛 = 没有 RUNNING 与 NEEDS_DECISION 节点。
 """
 
-DONE = "done"
-# 依赖「已满足」的上游状态:done 正常满足,abandoned 视同满足(§2.4 P1.4 / §7.5)
-SATISFIED = {DONE, "abandoned"}
-TERMINAL = {"done", "cancelled", "abandoned"}
-RUNNING = {"in_progress", "in_review"}  # 进行中节点的状态集合
-# 细分态 ci_check / merging 是 manifest 中间切片、不是终态,故意不进
-# SATISFIED / TERMINAL / RUNNING —— 它们的终态由平台侧 IN_REVIEW / BLOCKED 接管,
-# 因此也不应被视为「已满足」上游依赖。进行中节点的显式枚举在
-# loop.py 的 RUNNING_STATUSES(已含 ci_check)中维护,本处不必重复。
+RUNNING = frozenset({"in_progress", "ci_check", "in_review", "merging"})
+NEEDS_DECISION = frozenset({"blocked", "failed"})
+SATISFIED = frozenset({"done", "abandoned"})
 
 
-def is_done(issue) -> bool:
-    return issue["status"] == DONE
+def running_nodes(nodes: dict) -> list:
+    """进行中节点:status 属于 RUNNING 的节点 key(nodes: key -> 带 .status 的节点)。"""
+    return [key for key, node in nodes.items() if node.status in RUNNING]
 
 
 def ready_nodes(issues: dict) -> list:
@@ -31,10 +30,6 @@ def ready_nodes(issues: dict) -> list:
         if all(issues.get(b, {}).get("status") in SATISFIED for b in it["blocked_by"]):
             out.append(key)
     return out
-
-
-def all_terminal(issues: dict) -> bool:
-    return all(it["status"] in TERMINAL for it in issues.values())
 
 
 def node_waves(nodes: dict) -> dict:
