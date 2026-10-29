@@ -131,15 +131,14 @@ goes through `omac.i18n.ui(english, chinese)`.
    `inspect.getsource`, do not test the test doubles themselves, do not restate
    constants (`assert X == set(X_MAP)`), and mock only external boundaries
    (platform CLI, network, clock). Duplicate test names are a defect.
-4. **Fixtures are synthetic and small.** No captured real-project data, machine
-   paths, platform IDs, emails, or credentials (see `CONTRIBUTING.md`). A single
-   fixture file stays under 1 MB. Tests must not read paths outside the
-   repository. (enforced)
+4. **Fixtures are synthetic.** No captured real-project data, machine
+   paths, platform IDs, emails, or credentials (see `CONTRIBUTING.md`). Tests
+   must not read paths outside the repository. (enforced)
 5. **Architecture checks** live in `tests/test_architecture.py` and
    `lint-imports`; do not weaken them to make a change pass. (enforced)
-6. Per-test budgets are enforced by `tests/conftest.py` (`tests/_support/budget.py`):
-   unit 0.2 s of CPU time (1 s wall backstop), integration 5 s, docker 30 s, peak memory and
-   temp-file limits. Do not add files to `EXEMPT_FILES` without a reason in the PR.
+6. Unit tests are small and fast because the architecture makes them so (pure
+   decisions, ports at the boundary), not because a metric enforces it; markers
+   `integration`, `docker`, `live` only select what runs.
 7. Tests that need the real server go to `tests/it` (private Docker Multica; never
    skipped silently). The real-agent smoke run costs money and never runs for pull
    requests.

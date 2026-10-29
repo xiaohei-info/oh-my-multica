@@ -26,7 +26,7 @@ import omac.web.api as web_api
 from omac.cli import exit_codes
 from omac.cli.main import main as cli_main
 
-pytestmark = pytest.mark.integration  # real local HTTP server / real git: budget class `integration`
+pytestmark = pytest.mark.integration  # real local HTTP server / real git
 
 
 # ==================== fixtures ====================

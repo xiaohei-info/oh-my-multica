@@ -65,7 +65,7 @@ addopts = "-q"
 markers = [
     "integration: multi-component workflows (real git, local HTTP, subprocesses); included by default.",
     "live: tests that hit a real platform (Multica/GitHub). Skipped by default in CI; run locally with `-m live`.",
-    "docker: integration tests on a private Docker Multica (tests/it); 30 s / 500 MB budget, Docker required, never skipped.",
+    "docker: integration tests on a private Docker Multica (tests/it); Docker required, never skipped.",
 ]
 
 [tool.importlinter]

@@ -19,7 +19,7 @@ import yaml
 
 import omac.web.server as web_srv
 
-pytestmark = pytest.mark.integration  # real local HTTP server / real git: budget class `integration`
+pytestmark = pytest.mark.integration  # real local HTTP server / real git
 
 
 # ----------------------- 资源读取 -----------------------

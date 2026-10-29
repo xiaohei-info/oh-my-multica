@@ -32,6 +32,9 @@ change in proportion to what it touches:
 - Markdown-only changes: `git diff --check`, local-link checks, and rendering
   or parsing for changed diagrams or formats when available.
 
+Unit tests stay small and fast because the code keeps decisions pure and platform calls behind ports; there is no
+per-test time or memory budget to satisfy.
+
 `tests/it` runs against a private Multica started with Docker (compose project `omac-it-*`, loopback port, removed
 afterwards) and needs the `multica` CLI on `PATH`; it fails with the fix when Docker is missing instead of skipping.
 Run `python tests/it/cleanup.py` to remove stacks left behind by a killed run. The weekly real-agent smoke run

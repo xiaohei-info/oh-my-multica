@@ -8,6 +8,9 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+- Tests: the per-test CPU time, memory and temp-file budgets and the fixture size limits are removed; unit tests stay
+  fast through the architecture, and markers only select what runs.
+
 ## [2.0.0] — 2026-10-25
 
 2.0.0 removes everything that existed to recover one particular project, splits the engine into three ports, stores

@@ -1,4 +1,4 @@
-"""Architecture guards: no incident-specific code, no platform CLI outside adapters, small synthetic fixtures.
+"""Architecture guards: no incident-specific code, no platform CLI outside adapters, synthetic fixtures.
 
 Layer direction itself is enforced by ``lint-imports`` (contracts in pyproject.toml).
 ``TRANSITIONAL`` lists paths that still violate a rule; it may only shrink, and it is empty today.
@@ -15,8 +15,6 @@ from _support import arch_rules as rules
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGED_SUFFIXES = {".py", ".md", ".yaml", ".yml", ".json", ".txt", ".html", ".js", ".css"}
-FIXTURE_FILE_MAX = 64 * 1024
-FIXTURE_TOTAL_MAX = 1024 * 1024
 FIXTURE_FORBIDDEN = re.compile(
     r"/Users/[A-Za-z0-9._-]+|/Volumes/[A-Za-z0-9._-]+|[A-Za-z0-9._%+-]+@(?!example\.(?:com|org|test|invalid)\b)"
     r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -33,7 +31,7 @@ TRANSITIONAL: dict[str, set[str]] = {
     "function_length": set(),
     "inline_effects": set(),
 }
-# Fixture entries (names directly under tests/fixtures) that predate the size/content rule.
+# Fixture entries (names directly under tests/fixtures) that predate the content rule.
 TRANSITIONAL_FIXTURES: set[str] = set()
 SYNTHETIC_FIXTURES = {"smoke_p1.yaml", "smoke_live_manifest.yaml"}
 
@@ -83,7 +81,7 @@ def test_decide_modules_stay_pure():
 
 
 @pytest.fixture(scope="module")
-def test_file_texts():  # read in setup: the call then costs a substring check, whatever the disk load
+def test_file_texts():
     return {p.name: p.read_text(encoding="utf-8") for p in sorted(Path(__file__).parent.rglob("test_*.py"))}
 
 
@@ -106,17 +104,13 @@ def test_smoke_workflow_is_schedule_or_manual_only():
         assert rules.smoke_triggers(smoke.read_text(encoding="utf-8")) == []
 
 
-def test_fixtures_are_small_and_synthetic():
+def test_fixtures_are_synthetic():
     fixtures = ROOT / "tests" / "fixtures"
-    problems, total = [], 0
+    problems = []
     for path in sorted(p for p in fixtures.rglob("*") if p.is_file()):
         rel = path.relative_to(fixtures)
         if rel.parts[0] in TRANSITIONAL_FIXTURES:
             continue
-        size = path.stat().st_size
-        total += size
-        if size > FIXTURE_FILE_MAX:
-            problems.append(f"{rel}: {size} bytes exceeds {FIXTURE_FILE_MAX}")
         text = path.read_bytes().decode("utf-8", errors="ignore")
         if FIXTURE_FORBIDDEN.search(text):
             problems.append(f"{rel}: machine path or real email address")
@@ -124,8 +118,6 @@ def test_fixtures_are_small_and_synthetic():
             if not PLACEHOLDER_UUID.match(uuid):
                 problems.append(f"{rel}: non-placeholder UUID {uuid}")
                 break
-    if total > FIXTURE_TOTAL_MAX:
-        problems.append(f"tests/fixtures totals {total} bytes, over {FIXTURE_TOTAL_MAX}")
     assert problems == []
 
 

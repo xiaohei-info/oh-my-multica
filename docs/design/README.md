@@ -220,12 +220,15 @@ Use *result collection* (`collect_results`, 结果收集), *running nodes* (`run
 
 ## 11. Testing architecture
 
-| Layer | What | Budget per test |
-|---|---|---|
-| Unit | Pure `decide_*` tables, state store, schemas, lint, projections over synthetic work items, and adapter parsing over canned platform-CLI output (only the platform CLI call is replaced). There is no in-memory platform double: anything that needs platform behaviour is a Docker test | 0.2 s of CPU time (wall clock only as a 1 s blocking backstop; no sleeping over 50 ms), 300 MB RSS, 10 MB tmp |
-| Integration | Real git, a real local HTTP server, subprocesses, 145-node scale cases (`@pytest.mark.integration`) | 5 s |
-| Docker | `tests/it`: a private Multica (compose project `omac-it-*`, label `omac.it=1`, loopback port, `down -v`) | 30 s, 500 MB |
-| Smoke | `tests/smoke`: a real Coding Agent on the same stack, weekly, never for pull requests | minutes |
+| Layer | What |
+|---|---|
+| Unit | Pure `decide_*` tables, state store, schemas, lint, projections over synthetic work items, and adapter parsing over canned platform-CLI output (only the platform CLI call is replaced). There is no in-memory platform double: anything that needs platform behaviour is a Docker test |
+| Integration | Real git, a real local HTTP server, subprocesses, 145-node scale cases (`@pytest.mark.integration`) |
+| Docker | `tests/it`: a private Multica (compose project `omac-it-*`, label `omac.it=1`, loopback port, `down -v`) |
+| Smoke | `tests/smoke`: a real Coding Agent on the same stack, weekly, never for pull requests |
+
+Unit tests are small and fast because of this architecture (pure decisions, ports at the boundary), not because of a
+per-test metric; the markers only select what runs.
 
 The Docker layer has three fixtures, all under `tests/`: a **scripted agent** (a `claude` the real Multica daemon launches;
 steps from a scenario file; it runs `omac work submit` like a real agent), a **`gh` shim** (pull requests in a JSON file,
@@ -239,8 +242,7 @@ the non-Docker tests (Python 3.10 and 3.12, 10-minute timeout) and the Docker te
 (`pytest tests/it --shard I/3`, every third file by path; one shard measured 6 min 17 s with `-n 2`, 7.2 CPU-minutes,
 timeout 25 minutes). The setup a maintainer must do on GitHub is listed in `docs/github-setup.md`.
 
-Per-test limits (`tests/_support/budget.py`) are enforced by `tests/conftest.py`; `EXEMPT_FILES` is empty. Docker is required
-for `tests/it` and is never skipped silently. The smoke run's spend is capped at 20 USD per month: a metered key with a
+Docker is required for `tests/it` and is never skipped silently. The smoke run's spend is capped at 20 USD per month: a metered key with a
 hard limit in the provider console is the main gate, `tests/smoke/ledger.py` refuses to start at the cap.
 
 ## 12. Engines
