@@ -17,7 +17,8 @@ from ...core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, REVIEW_NITS_ACCEPTANCE_SCHEMA, TaskKind, TaskPhase, exact_review_report_ref,
     review_nits_acceptance_is_valid,
 )
-from ...core.stage_recovery import prepare_stage_recovery, validate_stage_recovery
+from ...core.stage_recovery import validate_stage_recovery
+from ...pipeline.stage_recovery import prepare_stage_recovery
 from ...engines import engine_from_config
 from ...core.workitem import PullRequestState, WorkItemStatus
 from ...errors import NeedsDecision, OmacError, ValidationError, WorkItemNotFoundError

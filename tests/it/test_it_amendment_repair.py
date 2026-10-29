@@ -7,7 +7,8 @@ import yaml
 import omac.core.amendment as amendment_mod
 import omac.pipeline.amendment as amendment_pipeline
 from _support.amendkit import POOL, legacy_synced_authoring_accept_fixture, topology_manifest, proposal
-from omac.core.amendment import apply_amendment, build_reviewed_amendment
+from omac.core.amendment import build_reviewed_amendment
+from omac.pipeline.amendment import apply_amendment
 from omac.core.manifest import load_manifest, save_manifest
 from omac.core.retry_budget import consumed_bounces
 from omac.core.taskmeta import DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity, TaskPhase

@@ -10,9 +10,10 @@ from _support.amendkit import (
     responsibility_acceptance_doc, responsibility_update, seal_review_fixture, transitional_boundary_contract_update,
     typed_boundary_contract_update,
 )
-from omac.core.amendment import apply_amendment, build_reviewed_amendment, validate_proposal
+from omac.core.amendment import build_reviewed_amendment, validate_proposal
+from omac.pipeline.amendment import apply_amendment
 from omac.core.manifest import Contract, EvidenceMode, MISSING_CONSUMES, Node, ProducedArtifact, _load_contract, load_manifest
-from omac.core.stage_recovery import prepare_stage_recovery
+from omac.pipeline.stage_recovery import prepare_stage_recovery
 from omac.core.taskmeta import DECISION_REQUIRED_SCHEMA, DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity, TaskKind, TaskPhase
 from omac.core.workitem import WorkItemStatus
 from omac.errors import ValidationError

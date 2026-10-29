@@ -112,6 +112,16 @@ class NormalizeConfirmedMerge(Effect):
     item_id: str
 
 
+@dataclass(frozen=True)
+class RestoreAuthoringGeneration(Effect):
+    """Open a fresh authoring generation on the work item (explicit stage recovery), without dispatch."""
+    item_id: str
+    contract: Any
+    generation: str
+    bounce_baseline: Mapping[str, int] | None = None
+    worker_handoff: Any = None
+
+
 # --- AgentRuntime ------------------------------------------------------------------------------------------
 
 @dataclass(frozen=True)

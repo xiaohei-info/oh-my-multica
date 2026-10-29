@@ -10,6 +10,7 @@ from omac.core.amendment import (
 from omac.core.manifest import Contract, Manifest, Node, load_manifest, save_manifest
 from omac.core.retry_budget import consumed_bounces, review_rework_budget
 from omac.core.taskmeta import review_context_binding
+from omac.pipeline.stage_recovery import prepare_stage_recovery
 
 
 def fixture():
@@ -42,7 +43,7 @@ def test_unrelated_amendments_keep_authorized_budget_without_replaying_old_nodes
         path = tmp_path / "dag.yaml"
         save_manifest(manifest, str(path))
         manifest = load_manifest(str(path))
-        summary = _resume_apply_ledger(manifest, str(path), store)
+        summary = _resume_apply_ledger(manifest, str(path), store, prepare_stage_recovery)
         assert sorted(node for values in summary.values() for node in values) == ["harness"]
         assert manifest.nodes["dispatch"] == original.nodes["dispatch"]
     assert item.bounces.review == 22 and item.bounce_baseline is None

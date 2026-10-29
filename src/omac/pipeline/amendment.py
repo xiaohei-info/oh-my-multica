@@ -14,7 +14,7 @@ import yaml
 
 from ..core.acceptance import load_acceptance_doc_file
 from ..core.amendment import (
-    amendment_review_binding, apply_amendment, manifest_digest as full_manifest_digest, authoring_recovery_node_ids,
+    amendment_review_binding, apply_amendment as _apply_amendment, manifest_digest as full_manifest_digest, authoring_recovery_node_ids,
     build_reviewed_amendment, parse_proposal, validate_affected, validate_proposal,
 )
 from ..core.manifest import Contract, load_manifest
@@ -39,6 +39,12 @@ from .tasks import _review_subject_digest as task_review_subject_digest, run_tas
 from .apply import Ports, apply, apply_one
 from .decide_transitions import finish_clearing_decision
 from .decide_effects import UpdateMetadata
+from .stage_recovery import prepare_stage_recovery
+
+
+def apply_amendment(*args, **kwargs):
+    """``core.amendment.apply_amendment`` with the stage-recovery writer that runs its writes through ``apply``."""
+    return _apply_amendment(*args, recover=prepare_stage_recovery, **kwargs)
 
 
 def default_amendment_path(manifest_path: str) -> str:

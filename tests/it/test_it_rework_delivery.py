@@ -275,7 +275,7 @@ def test_a_delivery_that_changes_without_a_causal_run_does_not_replace_the_targe
 
 
 def test_an_authoring_recovery_collects_a_submit_on_the_same_head_without_a_worker_retry(kit):
-    from omac.core.stage_recovery import prepare_stage_recovery
+    from omac.pipeline.stage_recovery import prepare_stage_recovery
 
     manifest, path, item = rejected(kit, [kit.stack.tool("worker-submit", "--no-push")], *HANG)
     prepare_stage_recovery(manifest.nodes["a"], kit.store, "authoring")

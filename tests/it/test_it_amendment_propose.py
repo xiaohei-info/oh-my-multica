@@ -6,13 +6,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-import omac.core.amendment as amendment_mod
 import omac.pipeline.amendment as amendment_pipeline
 import omac.pipeline.tasks as tasks_module
 from _support.amendkit import bootstrap, contract_update, proposal, responsibility_update
 from _support.deliveries import review_report_for
 from _support.state import save_literal
-from omac.core.amendment import apply_amendment, build_reviewed_amendment
+from omac.core.amendment import build_reviewed_amendment
+from omac.pipeline.amendment import apply_amendment
 from omac.core.manifest import _dump_contract, load_manifest
 from omac.core.review_convergence import REVIEW_PROTOCOL_VERSION, build_review_obligations
 from omac.core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
@@ -87,7 +87,7 @@ def test_a_historical_correction_of_a_done_node_changes_only_the_responsibility_
                  "integration_gate_responsibility_patches": [{"name": "baseline-gate", "acceptance_refs": refs}],
                  "historical_contract_correction": True, "reason": "Migrate the legacy acceptance ownership contract"}
     reviewed = build_reviewed_amendment(manifest, proposal(operation), kit.store, issue_id="amendment-issue", reviewer_verdict="pass")
-    kit.monkeypatch.setattr(amendment_mod, "prepare_stage_recovery", lambda *_a, **_k: pytest.fail("a historical correction must not recover a Store stage"))
+    kit.monkeypatch.setattr(amendment_pipeline, "prepare_stage_recovery", lambda *_a, **_k: pytest.fail("a historical correction must not recover a Store stage"))
 
     first = apply_amendment(str(path), reviewed, kit.store, {node.worker, node.reviewer})
 

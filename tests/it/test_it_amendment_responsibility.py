@@ -6,11 +6,13 @@ import pytest
 import yaml
 
 import omac.core.amendment as amendment_mod
+import omac.pipeline.amendment as amendment_pipeline
 from _support.amendkit import (
     POOL, bootstrap, dag_manifest, proposal, responsibility_acceptance_doc, responsibility_update, seal_review_fixture,
 )
 from _support.taskkit import run, submit_step
-from omac.core.amendment import apply_amendment, build_reviewed_amendment, validate_proposal
+from omac.core.amendment import build_reviewed_amendment, validate_proposal
+from omac.pipeline.amendment import apply_amendment
 from omac.core.manifest import (
     ConsumedArtifact, Contract, EvidenceMode, MISSING_CONSUMES, Node, ProducedArtifact, load_manifest, save_manifest,
 )
@@ -68,7 +70,7 @@ def test_a_historical_responsibility_correction_of_a_merged_node_changes_no_deli
     assert correction["allowed_field_diff"] == [
         "contract.acceptance", "contract.acceptance_claims", "contract.acceptance_contributions", "contract.acceptance_refs",
         "contract.integration_gates[bootstrap].acceptance_refs"]
-    kit.monkeypatch.setattr(amendment_mod, "prepare_stage_recovery",
+    kit.monkeypatch.setattr(amendment_pipeline, "prepare_stage_recovery",
                             lambda *_a, **_k: pytest.fail("historical correction must not recover Store stages"))
     kit.forbid(kit.store, "set_node_contract", "reset_review", "prepare_review_cycle", "update_work_item_metadata", "update_status",
                "assign_work_item")
@@ -414,14 +416,14 @@ def test_merge_stage_responsibility_recovery_syncs_the_contract_without_replayin
 
 def test_merge_stage_recovery_resumes_after_an_interruption_following_the_manifest_write(kit, tmp_path):
     path, item, reviewed = merge_ready(kit, tmp_path)
-    original = amendment_mod.prepare_stage_recovery
-    kit.monkeypatch.setattr(amendment_mod, "prepare_stage_recovery",
+    original = amendment_pipeline.prepare_stage_recovery
+    kit.monkeypatch.setattr(amendment_pipeline, "prepare_stage_recovery",
                             lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("crash after manifest write")))
     with pytest.raises(RuntimeError, match="after manifest write"):
         apply_amendment(str(path), reviewed, kit.store, POOL, acceptance=responsibility_acceptance_doc())
     partial = load_manifest(str(path))
     assert partial.nodes["bootstrap"].status == "merging" and partial.meta["amendment_apply"]["nodes"]["bootstrap"]["state"] == "syncing"
-    kit.monkeypatch.setattr(amendment_mod, "prepare_stage_recovery", original)
+    kit.monkeypatch.setattr(amendment_pipeline, "prepare_stage_recovery", original)
 
     result = apply_amendment(str(path), reviewed, kit.store, POOL)
 

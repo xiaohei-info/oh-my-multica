@@ -337,7 +337,7 @@ def stage_amendment_with_handoff(kit, tmp_path, stage):
 
 
 def apply_exhausted_stage_amendment(kit, tmp_path, stage):
-    from omac.core.amendment import apply_amendment
+    from omac.pipeline.amendment import apply_amendment
 
     path, item, reviewed = stage_amendment_with_handoff(kit, tmp_path, stage)
     apply_amendment(str(path), reviewed, kit.store, POOL, acceptance=responsibility_acceptance_doc())
@@ -348,7 +348,8 @@ def legacy_synced_authoring_accept_fixture(kit, tmp_path, legacy_convergence_sna
     """An authoring amendment applied by an older OMAC: its ledger entry says `synced`, but the issue still has the old projection."""
     import yaml
 
-    from omac.core.amendment import apply_amendment, build_reviewed_amendment
+    from omac.core.amendment import build_reviewed_amendment
+    from omac.pipeline.amendment import apply_amendment
     from omac.core.taskmeta import TaskKind, TaskPhase
     from omac.core.workitem import WorkItemStatus
 

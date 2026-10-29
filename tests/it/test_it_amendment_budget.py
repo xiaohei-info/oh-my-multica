@@ -5,7 +5,8 @@ from _support.amendkit import (
     POOL, apply_exhausted_stage_amendment, bootstrap, contract_update, old_worker_handoff, proposal, responsibility_acceptance_doc,
     seal_review_fixture, stage_amendment_with_handoff,
 )
-from omac.core.amendment import apply_amendment, build_reviewed_amendment
+from omac.core.amendment import build_reviewed_amendment
+from omac.pipeline.amendment import apply_amendment
 from omac.core.manifest import load_manifest, save_manifest
 from omac.core.workitem import PullRequestObservation, PullRequestState, WorkItemStatus
 from omac.errors import ValidationError
