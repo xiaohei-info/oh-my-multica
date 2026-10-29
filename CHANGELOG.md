@@ -10,6 +10,7 @@ This file records public changes to oh-my-multica. The format follows
 
 - Tests: the per-test CPU time, memory and temp-file budgets and the fixture size limits are removed; unit tests stay
   fast through the architecture, and markers only select what runs.
+- Releases no longer wait for a successful smoke run on the tagged commit.
 
 ## [2.0.0] — 2026-10-25
 

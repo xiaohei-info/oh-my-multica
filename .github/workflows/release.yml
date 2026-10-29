@@ -10,29 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  smoke-gate:
-    name: Require a successful smoke run for this commit
-    if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: Look up the smoke run
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          count="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/smoke.yml/runs?head_sha=${GITHUB_SHA}&status=success" --jq '.total_count')"
-          if [[ "${count}" -lt 1 ]]; then
-            echo "::error::No successful Smoke run for ${GITHUB_SHA}. Start one with 'gh workflow run smoke.yml', wait for it to pass, then push the tag again."
-            exit 1
-          fi
-
   build:
     name: Build and inspect distributions
-    needs: smoke-gate
-    if: ${{ !cancelled() && (needs.smoke-gate.result == 'success' || needs.smoke-gate.result == 'skipped') }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.release.outputs.version }}

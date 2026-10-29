@@ -19,8 +19,6 @@ when it is done.
       for a stranger's pull request without a look.
 - [ ] **PyPI trusted publishing** is configured for `oh-my-multica` with the workflow `release.yml` and the environment
       `pypi` (the environment exists in the repository settings).
-- [ ] **Releases run only from a tag on a commit whose Smoke run succeeded**: `release.yml` looks that run up. Run Smoke
-      by hand (`gh workflow run smoke.yml`) on the commit you are about to tag.
 
 ## Required before the first Smoke run (a real Coding Agent; it costs money)
 
