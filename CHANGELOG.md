@@ -8,13 +8,12 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
-- Tests: the per-test CPU time, memory and temp-file budgets and the fixture size limits are removed; unit tests stay
-  fast through the architecture, and markers only select what runs.
-- Releases no longer wait for a successful smoke run on the tagged commit.
-- The smoke run is manual only and runs on the self-hosted Linux runner with the Codex or Pi already signed in there;
-  the metered API key and the monthly spend ledger are removed.
+- Fix: a Run created in the same second as the cutoff is no longer treated as history.
+- Tests: the smoke `_run` timeout follows the DAG's `--max-minutes`.
+- Smoke: the workflow takes a model input, and a failed run prints every node's evidence (Reviewer verdict and comment).
+- Smoke: defaults to the Pi runtime with `gemini-3.8-flash`.
 
-## [2.0.0] — 2026-10-25
+## [2.0.0] — 2026-10-30
 
 2.0.0 removes everything that existed to recover one particular project, splits the engine into three ports, stores
 run state as small per-node files, and replaces the in-process mock engine with a private Docker Multica for tests.
@@ -194,6 +193,11 @@ It is a breaking release; read **Upgrading from 1.x** first.
   must add concrete `{acceptance, test}` entries under successful ordinary or
   integration-gate commands. Existing Reviewer reports must add
   `full_review_completed: true` before they can be submitted again.
+- Tests: the per-test CPU time, memory and temp-file budgets and the fixture size limits are removed; unit tests stay
+  fast through the architecture, and markers only select what runs.
+- Releases no longer wait for a successful smoke run on the tagged commit.
+- The smoke run is manual only and runs on the self-hosted Linux runner with the Codex or Pi already signed in there;
+  the metered API key and the monthly spend ledger are removed.
 
 ## [1.0.0] — 2026-07-17
 

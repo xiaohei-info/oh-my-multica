@@ -253,6 +253,11 @@ Harness 产生前馈约束与反馈信号，确定性 Loop 消费这些信号并
 oh-my-multica 不替代 Multica，也不替代 Coding Agent。它位于调用者与执行平台之间，负责把软件工程事实
 转换成可执行状态，再通过统一接口使用 Multica 的任务与运行时能力。
 
+流水线只依赖三个端口：`WorkItemStore`（工作项与证据）、`AgentRuntime`（唤醒并观察 Agent）和 `CodeHost`
+（拉取请求、检查、合并）。只有适配器会访问 Multica 与 GitHub，分层由 CI 检查，所以换平台只需新增适配器，
+不用改 Loop。运行状态是每个节点一个小的纯文本文件，经 git 同步，两台机器推进不同节点不会冲突。每个阶段决策都是
+从观察到的事实到计划的纯函数，可以用表格测试。集成测试跑在私有的 Docker Multica 上，而不是 mock。
+
 ![oh-my-multica Overall Architecture](docs/diagrams/oh-my-multica-overall-architecture.svg)
 
 ## 从需求到交付
