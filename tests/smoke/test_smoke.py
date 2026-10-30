@@ -40,7 +40,8 @@ def project(stack, tmp_path):
 
 
 def _run(project, manifest, minutes):
-    done = project.omac("dag", "run", manifest, "--max-minutes", str(minutes), "--output", "json")
+    done = project.omac("dag", "run", manifest, "--max-minutes", str(minutes), "--output", "json",
+                          timeout=minutes * 60 + 120)
     assert done.returncode == 0, done.stdout + done.stderr
     return json.loads(done.stdout)
 
