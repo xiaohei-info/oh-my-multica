@@ -13,7 +13,7 @@ UUID_RE = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F
 HEX_DIGEST_RE = re.compile(r"\b(?:[0-9a-f]{64}|[0-9a-f]{40})\b")
 PROJECT_NAME_RE = re.compile(r"open-agent-cluster|\boac\b|aiteam", re.IGNORECASE)
 ID_NAMES = {"node_id", "dag_key", "workspace_id"}
-LOCAL_CLIS = {"git", "bash", "lsof"}
+LOCAL_CLIS = {"git", "bash"}
 PLATFORM_CLIS = {"multica", "gh", "curl"}  # adapters only; "curl" is the multica adapter's HTTP fallback
 SUBPROCESS_ALLOWED = {
     "src/omac/engines/multica.py",
@@ -84,7 +84,7 @@ def project_names(path: str, source: str) -> list[str]:
 
 
 def subprocess_use(path: str, source: str) -> list[str]:
-    """Subprocess only in allowed modules; argv[0] literal must be git/bash/lsof (multica/gh: engines only)."""
+    """Subprocess only in allowed modules; argv[0] literal must be git/bash (multica/gh: engines only)."""
     tree = _parse(source)
     out = []
     if path not in SUBPROCESS_ALLOWED:
@@ -136,21 +136,36 @@ WRITE_METHODS = {
     "reset_review", "prepare_review_cycle", "create_work_item", "set_node_contract", "set_authoring_identity",
     "normalize_confirmed_merge", "wake", "dispatch_reviewer", "cancel", "request_pull_request_merge",
     "mark_in_progress", "mark_in_review", "mark_done", "mark_failed", "mark_blocked",
+    "acknowledge_assignment", "restore_authoring_generation", "cancel_work_item", "sync_contract_ref",
+    "assign_reviewer", "wake_reviewer", "create_project", "provision_agent",
 }
 PORT_NAMES = {"store", "runtime", "code_host"}
-EFFECT_SCOPES = ("src/omac/pipeline/", "src/omac/cli/")
 EFFECT_EXECUTOR = "src/omac/pipeline/apply.py"
 EFFECT_EXEMPT = {"src/omac/cli/commands/init_cmd.py"}  # the interactive setup wizard creates projects and agents
 
 
 def inline_effects(path: str, source: str) -> list[str]:
-    """Port writes happen only in ``pipeline/apply.py``; everything else returns Effect values and applies them."""
-    if not path.startswith(EFFECT_SCOPES) or path == EFFECT_EXECUTOR or path in EFFECT_EXEMPT:
+    """Port writes happen only in ``pipeline/apply.py`` (and inside the adapters); everything else returns Effects."""
+    if path.startswith(ENGINES_PREFIX) or path == EFFECT_EXECUTOR or path in EFFECT_EXEMPT:
         return []
     return [f"{path}:{n.lineno}: port write `{n.func.attr}` outside pipeline/apply.py"
             for n in ast.walk(_parse(source))
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in WRITE_METHODS
             and _tail(n.func.value) in PORT_NAMES]
+
+
+MANIFEST_WRITES = {"set_node", "save_manifest"}
+MANIFEST_WRITE_HOME = {"src/omac/core/manifest.py", EFFECT_EXECUTOR}
+
+
+def manifest_writes(path: str, source: str) -> int:
+    """Direct manifest writes (``set_node(...)``, ``save_manifest(...)``) outside ``SetNode``/``SaveState``.
+
+    New code puts them in a Plan; tests/test_architecture.py pins the remaining calls per file to a baseline.
+    """
+    if path in MANIFEST_WRITE_HOME:
+        return 0
+    return sum(1 for n in ast.walk(_parse(source)) if isinstance(n, ast.Call) and _tail(n.func) in MANIFEST_WRITES)
 
 
 def decide_imports(path: str, source: str) -> list[str]:

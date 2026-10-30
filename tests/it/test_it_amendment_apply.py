@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 import omac.core.amendment as amendment_mod
+import omac.pipeline.amendment as amendment_pipeline
 from _support.amendkit import (
     POOL, bootstrap, contract_update, dag_manifest, proposal, responsibility_acceptance_doc, seal_review_fixture, seed_legacy_convergence_review_control,
     stage_amendment_with_handoff, topology_manifest,
@@ -13,8 +14,9 @@ from _support.amendkit import (
 from omac.cli import exit_codes
 from omac.cli.commands import dag as dag_cmd
 from omac.cli.main import main
+from omac.pipeline.amendment import apply_amendment
 from omac.core.amendment import (
-    apply_amendment, build_reviewed_amendment, manifest_definition_digest, manifest_digest, validate_proposal,
+    build_reviewed_amendment, manifest_definition_digest, manifest_digest, validate_proposal,
 )
 from omac.core.manifest import load_manifest, save_manifest
 from omac.core.taskmeta import TaskKind
@@ -191,7 +193,7 @@ def test_a_topology_change_recovers_a_started_downstream_node_but_not_an_unstart
 def test_the_apply_ledger_retries_only_the_node_side_effects_that_did_not_finish(kit, tmp_path):
     path, first, second = topology(kit, tmp_path)
     reviewed = reviewed_for(kit, path, TOPOLOGY_CHANGE)
-    original, failed = amendment_mod.prepare_stage_recovery, []
+    original, failed = amendment_pipeline.prepare_stage_recovery, []
 
     def fail_second(node, store, stage, **kwargs):
         if node.id == "started-dependent" and not failed:
@@ -199,7 +201,7 @@ def test_the_apply_ledger_retries_only_the_node_side_effects_that_did_not_finish
             raise RuntimeError("simulated Store interruption")
         return original(node, store, stage, **kwargs)
 
-    kit.monkeypatch.setattr(amendment_mod, "prepare_stage_recovery", fail_second)
+    kit.monkeypatch.setattr(amendment_pipeline, "prepare_stage_recovery", fail_second)
     with pytest.raises(RuntimeError, match="Store interruption"):
         apply_amendment(str(path), reviewed, kit.store, POOL)
     interrupted = load_manifest(str(path))
@@ -209,7 +211,7 @@ def test_the_apply_ledger_retries_only_the_node_side_effects_that_did_not_finish
     kit.store.update_status(first.id, WorkItemStatus.DONE)   # the first node progressed while the apply was interrupted
     interrupted.nodes["bootstrap"].status = "done"
     save_manifest(interrupted, str(path))
-    kit.monkeypatch.setattr(amendment_mod, "prepare_stage_recovery", original)
+    kit.monkeypatch.setattr(amendment_pipeline, "prepare_stage_recovery", original)
 
     result = apply_amendment(str(path), reviewed, kit.store, POOL)
 
@@ -228,8 +230,8 @@ def test_a_pending_apply_blocks_all_dag_progress_until_the_same_accept_resumes(k
     reviewed = reviewed_for(kit, path, contract_update())
     amendment_file = tmp_path / "reviewed-amendment.yaml"
     amendment_file.write_text(yaml.safe_dump(reviewed, sort_keys=False))
-    original = amendment_mod.prepare_stage_recovery
-    kit.monkeypatch.setattr(amendment_mod, "prepare_stage_recovery",
+    original = amendment_pipeline.prepare_stage_recovery
+    kit.monkeypatch.setattr(amendment_pipeline, "prepare_stage_recovery",
                             lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("crash after manifest before Store compensation")))
     with pytest.raises(RuntimeError, match="before Store compensation"):
         apply_amendment(str(path), reviewed, kit.store, POOL, amendment_file=str(amendment_file))
@@ -254,7 +256,7 @@ def test_a_pending_apply_blocks_all_dag_progress_until_the_same_accept_resumes(k
     cli_report = json.loads(capsys.readouterr().out)
     assert cli_report["amendment_id"] == reviewed["amendment_id"] and cli_report["resume_command"].endswith(str(amendment_file))
 
-    kit.monkeypatch.setattr(amendment_mod, "prepare_stage_recovery", original)
+    kit.monkeypatch.setattr(amendment_pipeline, "prepare_stage_recovery", original)
     result = apply_amendment(str(path), reviewed, kit.store, POOL, amendment_file=str(amendment_file))
 
     assert result["sync"]["synced"] == ["bootstrap"]

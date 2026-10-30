@@ -1,7 +1,7 @@
-"""共享的 DAG 阶段恢复准备与 restart-safe 观察规则。
+"""共享的 DAG 阶段恢复规则:前置校验、摘要与 restart-safe 观察分类(纯函数,不写端口)。
 
-这里只准备 review/authoring 的 Store 状态；merging 仅校验前置并返回委托标记，
-真正的 PR 请求和远端观察始终由 pipeline.delivery.run_merge_delivery 负责。
+写入由 pipeline.stage_recovery 经 apply 执行;merging 的 PR 请求和远端观察始终由
+pipeline.delivery.run_merge_delivery 负责。
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from dataclasses import asdict, replace
 from datetime import datetime
 
 from .manifest import _dump_contract
-from .taskmeta import TaskPhase, review_context_binding, WorkerHandoffIntent
+from .taskmeta import TaskPhase, review_context_binding
 from .workitem import WorkItemStatus
 from ..errors import PlatformError
 
@@ -128,7 +128,7 @@ def validate_stage_recovery(item, stage: str) -> None:
         raise ValueError("merge-only recovery requires a passed review and PR")
 
 
-def _authoring_generation(node, item) -> str:
+def authoring_generation(node, item) -> str:
     return "authoring-" + _stable_digest({
         "node": node.id,
         "contract": _dump_contract(node.contract) if node.contract else None,
@@ -156,52 +156,41 @@ def _authoring_retry_source(item) -> dict:
     }
 
 
-def _prepare_authoring_retry(node, store, item, intent):
-    """Persist a recovery intent before the first destructive stage write."""
-    def observe_write(write, expected):
-        try:
-            write()
-        except PlatformError:
-            # A timeout is not permission to replay. Read the durable result first.
-            observed = store.get_work_item(node.work_item_id)
-            if not expected(observed):
-                raise
-            return observed
-        observed = store.get_work_item(node.work_item_id)
-        if not expected(observed):
-            raise PlatformError("Authoring recovery write did not converge; repeat node retry after inspecting work show")
-        return observed
+def authoring_recovery_intent(node, item, intent):
+    """The recovering intent to publish before the first destructive write, or ``None`` when the retry is already pending.
 
+    Raises ``PlatformError`` when the retry source moved since the operator decided.
+    """
     node_binding = review_context_binding(replace(item, contract=node.contract))
-    if intent.authoring_recovery is None:
-        if (intent.is_causally_bound()
-                and item.phase == TaskPhase.AUTHORING and item.status == WorkItemStatus.TODO
-                and intent == item.worker_handoff and intent.target_run_id is None
-                and intent.target_worker == node.worker
-                and not item.review_report_ref and not item.review_subject_digest
-                and not item.review_verdict and not item.delivery_identity
-                and intent.review_context_binding == review_context_binding(item)
-                and node_binding == review_context_binding(item)):
-            return "todo"
-        feedback = intent.source_review_feedback or {}
-        if (not intent.is_causally_bound()
-                or node_binding != review_context_binding(item)
-                or intent.review_context_binding != review_context_binding(item)
-                or intent.target_worker != node.worker
-                or intent.target_worker_bounce != item.bounces.worker
-                or ((item.artifacts or {}).get("head_sha") and intent.baseline_pr_head_sha != item.artifacts["head_sha"])
-                or intent.baseline_verification_attachment_id != (item.verification_ref or {}).get("attachment_id")
-                or (item.review_subject_digest and item.review_subject_digest != intent.source_review_subject_digest)
-                or (item.review_verdict and item.review_verdict != intent.source_review_verdict)
-                or any(getattr(item, field) and getattr(item, field) != feedback.get(key)
-                       for field, key in (("review_report_ref", "report_ref"), ("review_ledger_ref", "ledger_ref")))):
-            raise PlatformError("Authoring retry source changed before intent publication; inspect work show before retry")
-        plan = {"generation": _authoring_generation(node, item),
-                "source": _authoring_retry_source(item)}
-        intent = replace(intent, state="recovering", authoring_recovery=plan)
-        item = observe_write(
-            lambda: store.update_work_item_metadata(node.work_item_id, worker_handoff=intent),
-            lambda current: current.worker_handoff == intent)
+    if (intent.is_causally_bound()
+            and item.phase == TaskPhase.AUTHORING and item.status == WorkItemStatus.TODO
+            and intent == item.worker_handoff and intent.target_run_id is None
+            and intent.target_worker == node.worker
+            and not item.review_report_ref and not item.review_subject_digest
+            and not item.review_verdict and not item.delivery_identity
+            and intent.review_context_binding == review_context_binding(item)
+            and node_binding == review_context_binding(item)):
+        return None
+    feedback = intent.source_review_feedback or {}
+    if (not intent.is_causally_bound()
+            or node_binding != review_context_binding(item)
+            or intent.review_context_binding != review_context_binding(item)
+            or intent.target_worker != node.worker
+            or intent.target_worker_bounce != item.bounces.worker
+            or ((item.artifacts or {}).get("head_sha") and intent.baseline_pr_head_sha != item.artifacts["head_sha"])
+            or intent.baseline_verification_attachment_id != (item.verification_ref or {}).get("attachment_id")
+            or (item.review_subject_digest and item.review_subject_digest != intent.source_review_subject_digest)
+            or (item.review_verdict and item.review_verdict != intent.source_review_verdict)
+            or any(getattr(item, field) and getattr(item, field) != feedback.get(key)
+                   for field, key in (("review_report_ref", "report_ref"), ("review_ledger_ref", "ledger_ref")))):
+        raise PlatformError("Authoring retry source changed before intent publication; inspect work show before retry")
+    plan = {"generation": authoring_generation(node, item),
+            "source": _authoring_retry_source(item)}
+    return replace(intent, state="recovering", authoring_recovery=plan)
+
+
+def authoring_recovery_target(node, item, intent):
+    """Validate a published recovering intent; return its generation and the predicate for "target reached"."""
     plan = intent.authoring_recovery
     if (intent.state != "recovering"
             or not replace(intent, state="pending", authoring_recovery=None).is_causally_bound()
@@ -243,69 +232,7 @@ def _prepare_authoring_retry(node, store, item, intent):
                 and _authoring_retry_source(current)["delivery"] == source["delivery"]
                 and asdict(current.bounces) == source["counters"])
 
-    if not reached(item):
-        item = observe_write(
-            lambda: store.restore_authoring_generation(
-                node.work_item_id, node.contract, generation, worker_handoff=intent),
-            reached)
-    completed = replace(intent, state="pending", authoring_recovery=None,
-                        review_context_binding=review_context_binding(item))
-    observe_write(
-        lambda: store.update_work_item_metadata(node.work_item_id, worker_handoff=completed),
-        lambda current: current.worker_handoff == completed and current.review_generation == generation)
-    return "todo"
-
-
-def prepare_stage_recovery(
-    node,
-    store,
-    stage: str,
-    *,
-    expected_review_subject: str | None = None,
-    expected_review_generation: str | None = None,
-    expected_bounce_baseline: dict[str, int] | None = None,
-    sync_contract: bool = False,
-    worker_handoff: WorkerHandoffIntent | None = None,
-) -> str:
-    """共享的 review/authoring 阶段准备；merge 交给 run_merge_delivery。
-
-    本函数不派发 Agent，也不执行/观察 merge。调用者先持久化 manifest 意图，
-    然后用自己的 restart-safe ledger 调用本原语；后续 dag run 负责真正流转。
-    """
-    if not node.work_item_id:
-        return "no-work-item"
-    item = store.get_work_item(node.work_item_id)
-    validate_stage_recovery(item, stage)
-    if stage == "authoring":
-        if worker_handoff is not None:
-            return _prepare_authoring_retry(node, store, item, worker_handoff)
-        generation = expected_review_generation or _authoring_generation(node, item)
-        store.restore_authoring_generation(
-            node.work_item_id, node.contract, generation,
-            expected_bounce_baseline)
-        return "todo"
-    # 显式 stage recovery 开启新的执行世代。旧 review→worker handoff 只属于
-    # 被 operator/amendment 取代的阶段，必须在任何可被 apply ledger 判定为
-    # reached 的 contract/phase/status 写入前先退役。clear 是幂等 metadata
-    # 写；若响应未知，重放 prepare_stage_recovery 仍会安全地再次清除。
-    if item.worker_handoff is not None:
-        store.update_work_item_metadata(
-            node.work_item_id, worker_handoff={})
-    if sync_contract and node.contract is not None:
-        store.set_node_contract(node.work_item_id, node.contract)
-    if stage == "merging":
-        return "delegated-to-run-merge-delivery"
-    store.clear_assignment(node.work_item_id)
-    store.reset_review(node.work_item_id)
-    if stage == "review":
-        subject = expected_review_subject or stage_recovery_subject(
-            node, store.get_work_item(node.work_item_id))
-        store.prepare_review_cycle(node.work_item_id, subject)
-        store.update_work_item_metadata(
-            node.work_item_id, phase=TaskPhase.REVIEW)
-        store.update_status(node.work_item_id, WorkItemStatus.IN_REVIEW)
-        return "in_review"
-    raise AssertionError(f"unhandled recovery stage: {stage}")
+    return generation, reached
 
 
 def classify_stage_recovery_observation(

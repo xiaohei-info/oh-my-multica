@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 import hashlib
 import json
 import shlex
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -23,7 +23,6 @@ from .retry_budget import amendment_bounce_baseline, carry_forward_bounce_baseli
 from .taskmeta import review_context_binding
 from .stage_recovery import (
     classify_stage_recovery_observation,
-    prepare_stage_recovery,
     recovery_control_snapshot,
     recovery_evidence_digest,
     stage_recovery_subject,
@@ -1446,12 +1445,12 @@ def _reobserve_synced_authoring(manifest: Manifest, manifest_path: str, ledger: 
 
 def _repair_ledger_entry(manifest: Manifest, manifest_path: str, store: Any, ledger: dict,
                          entry: dict, node_id: str, node: Any, current: Any,
-                         flags: _EntryFlags) -> None:
+                         flags: _EntryFlags, recover: Callable[..., str]) -> None:
     """Re-run stage recovery for a node whose work item is still at the pre-amendment state."""
     entry["state"] = "repairing" if flags.legacy_synced_authoring else "syncing"
     entry["attempt_baseline"] = current
     _save_ledger(manifest, manifest_path, ledger)
-    prepare_stage_recovery(
+    recover(
         node,
         store,
         entry["stage"],
@@ -1483,7 +1482,8 @@ def _repair_ledger_entry(manifest: Manifest, manifest_path: str, store: Any, led
 
 
 def _resume_ledger_entry(manifest: Manifest, manifest_path: str, store: Any, ledger: dict,
-                         node_id: str, entry: dict, summary: dict[str, list[str]]) -> None:
+                         node_id: str, entry: dict, summary: dict[str, list[str]],
+                         recover: Callable[..., str]) -> None:
     node = manifest.nodes.get(node_id)
     flags = _entry_flags(entry, node)
     if flags.missing_generation and not flags.legacy_repair_needs_baseline:
@@ -1542,7 +1542,7 @@ def _resume_ledger_entry(manifest: Manifest, manifest_path: str, store: Any, led
         _save_ledger(manifest, manifest_path, ledger)
         summary["observed_progress"].append(node_id)
         return
-    _repair_ledger_entry(manifest, manifest_path, store, ledger, entry, node_id, node, current, flags)
+    _repair_ledger_entry(manifest, manifest_path, store, ledger, entry, node_id, node, current, flags, recover)
     summary["synced"].append(node_id)
 
 
@@ -1550,6 +1550,7 @@ def _resume_apply_ledger(
     manifest: Manifest,
     manifest_path: str,
     store: Any,
+    recover: Callable[..., str],
 ) -> dict[str, list[str]]:
     ledger = manifest.meta.get("amendment_apply")
     if not isinstance(ledger, dict) or ledger.get("schema") != APPLY_LEDGER_SCHEMA:
@@ -1559,7 +1560,7 @@ def _resume_apply_ledger(
     _preflight_preserved_budget_items(manifest, ledger, store)
     summary = {"synced": [], "observed_progress": [], "already_complete": []}
     for node_id, entry in ledger.get("nodes", {}).items():
-        _resume_ledger_entry(manifest, manifest_path, store, ledger, node_id, entry, summary)
+        _resume_ledger_entry(manifest, manifest_path, store, ledger, node_id, entry, summary, recover)
     return summary
 
 
@@ -1760,7 +1761,9 @@ def apply_amendment(
     amendment_file: str | None = None,
     acceptance: Any = None,
     runtime: Any = None,
+    recover: Callable[..., str],
 ) -> dict[str, Any]:
+    """Apply an accepted amendment; ``recover`` is ``pipeline.stage_recovery.prepare_stage_recovery`` (it writes)."""
     amendment = parse_proposal(amendment_source)
     review, base, identity_kwargs, budget_bindings = _amendment_identity(amendment)
     _verify_amendment_identity(amendment, base, identity_kwargs)
@@ -1785,7 +1788,7 @@ def apply_amendment(
 
     if budget_bindings is not None:
         _validate_preserved_budget_ledger(current.meta.get("amendment_apply") or {}, budget_bindings)
-    sync_summary = _resume_apply_ledger(current, manifest_path, store)
+    sync_summary = _resume_apply_ledger(current, manifest_path, store, recover)
 
     return {
         "amendment_id": amendment.get("amendment_id"),

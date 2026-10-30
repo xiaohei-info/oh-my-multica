@@ -73,9 +73,9 @@ root_package = "omac"
 
 [[tool.importlinter.contracts]]
 id = "layers"
-name = "Layering: web -> cli -> pipeline -> engines -> core -> i18n -> errors (function-level imports count)"
+name = "Layering: web -> cli -> pipeline -> engines -> core -> guide -> i18n -> errors (function-level imports count)"
 type = "layers"
-layers = ["omac.web", "omac.cli", "omac.pipeline", "omac.engines", "omac.core", "omac.i18n", "omac.errors"]
+layers = ["omac.web", "omac.cli", "omac.pipeline", "omac.engines", "omac.core", "omac.guide", "omac.i18n", "omac.errors"]
 ignore_imports = [
     # Permanent exception: `omac web` is the launcher of the web surface.
     "omac.cli.commands.web -> omac.web.server",

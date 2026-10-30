@@ -26,6 +26,7 @@ _EN_SUBCOMMAND_HELP = {
     "resume": "Resume an existing plan pipeline by its stable ID",
     "continue-review": "Authorize exactly one additional plan-stage review round",
     "check": "Validate an existing artifact",
+    "list": "List the DAG manifests in a directory with their progress",
     "show": "Show current facts without advancing state",
     "run": "Run in the foreground until convergence or exit 20",
     "status": "Show a snapshot without advancing state",
@@ -45,6 +46,7 @@ _EN_SUBCOMMAND_HELP = {
 _EN_ARGUMENT_HELP = {
     "log_format": "Progress-event format: text for humans, json for machines and CI",
     "manifest": "Manifest file path",
+    "dir": "Directory that holds the manifests (default .omac)",
     "amendment_file": "Reviewed amendment YAML",
     "node_key": "Manifest node ID",
     "engine": "Engine override; otherwise read project configuration",

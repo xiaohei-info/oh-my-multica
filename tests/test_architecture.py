@@ -31,6 +31,15 @@ TRANSITIONAL: dict[str, set[str]] = {
     "function_length": set(),
     "inline_effects": set(),
 }
+# Direct manifest writes (set_node / save_manifest outside SetNode/SaveState) per file. May only shrink: lower the
+# number when you remove calls; a new file or a higher number fails. New code uses SetNode + SaveState in a Plan.
+MANIFEST_WRITE_BASELINE: dict[str, int] = {
+    "src/omac/cli/commands/node.py": 5,
+    "src/omac/core/amendment.py": 2,
+    "src/omac/pipeline/acceptance.py": 1,
+    "src/omac/pipeline/loop.py": 51,
+    "src/omac/pipeline/plan.py": 1,
+}
 # Fixture entries (names directly under tests/fixtures) that predate the content rule.
 TRANSITIONAL_FIXTURES: set[str] = set()
 SYNTHETIC_FIXTURES = {"smoke_p1.yaml", "smoke_live_manifest.yaml"}
@@ -68,6 +77,18 @@ def violations():  # one tree walk in fixture setup; the tests below only assert
 @pytest.mark.parametrize("rule", sorted(TRANSITIONAL))
 def test_source_has_no_forbidden_pattern(rule, violations):
     assert violations[rule] == []
+
+
+def test_direct_manifest_writes_only_shrink():
+    counts = {rel: n for rel, path in _packaged_files() if path.suffix == ".py"
+              for n in [rules.manifest_writes(rel, _read(path))] if n}
+    assert counts == MANIFEST_WRITE_BASELINE
+
+
+def test_manifest_write_rule_counts_calls_outside_the_executor():
+    snippet = "def f(m, p):\n    set_node(m, 'a', status='done')\n    manifest.save_manifest(m, p)\n"
+    assert rules.manifest_writes("src/omac/pipeline/x.py", snippet) == 2
+    assert rules.manifest_writes("src/omac/pipeline/apply.py", snippet) == 0
 
 
 def test_decide_modules_stay_pure():
@@ -183,6 +204,8 @@ def test_port_writes_are_rejected_outside_apply():
     snippet = "def f(store, c):\n    store.update_status('i', 1)\n    c.store.add_comment('i', 'x')\n"
     assert len(rules.inline_effects("src/omac/pipeline/loop.py", snippet)) == 2
     assert len(rules.inline_effects("src/omac/cli/commands/node.py", snippet)) == 2
+    assert len(rules.inline_effects("src/omac/core/stage_recovery.py", snippet)) == 2
+    assert len(rules.inline_effects("src/omac/web/api.py", snippet)) == 2
 
 
 def test_port_writes_are_allowed_in_the_executor_and_reads_are_not_writes():

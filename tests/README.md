@@ -1,43 +1,28 @@
 # Running tests
 
-Use the fast checks while iterating on ordinary logic:
+Markers (see `pyproject.toml`) only select what runs:
+
+- `integration`: real git, a local HTTP server, subprocesses; included by default.
+- `docker`: `tests/it`, a private Docker Multica; Docker is required and these tests are never skipped silently.
+- `live`: a real platform; skipped unless requested with `-m live`.
+
+Fast checks while iterating on ordinary logic:
 
 ```sh
-python3 -m pytest tests/ -m 'not integration and not e2e and not live'
+python3 -m pytest tests/ -m 'not integration and not docker and not live'
 ```
 
-Run the affected integration modules when changing their behavior. Tests marked
-`integration` exercise complete captured Source, publication boundaries, state
-transport or recovery, using isolated local files and mock adapters. Their full
-original bodies and safety assertions remain part of the suite.
-
-Before delivery, run the complete default suite:
+The CI-equivalent run (install with `python3 -m pip install -e '.[test]' import-linter`):
 
 ```sh
-python3 -m pytest tests/
+python3 -m pytest tests/ -m 'not live' -n 4 --dist loadfile   # without Docker: -m 'not docker and not live'
+lint-imports
 ```
 
-The default command includes integration tests; no new default exclusions or
-environment-based skips are applied. Existing live-test opt-in rules still apply.
-
-For a parallel full run, install the optional test dependencies into a development
-environment, then use four local workers and keep each file in one worker:
-
-```sh
-python3 -m pip install -e '.[test]'
-python3 -m pytest tests/ -n 4 --dist loadfile
-```
-
-This selects the same complete suite. Parallel execution is opt-in; runtime
-installations do not require these test dependencies. See the
+`-n 4 --dist loadfile` keeps each file in one worker. See the
 [pytest-xdist scheduling documentation](https://pytest-xdist.readthedocs.io/en/stable/distribution.html).
+There is no in-memory platform double: anything that needs platform behaviour is a Docker test, and unit tests
+replace only the platform CLI call.
 
-Manifest and state-envelope writers use PyYAML's installed LibYAML accelerator
-when available, with the original Python backend as a fallback. YAML formatting
-can differ between backends; decoded state values and embedded original Source
-bytes remain authoritative. Backend roundtrip, fallback, corruption rejection,
-atomic save and complete-capture regressions cover that boundary.
-
-Mock plan tests explicitly configure zero completion delay in the same config
-read by the CLI. Tests that require an active agent explicitly disable completion
-instead of relying on a wall-clock race.
+Manifest writers use PyYAML's LibYAML accelerator when it is installed, with the Python backend as a fallback.
+YAML formatting can differ between backends; the decoded state values are authoritative.

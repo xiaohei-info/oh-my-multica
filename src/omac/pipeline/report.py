@@ -29,9 +29,6 @@ NODE_KEYS = (
 )
 NEEDS_DECISION_KEYS = ("failed_nodes", "blocked_downstream", "next_actions")
 
-# 全终态集合(含 abandoned)
-TERMINAL_ALL = {"done", "cancelled", "abandoned", "failed", "blocked"}
-FAILED_STATUSES = {"failed", "blocked"}
 
 
 # ==================== 构建 ====================
@@ -40,7 +37,7 @@ def _classify(status: str) -> str:
     """manifest 状态 → progress 桶名。"""
     if status == "done":
         return "done"
-    if status in ("in_progress", "ci_check", "in_review", "merging"):
+    if status in graph.RUNNING:
         return "running"
     if status == "todo":
         return "todo"
@@ -250,7 +247,7 @@ def _build_report_from_items(
     nodes = [_node_row(manifest.nodes[key], items.get(key)) for key in manifest.nodes]
     failed_keys = {
         key for key, node in manifest.nodes.items()
-        if node.status in FAILED_STATUSES
+        if node.status in graph.NEEDS_DECISION
     }
     needs_decision = (
         _build_needs_decision_from_items(

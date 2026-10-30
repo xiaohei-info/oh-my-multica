@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from omac.agent_templates import AgentTemplateCatalog
+from omac.cli.agent_templates import AgentTemplateCatalog
 from omac.errors import ValidationError
 
 

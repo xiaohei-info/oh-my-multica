@@ -6,7 +6,7 @@ from omac.core.workitem import WorkItemStatus
 from omac.pipeline.apply import ManifestState, Ports, apply
 from omac.pipeline.decide_effects import (
     AcknowledgeAssignment, AddComment, Assign, CancelRun, ClearAssignment, CreateWorkItem, DispatchReviewer, NormalizeConfirmedMerge,
-    Plan, PlanError, PrepareReviewCycle, RequestMerge, ResetReview, SaveState, SetAuthoringIdentity, SetNode,
+    Plan, PlanError, PrepareReviewCycle, RequestMerge, ResetReview, RestoreAuthoringGeneration, SaveState, SetAuthoringIdentity, SetNode,
     SetNodeContract, UpdateMetadata, UpdateStatus, Wake, validate_plan,
 )
 
@@ -51,6 +51,9 @@ EFFECT_CALLS = [
     (SetNodeContract("i", "c"), ("set_node_contract", ("i", "c"), {})),
     (SetAuthoringIdentity("i", "k", "develop"), ("set_authoring_identity", ("i",), {"dag_key": "k", "kind": "develop"})),
     (NormalizeConfirmedMerge("i"), ("normalize_confirmed_merge", ("i",), {})),
+    (RestoreAuthoringGeneration("i", "c", "g"), ("restore_authoring_generation", ("i", "c", "g", None), {})),
+    (RestoreAuthoringGeneration("i", "c", "g", {"review": 1}, worker_handoff="h"),
+     ("restore_authoring_generation", ("i", "c", "g", {"review": 1}), {"worker_handoff": "h"})),
     (Wake("i", "w", "worker"), ("wake", ("i", "w", "worker"), {})),
     (CancelRun("i"), ("cancel", ("i",), {})),
     (AcknowledgeAssignment("i"), ("acknowledge_assignment", ("i",), {})),

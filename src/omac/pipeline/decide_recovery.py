@@ -14,10 +14,35 @@ from ..core.manifest import Manifest, _dump_contract
 from ..core.stage_recovery import stage_recovery_subject, validate_stage_recovery
 from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
 from ..core.review_convergence import review_subject_digest
-from ..core.workitem import WorkItemControlProjection, WorkItemHydrationPlan, WorkItemPayload
+from ..core.workitem import WorkItemControlProjection, WorkItemHydrationPlan, WorkItemPayload, WorkItemStatus
 from ..errors import PlatformError
 from ..i18n import ui
+from .decide_effects import (
+    ClearAssignment, Plan, PrepareReviewCycle, ResetReview, SetNodeContract, UpdateMetadata, UpdateStatus,
+)
 from .decide_runs import formal_dispatch_target, observe_direct_run_attempt
+
+
+def plan_stage_reset(item_id: str, stage: str, *, retire_handoff: bool, contract=None) -> Plan:
+    """Explicit review/merging recovery, first half: retire the old handoff, sync the contract, clear review state.
+
+    The handoff is retired before any write the recovery ledger could read as "reached". Merging stops here: the PR
+    request and its observation belong to ``delivery.run_merge_delivery``.
+    """
+    effects = []
+    if retire_handoff:
+        effects.append(UpdateMetadata(item_id, {"worker_handoff": {}}))
+    if contract is not None:
+        effects.append(SetNodeContract(item_id, contract))
+    if stage == "merging":
+        return Plan(tuple(effects), "delegated-to-run-merge-delivery")
+    return Plan((*effects, ClearAssignment(item_id), ResetReview(item_id)))
+
+
+def plan_enter_review(item_id: str, subject: str) -> Plan:
+    """Explicit review recovery, second half (after the subject is read): bind the subject and enter review."""
+    return Plan((PrepareReviewCycle(item_id, subject), UpdateMetadata(item_id, {"phase": TaskPhase.REVIEW}),
+                 UpdateStatus(item_id, WorkItemStatus.IN_REVIEW)), "in_review")
 
 
 def current_review_subject(item) -> str:

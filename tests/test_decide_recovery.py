@@ -305,3 +305,29 @@ def test_a_restored_worker_stage_rejects_an_invalid_deferred_review_ledger(name)
 
     with pytest.raises(PlatformError, match="review ledger"):
         loop._resolve_handoff_review_convergence(item, intent, KEY)
+
+
+@pytest.mark.parametrize("stage,retire,contract,effects,outcome", [
+    ("merging", False, None, [], "delegated-to-run-merge-delivery"),
+    ("merging", True, "c", ["UpdateMetadata", "SetNodeContract"], "delegated-to-run-merge-delivery"),
+    ("review", False, None, ["ClearAssignment", "ResetReview"], None),
+    ("review", True, "c", ["UpdateMetadata", "SetNodeContract", "ClearAssignment", "ResetReview"], None),
+])
+def test_stage_reset_retires_the_handoff_first_and_merging_stops_before_review_state(
+        stage, retire, contract, effects, outcome):
+    from omac.pipeline.decide_recovery import plan_stage_reset
+    plan = plan_stage_reset("i", stage, retire_handoff=retire, contract=contract)
+    assert [type(e).__name__ for e in plan.effects] == effects
+    assert plan.outcome == outcome
+    if retire:
+        assert plan.effects[0].fields == {"worker_handoff": {}}
+
+
+def test_enter_review_binds_the_subject_before_moving_phase_and_status():
+    from omac.core.workitem import WorkItemStatus
+    from omac.pipeline.decide_recovery import plan_enter_review
+    plan = plan_enter_review("i", "subject")
+    assert [type(e).__name__ for e in plan.effects] == ["PrepareReviewCycle", "UpdateMetadata", "UpdateStatus"]
+    assert plan.effects[0].subject_digest == "subject"
+    assert plan.effects[1].fields == {"phase": TaskPhase.REVIEW}
+    assert plan.effects[2].status is WorkItemStatus.IN_REVIEW and plan.outcome == "in_review"

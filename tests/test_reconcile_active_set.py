@@ -1,7 +1,7 @@
 """P2 reconcile 按需读取:活跃集选择函数(纯函数)。读取范围与 marker 持久化在 tests/it/test_it_reconcile.py(真实 Multica)。
 
 活跃集 = reconcile 间隔轮真正需要平台观察的节点集合:
-1. RUNNING_STATUSES(in_progress/ci_check/in_review/merging)—— collect_results
+1. graph.RUNNING(in_progress/ci_check/in_review/merging)—— collect_results
    在 tick 路径要求 running 节点 observation 完整,活跃集必须 ⊇ running 集;
 2. todo —— 即将派发,需旧投影保护;
 3. recovery_marker=True —— 平台恢复事实(worker_handoff / reviewer_run_baseline /
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from omac.core import graph
 from omac.core.manifest import Manifest, Node
 from omac.pipeline import loop
 
@@ -39,7 +40,7 @@ CLOSED = {"merged": True, "merged_at": "2026-01-01T00:00:00Z"}
 
 # (status, extra node facts, active?): the membership rule of loop.reconcile_active_keys for one node that has a work item.
 MEMBERSHIP = [
-    *[(status, {}, True) for status in sorted(loop.RUNNING_STATUSES)],            # a running node always needs its observation
+    *[(status, {}, True) for status in sorted(graph.RUNNING)],            # a running node always needs its observation
     ("todo", {}, True),                                                          # about to be dispatched: stale projections must not be trusted
     ("blocked", {}, False), ("failed", {}, False),                               # without a recovery marker they are static
     ("blocked", {"recovery_marker": True}, True), ("failed", {"recovery_marker": True}, True),
@@ -78,7 +79,6 @@ class TestReconcileActiveKeys:
                 id="down", worker="worker", work_item_id="item-down",
                 status="todo", blocked_by=["up"]),
         })
-        from omac.core import graph
         snapshot = {
             key: {"status": node.status, "blocked_by": list(node.blocked_by)}
             for key, node in manifest.nodes.items()

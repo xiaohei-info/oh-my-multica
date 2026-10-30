@@ -7,9 +7,9 @@ from typing import List, Optional
 
 import yaml
 
-from .engines.models import SkillPackage
-from .errors import ValidationError
-from .i18n import EN, resolve_language, ui
+from ..engines.models import SkillPackage
+from ..errors import ValidationError
+from ..i18n import EN, resolve_language, ui
 
 
 SkillTemplate = SkillPackage
@@ -24,7 +24,7 @@ class AgentTemplate:
 
 
 def _default_root() -> Path:
-    return Path(__file__).resolve().parent / "agents"
+    return Path(__file__).resolve().parent.parent / "agents"
 
 
 def _read_frontmatter(path: Path, language: str = EN) -> dict:

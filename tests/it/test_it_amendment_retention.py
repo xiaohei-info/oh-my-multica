@@ -12,6 +12,7 @@ from _support.amendkit import POOL, bootstrap, proposal as _proposal, seal_revie
 from omac.cli import main as cli
 from omac.cli.commands import dag
 from omac.core import amendment as core
+from omac.pipeline.amendment import apply_amendment
 from omac.core.manifest import load_manifest, save_manifest
 from omac.core.retry_budget import consumed_bounces, review_rework_budget
 from omac.core.workitem import WorkItemStatus
@@ -42,7 +43,7 @@ class Scenario:
                                              agent_pool=POOL)
 
     def apply(self, request):
-        return core.apply_amendment(self.path, request, self.store, POOL)
+        return apply_amendment(self.path, request, self.store, POOL)
 
     def seed_authority(self, baseline, *, native=True):
         record = {"amendment_id": "amend-old", "work_item_id": self.item_id,
@@ -377,7 +378,7 @@ def test_derived_recoveries_keep_their_budgets_and_the_done_node_and_journals_un
     assert set(request["base"]["budget_bindings"]["nodes"]) == {"bootstrap", "started-dependent"}
     assert request["analysis"]["minimal_rerun"]["authoring"] == ["bootstrap", "started-dependent"]
 
-    core.apply_amendment(c.path, request, c.store, POOL)
+    apply_amendment(c.path, request, c.store, POOL)
 
     m = load_manifest(c.path)
     assert m.nodes["foundation"] == done
@@ -396,7 +397,7 @@ def test_drift_in_a_later_derived_node_blocks_every_store_side_effect(derived):
     content = Path(c.path).read_bytes()
 
     with pytest.raises(ValidationError):
-        core.apply_amendment(c.path, request, c.store, POOL)
+        apply_amendment(c.path, request, c.store, POOL)
 
     assert Path(c.path).read_bytes() == content and not restores
 
@@ -419,7 +420,7 @@ def test_counter_drift_between_the_first_capture_and_the_ledger_preparation_fail
 # ---- an unrelated amendment must not disturb a node that holds retained budget ---------------------------------------------------
 
 def test_a_real_apply_and_its_reentry_leave_the_unaffected_node_and_its_issue_untouched(kit, tmp_path):
-    from omac.core.amendment import APPLY_LEDGER_SCHEMA, apply_amendment, build_reviewed_amendment
+    from omac.core.amendment import APPLY_LEDGER_SCHEMA, build_reviewed_amendment
     from omac.core.taskmeta import review_context_binding
 
     path, bootstrap_item = bootstrap(kit, tmp_path)

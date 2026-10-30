@@ -2,7 +2,7 @@
 import pytest
 import yaml
 
-import omac.core.amendment as amendment_mod
+import omac.pipeline.amendment as amendment_mod
 from _support.amendkit import bootstrap, contract_update, pass_with_nits_amendment_fixture, proposal
 from omac.core.amendment import build_reviewed_amendment
 from omac.core.manifest import load_manifest

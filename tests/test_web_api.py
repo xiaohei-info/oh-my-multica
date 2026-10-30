@@ -179,6 +179,25 @@ def test_manifests_excludes_acceptance_and_zero_node_yaml(
     ]
 
 
+def test_manifests_is_the_dag_list_command_output_unchanged(orch, simple_manifest, monkeypatch):
+    monkeypatch.chdir(orch.parent)
+    code, cli = _cli_json(["dag", "list", "--dir", str(orch), "--output", "json"], orch.parent)
+    with _Server(orch_subpath=str(orch)) as s:
+        status, body = s.get("/api/manifests")
+    assert code == 0 and status == 200 and json.loads(body) == cli
+    assert cli[0]["name"] == "demo" and cli[0]["todo"] == 2
+
+
+def test_a_manifest_that_cannot_be_loaded_fails_the_list_instead_of_disappearing(orch, simple_manifest, monkeypatch):
+    _write_manifest(orch, "broken", [{"id": "a", "worker": "alice"}])
+    (orch / "broken.state").mkdir(exist_ok=True)
+    (orch / "broken.state" / "a.yaml").write_text("# sha256: " + "0" * 64 + "\nstatus: done\n", encoding="utf-8")
+    monkeypatch.chdir(orch.parent)
+    with _Server(orch_subpath=str(orch)) as s:
+        status, body = s.get("/api/manifests")
+    assert status == 400 and "broken.state" in json.loads(body)["hint"]
+
+
 def test_meta_does_not_read_project_config(orch, monkeypatch):
     monkeypatch.chdir(orch.parent)
     config = yaml.safe_load((orch / "config.yaml").read_text(encoding="utf-8"))
