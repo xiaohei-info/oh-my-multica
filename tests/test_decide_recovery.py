@@ -114,7 +114,7 @@ def active(runs, **baseline):
     pytest.param([run(trigger=None)], False, id="missing-trigger"),
     pytest.param([run(agent="foreign-agent")], False, id="other-agents-run"),
     pytest.param([run(created="2026-08-02T23:59:59Z")], False, id="created-before-the-cutoff"),
-    pytest.param([run(created=CUTOFF)], False, id="created-at-the-cutoff"),
+    pytest.param([run(created=CUTOFF)], True, id="created-in-the-cutoff-second"),   # whole-second times: not provably history
     pytest.param([run(), run("run-bob-2", created="2026-08-03T00:00:02Z")], False, id="two-post-baseline-runs-are-ambiguous"),
     pytest.param([run(status="failed")], False, id="terminal-failure"),
     pytest.param([run(status="completed")], False, id="terminal-success"),
@@ -184,7 +184,7 @@ def test_a_unique_formal_run_after_the_cutoff_is_adopted_for_a_submitted_review(
     pytest.param([], "no uniquely observable target Run", id="no-run"),
     pytest.param([run("run-1"), run("run-2", created="2026-08-03T00:00:02Z")], "", id="ambiguous"),
     pytest.param([run(agent="agent-foreign")], "", id="another-agents-run"),
-    pytest.param([run(created="2026-08-03T00:00:00Z")], "", id="not-after-the-cutoff"),
+    pytest.param([run(created="2026-08-02T23:59:59Z")], "", id="before-the-cutoff"),
     pytest.param([run(created=None)], "no usable creation time", id="no-creation-time"),
     pytest.param([run(trigger="issue_assignment"), run("run-2", created="2026-08-03T00:00:02Z", trigger="issue_assignment")], "",
                  id="two-assignment-runs"),
