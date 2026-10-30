@@ -290,6 +290,13 @@ oh-my-multica does not replace Multica or Coding Agents. It sits between callers
 software engineering facts into executable state, and uses Multica's task and runtime capabilities through
 uniform interfaces.
 
+The pipeline depends on three ports: `WorkItemStore` (work items and evidence), `AgentRuntime` (waking and observing
+Agents) and `CodeHost` (pull requests, checks, merge). Only the adapters talk to Multica and GitHub, and CI checks the
+layering, so another platform means new adapters, not a new Loop. Run state is one small plain-text file per node,
+synchronized through git, so two machines advancing different nodes do not conflict. Each stage decision is a pure
+function from observed facts to a plan, which makes it testable with tables. The integration tests run against a
+private Docker Multica, not a mock.
+
 ![oh-my-multica Overall Architecture](docs/diagrams/oh-my-multica-overall-architecture.svg)
 
 ## From requirement to delivery

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="architecture-title architecture-desc" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace">
   <title id="architecture-title">oh-my-multica Overall Architecture</title>
-  <desc id="architecture-desc">Human, controller, and read-only web callers enter the oh-my-multica delivery control layer. The planning pipeline, deterministic loop, engineering facts, delivery gates, and recovery protocol depend on platform-neutral WorkItemStore and AgentRuntime ports. Multica adapters connect those ports to Multica, coding agents, Git pull requests, and CI.</desc>
+  <desc id="architecture-desc">Human, controller, and read-only web callers enter the oh-my-multica delivery control layer. The planning pipeline, deterministic loop, engineering facts, delivery gates, and recovery protocol depend only on three platform-neutral ports: WorkItemStore, AgentRuntime and CodeHost. The Multica adapter implements the first two for Multica and coding agents; the GitHub adapter implements CodeHost for Git pull requests, checks and merge.</desc>
   <defs>
     <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
       <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.6"/>
@@ -26,7 +26,7 @@
   <rect width="1600" height="900" fill="url(#grid)"/>
 
   <text x="50" y="48" fill="#f8fafc" font-size="22" font-weight="700">oh-my-multica · Overall Architecture</text>
-  <text x="50" y="76" fill="#64748b" font-size="11">One delivery control layer · Two platform-neutral ports · Multiple execution systems</text>
+  <text x="50" y="76" fill="#64748b" font-size="11">One delivery control layer · Three platform-neutral ports · Multiple execution systems</text>
 
   <!-- Layer boundaries -->
   <rect x="40" y="120" width="220" height="660" rx="14" fill="rgba(30,41,59,0.30)" stroke="#64748b" stroke-width="1.2" stroke-dasharray="7,5"/>
@@ -58,19 +58,21 @@
   <path d="M 660 640 L 660 610 L 855 610 L 855 425" fill="none" stroke="#a78bfa" stroke-width="1.4" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
 
   <!-- Core to engine ports -->
-  <path d="M 980 350 L 1040 350 L 1040 315 L 1080 315" fill="none" stroke="#a78bfa" stroke-width="1.7" marker-end="url(#arrow)"/>
-  <path d="M 980 390 L 1040 390 L 1040 505 L 1080 505" fill="none" stroke="#a78bfa" stroke-width="1.7" marker-end="url(#arrow)"/>
+  <path d="M 980 350 L 1040 350 L 1040 240 L 1080 240" fill="none" stroke="#a78bfa" stroke-width="1.7" marker-end="url(#arrow)"/>
+  <path d="M 980 380 L 1080 380" fill="none" stroke="#a78bfa" stroke-width="1.7" marker-end="url(#arrow)"/>
+  <path d="M 980 530 L 1080 530" fill="none" stroke="#a78bfa" stroke-width="1.7" marker-end="url(#arrow)"/>
 
-  <!-- Ports to adapter and external delivery chain -->
-  <path d="M 1270 315 L 1300 315 L 1300 220 L 1340 220" fill="none" stroke="#34d399" stroke-width="1.6" marker-end="url(#arrow)"/>
-  <path d="M 1270 505 L 1310 505 L 1310 240 L 1340 240" fill="none" stroke="#34d399" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <!-- Ports to adapters and external delivery chain -->
+  <path d="M 1270 240 L 1340 240" fill="none" stroke="#34d399" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 1270 380 L 1310 380 L 1310 260 L 1340 260" fill="none" stroke="#34d399" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 1270 545 L 1340 545" fill="none" stroke="#34d399" stroke-width="1.6" marker-end="url(#arrow)"/>
   <path d="M 1440 270 L 1440 310" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrow-amber)"/>
-  <path d="M 1440 390 L 1440 430" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrow-amber)"/>
-  <path d="M 1440 510 L 1440 550" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrow-amber)"/>
-  <path d="M 1440 630 L 1440 670" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrow-amber)"/>
+  <path d="M 1440 380 L 1440 410" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrow-amber)"/>
+  <path d="M 1440 600 L 1440 630" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrow-amber)"/>
+  <path d="M 1440 690 L 1440 710" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrow-amber)"/>
 
-  <!-- CI and platform facts return to delivery gates -->
-  <path d="M 1340 710 L 1295 710 L 1295 815 L 1000 815 L 1000 555 L 980 555" fill="none" stroke="#fb923c" stroke-width="1.7" marker-end="url(#arrow-orange)"/>
+  <!-- CI and platform facts return to delivery gates through CodeHost -->
+  <path d="M 1340 740 L 1295 740 L 1295 815 L 1000 815 L 1000 585 L 980 585" fill="none" stroke="#fb923c" stroke-width="1.7" marker-end="url(#arrow-orange)"/>
   <text x="1080" y="805" fill="#fb923c" font-size="8">PR / CI / merge facts</text>
 
   <!-- Caller cards -->
@@ -130,50 +132,55 @@
   <text x="545" y="739" fill="#94a3b8" font-size="7">explicit decisions replace hidden automatic recovery</text>
 
   <!-- Engine ports -->
-  <rect x="1080" y="265" width="190" height="110" rx="9" fill="#0f172a"/>
-  <rect x="1080" y="265" width="190" height="110" rx="9" fill="rgba(76,29,149,0.42)" stroke="#a78bfa" stroke-width="1.6"/>
-  <text x="1175" y="298" fill="#a78bfa" font-size="10" font-weight="700" text-anchor="middle">WorkItemStore</text>
-  <text x="1175" y="324" fill="#f8fafc" font-size="9" text-anchor="middle">data plane</text>
-  <text x="1175" y="346" fill="#94a3b8" font-size="8" text-anchor="middle">work items · evidence</text>
-  <text x="1175" y="362" fill="#94a3b8" font-size="8" text-anchor="middle">review state · comments</text>
+  <rect x="1080" y="190" width="190" height="100" rx="9" fill="#0f172a"/>
+  <rect x="1080" y="190" width="190" height="100" rx="9" fill="rgba(76,29,149,0.42)" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="1175" y="220" fill="#a78bfa" font-size="10" font-weight="700" text-anchor="middle">WorkItemStore</text>
+  <text x="1175" y="244" fill="#f8fafc" font-size="9" text-anchor="middle">data plane</text>
+  <text x="1175" y="264" fill="#94a3b8" font-size="8" text-anchor="middle">work items · evidence</text>
+  <text x="1175" y="278" fill="#94a3b8" font-size="8" text-anchor="middle">review state · comments</text>
+  <rect x="1080" y="330" width="190" height="100" rx="9" fill="#0f172a"/>
+  <rect x="1080" y="330" width="190" height="100" rx="9" fill="rgba(6,78,59,0.45)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="1175" y="360" fill="#34d399" font-size="10" font-weight="700" text-anchor="middle">AgentRuntime</text>
+  <text x="1175" y="384" fill="#f8fafc" font-size="9" text-anchor="middle">execution plane</text>
+  <text x="1175" y="404" fill="#94a3b8" font-size="8" text-anchor="middle">wake Agent with</text>
+  <text x="1175" y="418" fill="#94a3b8" font-size="8" text-anchor="middle">bounded task payload</text>
+  <rect x="1080" y="470" width="190" height="100" rx="9" fill="#0f172a"/>
+  <rect x="1080" y="470" width="190" height="100" rx="9" fill="rgba(124,45,18,0.42)" stroke="#fb923c" stroke-width="1.5"/>
+  <text x="1175" y="500" fill="#fb923c" font-size="10" font-weight="700" text-anchor="middle">CodeHost</text>
+  <text x="1175" y="524" fill="#f8fafc" font-size="9" text-anchor="middle">delivery plane</text>
+  <text x="1175" y="544" fill="#94a3b8" font-size="8" text-anchor="middle">pull requests · checks</text>
+  <text x="1175" y="558" fill="#94a3b8" font-size="8" text-anchor="middle">readiness · merge</text>
+  <text x="1175" y="620" fill="#64748b" font-size="8" text-anchor="middle">Other adapters can implement</text>
+  <text x="1175" y="636" fill="#64748b" font-size="8" text-anchor="middle">the same three ports</text>
 
-  <rect x="1080" y="455" width="190" height="110" rx="9" fill="#0f172a"/>
-  <rect x="1080" y="455" width="190" height="110" rx="9" fill="rgba(6,78,59,0.45)" stroke="#34d399" stroke-width="1.6"/>
-  <text x="1175" y="488" fill="#34d399" font-size="10" font-weight="700" text-anchor="middle">AgentRuntime</text>
-  <text x="1175" y="514" fill="#f8fafc" font-size="9" text-anchor="middle">execution plane</text>
-  <text x="1175" y="536" fill="#94a3b8" font-size="8" text-anchor="middle">wake Agent with</text>
-  <text x="1175" y="552" fill="#94a3b8" font-size="8" text-anchor="middle">bounded task payload</text>
-  <text x="1175" y="610" fill="#64748b" font-size="8" text-anchor="middle">Other adapters can implement</text>
-  <text x="1175" y="627" fill="#64748b" font-size="8" text-anchor="middle">the same two ports</text>
-
-  <!-- Current execution stack -->
+  <!-- Adapters and execution stack -->
   <rect x="1340" y="180" width="200" height="90" rx="8" fill="#0f172a"/>
   <rect x="1340" y="180" width="200" height="90" rx="8" fill="rgba(6,78,59,0.40)" stroke="#34d399" stroke-width="1.5"/>
-  <text x="1440" y="211" fill="#34d399" font-size="10" font-weight="700" text-anchor="middle">MULTICA ENGINE ADAPTER</text>
-  <text x="1440" y="237" fill="#f8fafc" font-size="9" text-anchor="middle">MulticaStore + MulticaRuntime</text>
-  <text x="1440" y="254" fill="#94a3b8" font-size="7" text-anchor="middle">platform CLI calls remain</text>
-  <text x="1440" y="266" fill="#94a3b8" font-size="7" text-anchor="middle">encapsulated in this adapter</text>
-
-  <rect x="1340" y="310" width="200" height="80" rx="8" fill="#0f172a"/>
-  <rect x="1340" y="310" width="200" height="80" rx="8" fill="rgba(120,53,15,0.34)" stroke="#fbbf24" stroke-width="1.5"/>
-  <text x="1440" y="341" fill="#fbbf24" font-size="10" font-weight="700" text-anchor="middle">MULTICA PLATFORM</text>
-  <text x="1440" y="365" fill="#94a3b8" font-size="8" text-anchor="middle">workspace · issues · assignments</text>
-
-  <rect x="1340" y="430" width="200" height="80" rx="8" fill="#0f172a"/>
-  <rect x="1340" y="430" width="200" height="80" rx="8" fill="rgba(8,51,68,0.42)" stroke="#22d3ee" stroke-width="1.5"/>
-  <text x="1440" y="461" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">CODING AGENT RUNTIMES</text>
-  <text x="1440" y="485" fill="#94a3b8" font-size="8" text-anchor="middle">Claude Code · Codex · other Agents</text>
-
-  <rect x="1340" y="550" width="200" height="80" rx="8" fill="#0f172a"/>
-  <rect x="1340" y="550" width="200" height="80" rx="8" fill="rgba(76,29,149,0.40)" stroke="#a78bfa" stroke-width="1.5"/>
-  <text x="1440" y="581" fill="#a78bfa" font-size="10" font-weight="700" text-anchor="middle">GIT REPOSITORY / PR</text>
-  <text x="1440" y="605" fill="#94a3b8" font-size="8" text-anchor="middle">branches · commits · Pull Requests</text>
-
-  <rect x="1340" y="670" width="200" height="80" rx="8" fill="#0f172a"/>
-  <rect x="1340" y="670" width="200" height="80" rx="8" fill="rgba(124,45,18,0.42)" stroke="#fb923c" stroke-width="1.5"/>
-  <text x="1440" y="701" fill="#fb923c" font-size="10" font-weight="700" text-anchor="middle">CI / TESTS</text>
-  <text x="1440" y="720" fill="#94a3b8" font-size="8" text-anchor="middle">verification · checks</text>
-  <text x="1440" y="736" fill="#94a3b8" font-size="8" text-anchor="middle">delivery feedback</text>
+  <text x="1440" y="208" fill="#34d399" font-size="10" font-weight="700" text-anchor="middle">MULTICA ADAPTER</text>
+  <text x="1440" y="230" fill="#f8fafc" font-size="9" text-anchor="middle">MulticaStore + MulticaRuntime</text>
+  <text x="1440" y="250" fill="#94a3b8" font-size="7" text-anchor="middle">platform CLI calls remain</text>
+  <text x="1440" y="262" fill="#94a3b8" font-size="7" text-anchor="middle">encapsulated in this adapter</text>
+  <rect x="1340" y="310" width="200" height="70" rx="8" fill="#0f172a"/>
+  <rect x="1340" y="310" width="200" height="70" rx="8" fill="rgba(120,53,15,0.34)" stroke="#fbbf24" stroke-width="1.5"/>
+  <text x="1440" y="338" fill="#fbbf24" font-size="10" font-weight="700" text-anchor="middle">MULTICA PLATFORM</text>
+  <text x="1440" y="360" fill="#94a3b8" font-size="8" text-anchor="middle">workspace · issues · assignments</text>
+  <rect x="1340" y="410" width="200" height="70" rx="8" fill="#0f172a"/>
+  <rect x="1340" y="410" width="200" height="70" rx="8" fill="rgba(8,51,68,0.42)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="1440" y="438" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">CODING AGENT RUNTIMES</text>
+  <text x="1440" y="460" fill="#94a3b8" font-size="8" text-anchor="middle">Claude Code · Codex · other Agents</text>
+  <rect x="1340" y="520" width="200" height="80" rx="8" fill="#0f172a"/>
+  <rect x="1340" y="520" width="200" height="80" rx="8" fill="rgba(6,78,59,0.40)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="1440" y="548" fill="#34d399" font-size="10" font-weight="700" text-anchor="middle">GITHUB ADAPTER</text>
+  <text x="1440" y="570" fill="#f8fafc" font-size="9" text-anchor="middle">GitHubCodeHost</text>
+  <text x="1440" y="588" fill="#94a3b8" font-size="7" text-anchor="middle">gh calls remain in this adapter</text>
+  <rect x="1340" y="630" width="200" height="60" rx="8" fill="#0f172a"/>
+  <rect x="1340" y="630" width="200" height="60" rx="8" fill="rgba(76,29,149,0.40)" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="1440" y="656" fill="#a78bfa" font-size="10" font-weight="700" text-anchor="middle">GIT REPOSITORY / PR</text>
+  <text x="1440" y="676" fill="#94a3b8" font-size="8" text-anchor="middle">branches · commits · Pull Requests</text>
+  <rect x="1340" y="710" width="200" height="60" rx="8" fill="#0f172a"/>
+  <rect x="1340" y="710" width="200" height="60" rx="8" fill="rgba(124,45,18,0.42)" stroke="#fb923c" stroke-width="1.5"/>
+  <text x="1440" y="736" fill="#fb923c" font-size="10" font-weight="700" text-anchor="middle">CI / TESTS</text>
+  <text x="1440" y="756" fill="#94a3b8" font-size="8" text-anchor="middle">verification · checks · merge</text>
 
   <!-- Legend outside boundaries -->
   <circle cx="65" cy="850" r="5" fill="#94a3b8"/><text x="78" y="854" fill="#64748b" font-size="9">Caller</text>
