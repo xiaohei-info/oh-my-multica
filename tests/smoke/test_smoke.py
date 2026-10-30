@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tests/ -> _support
 
@@ -42,7 +43,10 @@ def project(stack, tmp_path):
 def _run(project, manifest, minutes):
     done = project.omac("dag", "run", manifest, "--max-minutes", str(minutes), "--output", "json",
                           timeout=minutes * 60 + 120)
-    assert done.returncode == 0, done.stdout + done.stderr
+    if done.returncode:  # a real Reviewer's verdict and comment explain a failure that the DAG state alone does not
+        nodes = yaml.safe_load(Path(manifest).read_text())["nodes"]
+        evidence = [project.omac("node", "show", manifest, node["id"], "--output", "json").stdout for node in nodes]
+        pytest.fail(done.stdout + done.stderr + "\n".join(evidence), pytrace=False)
     return json.loads(done.stdout)
 
 
