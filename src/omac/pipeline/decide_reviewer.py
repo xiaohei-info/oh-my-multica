@@ -86,7 +86,7 @@ def _decide_new(obs: BaselineObservation, generation: str) -> BaselineDecision:
         created = parse_platform_time(run.created_at)
         if created is None or created.tzinfo is None:
             return _unavailable(f"Reviewer Run {run.id} has no usable creation time")
-        if created <= cutoff:
+        if created < cutoff:   # whole-second times: a Run in the delivery's second may be the dispatched one
             historical.append(run)
     try:
         historical_ids, _ = bounded_direct_run_baseline(

@@ -171,11 +171,10 @@ def bounded_direct_run_baseline(
     sorted-by-ID order semantics. Uncapped baselines return ``None`` cutoff so
     consumers keep pure ID-membership semantics. When capped, the returned
     cutoff is the newest retained Run's creation time: consumers treat Runs
-    created at or before it as baseline-internal, Runs after it stay
-    fail-closed. With ``gate_cutoff_created_at`` the caller already owns a
-    consumer-side timestamp gate; then only Runs at or before that gate may be
-    dropped, the returned cutoff stays ``None``, and anything unsafe fails
-    closed.
+    created before it as baseline-internal, later Runs stay fail-closed.
+    With ``gate_cutoff_created_at`` the caller already owns a consumer-side
+    timestamp gate; then only Runs before that gate may be dropped, the
+    returned cutoff stays ``None``, and anything unsafe fails closed.
     """
     direct = [run for run in runs if run.kind == "direct"]
     if len(direct) <= BASELINE_MAX_DIRECT_RUN_IDS:
@@ -197,7 +196,7 @@ def bounded_direct_run_baseline(
         if gate is None or gate.tzinfo is None:
             raise PlatformError(
                 "Direct Run baseline cannot be bounded: unusable gate cutoff")
-        if any(created > gate for created, _run in dropped):
+        if any(created >= gate for created, _run in dropped):
             raise PlatformError(
                 "Direct Run baseline cannot be bounded safely: Runs after "
                 "the gate cutoff exceed the baseline limit")
@@ -208,13 +207,16 @@ def bounded_direct_run_baseline(
 def run_created_within_baseline(
     run: AgentRunObservation, cutoff: datetime | None,
 ) -> bool:
-    """Whether a Run predates the baseline cutoff and is baseline-internal."""
+    """Whether a Run predates the baseline cutoff and is baseline-internal.
+
+    Platform creation times have whole-second precision: a Run in the cutoff's own second may be newer, so it is not.
+    """
     if cutoff is None:
         return False
     created = parse_platform_time(run.created_at)
     if created is None or created.tzinfo is None:
         return False
-    return created <= cutoff
+    return created < cutoff
 
 
 def parse_baseline_cutoff(intent) -> datetime | None:
@@ -252,7 +254,7 @@ def observe_direct_run_attempt(
                     "unexpected", detail=f"Run {run.id} has no usable creation time")
             if cutoff is None or cutoff.tzinfo is None:
                 return DirectRunAttempt("unexpected", detail="invalid Run cutoff")
-            if created <= cutoff:
+            if created < cutoff:   # same second as the cutoff: not provably history
                 continue
         expected.append(run)
     if target_run_id:

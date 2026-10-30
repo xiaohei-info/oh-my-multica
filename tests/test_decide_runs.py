@@ -278,13 +278,17 @@ def test_bounded_direct_run_baseline_gate_drops_only_pre_cutoff_runs():
     runs = baseline_history_runs(45, "agent-worker", "agent-reviewer")
     # 门控 cutoff 覆盖全部被裁 Run → 安全封顶,沿用调用方自己的门控。
     ids, cutoff = decide_runs.bounded_direct_run_baseline(
-        runs, gate_cutoff_created_at=runs[24].created_at)
+        runs, gate_cutoff_created_at=runs[25].created_at)
     assert ids == tuple(sorted(run.id for run in runs[-20:]))
     assert cutoff is None
     # 被裁 Run 晚于门控 cutoff → 无法安全封顶,fail-closed。
     with pytest.raises(PlatformError):
         decide_runs.bounded_direct_run_baseline(
             runs, gate_cutoff_created_at=runs[10].created_at)
+    # 被裁 Run 与门控 cutoff 同一秒 → 按时间分不出是否历史,同样 fail-closed。
+    with pytest.raises(PlatformError):
+        decide_runs.bounded_direct_run_baseline(
+            runs, gate_cutoff_created_at=runs[24].created_at)
 
 
 # ---- a handoff baseline that is capped to fit the platform's metadata limit -------------------------------------------------
@@ -329,6 +333,20 @@ def test_a_stranger_after_the_cutoff_still_breaks_a_capped_baseline():
     found = decide_runs.foreign_unbaselined_runs(history + [CURRENT, stranger], WORKER, retained, decide_runs.parse_platform_time(cutoff))
 
     assert [run.id for run in found] == ["run-stranger"]
+
+
+def test_a_run_created_in_the_cutoff_second_is_not_history():
+    """The platform reports creation times in whole seconds: a Reviewer assigned in the second its delivery was uploaded
+    has the cutoff's timestamp and is still the dispatched Run, not history."""
+    cutoff = "2026-01-03T00:00:00Z"
+    review = AgentRunObservation(id="run-review", kind="direct", status="running", agent_id=REVIEWER, created_at=cutoff,
+                                 trigger_kind="issue_assignment")
+
+    attempt = decide_runs.observe_direct_run_attempt([review], REVIEWER, cutoff_created_at=cutoff)
+
+    assert (attempt.state, attempt.target_run_id) == ("active", "run-review")
+    assert decide_runs.is_active_formal_run([review], REVIEWER, cutoff_created_at=cutoff)
+    assert decide_runs.foreign_unbaselined_runs([review], WORKER, (), decide_runs.parse_platform_time(cutoff)) == [review]
 
 
 def test_the_baseline_after_a_retry_is_capped_again_and_advances_its_cutoff():
