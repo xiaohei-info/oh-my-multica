@@ -86,15 +86,16 @@ def test_baseline_decision(obs, action, reason):
     assert (reason is None) or reason in decided.reason
 
 
-def test_a_new_baseline_keeps_only_runs_created_up_to_the_delivery_time():
-    """PROJ-826: the issue's own update time is irrelevant; the sealed delivery time decides what is history."""
+def test_a_new_baseline_keeps_only_runs_created_before_the_delivery_time():
+    """PROJ-826: the issue's own update time is irrelevant; the sealed delivery time decides what is history.
+    Creation times have whole-second precision, so a Run in the delivery's own second is not history."""
     history = run("run-history", created="2026-07-31T16:06:30Z")
     at_cutoff = run("run-at-cutoff", created="2026-07-31T16:07:00Z")
     current = run("run-current", created="2026-07-31T16:08:23Z")
     decided = decide_baseline(baseline_obs(
         identity=identity("2026-07-31T16:07:00Z"), reviewer_runs=(current, at_cutoff, history)), generation="fresh")
     assert decided.action is B.CREATE
-    assert decided.baseline.baseline_direct_run_ids == ("run-at-cutoff", "run-history")
+    assert decided.baseline.baseline_direct_run_ids == ("run-history",)
     assert decided.baseline.cutoff_created_at == "2026-07-31T16:07:00Z" and decided.baseline.generation == "fresh"
 
 
