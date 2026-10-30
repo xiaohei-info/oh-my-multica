@@ -11,11 +11,11 @@ on:
         description: Coding Agent the Multica daemon launches
         type: choice
         options: [codex, pi]
-        default: codex
+        default: pi
       model:
         description: Model the Agents use (empty = the runtime's own default)
         type: string
-        default: ""
+        default: gemini-3.8-flash
 
 permissions:
   contents: read
