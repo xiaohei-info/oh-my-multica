@@ -12,6 +12,10 @@ on:
         type: choice
         options: [codex, pi]
         default: codex
+      model:
+        description: Model the Agents use (empty = the runtime's own default)
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -28,6 +32,7 @@ jobs:
     env:
       OMAC_SMOKE_AGENT: real
       OMAC_SMOKE_RUNTIME: ${{ inputs.runtime }}
+      OMAC_SMOKE_MODEL: ${{ inputs.model }}
     steps:
       - uses: actions/checkout@v7
 
