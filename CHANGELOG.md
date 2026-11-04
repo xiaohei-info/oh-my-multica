@@ -8,6 +8,11 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-11-04
+
+- Fix: `omac plan create --doc` no longer fails on a design source over 64 KiB. OMAC now publishes every `--doc` file or
+  directory source on its own finished source issue, so the acceptance and decomposition stages read it through
+  `omac work read` exactly as they read a planner's design.
 - Fix: a Run created in the same second as the cutoff is no longer treated as history.
 - Tests: the smoke `_run` timeout follows the DAG's `--max-minutes`.
 - Smoke: the workflow takes a model input, and a failed run prints every node's evidence (Reviewer verdict and comment).
@@ -236,5 +241,6 @@ records 86 passing tests, 97.18% coverage, CI across Python 3.10–3.13, and
 11/11 final acceptance flows.
 
 [Webhook Inbox demo]: https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox
+[2.0.1]: https://github.com/xiaohei-info/oh-my-multica/releases/tag/v2.0.1
 [2.0.0]: https://github.com/xiaohei-info/oh-my-multica/releases/tag/v2.0.0
 [1.0.0]: https://github.com/xiaohei-info/oh-my-multica/releases/tag/v1.0.0
