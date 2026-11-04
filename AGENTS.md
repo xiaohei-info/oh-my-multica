@@ -85,6 +85,7 @@ blocked / in_review ── omac node accept ──► done        上游修复�
 1. **init**：`omac init` 写配置，选择或创建平台 project，可选地从 `src/omac/agents/` 模板创建 Agent。
 2. **plan**：`omac plan create|confirm|resume` 依次跑 plan（设计）→ acceptance（验收文档）→ decompose（manifest），
    每步都是"产出 → 机器门 → 有界评审"；`workflow.human_in_loop` 为真时等人确认；最后一起提交 manifest 与验收文档。
+   `--doc` 跳过 planner：OMAC 把文档（目录则为其清单）发布到已完成的来源 issue（`doc-<plan_id>`，kind 为 `plan`，不指派 Agent），后续阶段照常经 source refs 引用。
 3. **dag run / tick**（一轮 tick）：
    `reconcile → 结果收集（collect_results）→ 证据 / CI / 合并门 → 就绪节点 → 派单 → 收敛或 exit 20`。
    `dag run` 循环 tick；`dag tick` 只跑一轮（exit 0/10/20）。每轮先观察平台与 manifest，再决策。

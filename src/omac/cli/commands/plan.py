@@ -78,7 +78,7 @@ def register(parser):
     resume.add_argument("--name", help="manifest 名;缺省从设计方案 issue 标题反推")
     resume.add_argument(
         "--doc",
-        help="原流水线由现有设计文档文件或目录创建时，用它恢复且不创建 plan issue")
+        help="原流水线由现有设计文档文件或目录创建时，用它恢复并复用承载文档的来源 issue")
     resume.add_argument(
         "--restart-active", action="store_true",
         help="显式取消当前阶段仍活跃的 Agent run，刷新同一 issue 后重新派发")

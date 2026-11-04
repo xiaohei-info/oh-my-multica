@@ -25,6 +25,7 @@ from omac.core.manifest import _load_contract, load_manifest, loads_manifest
 from omac.core.taskmeta import TaskKind, TaskPhase
 from omac.core.workitem import WorkItemStatus
 from omac.errors import NeedsDecision, ValidationError
+from omac.pipeline import plan as plan_module
 from omac.pipeline.review import run_review
 
 
@@ -61,6 +62,15 @@ def ran(stack, agent):
 
 def kinds(world, kind):
     return sorted((i for i in world.store.list_work_items(world.store.config.workspace_id) if i.kind == kind), key=lambda i: i.id)
+
+
+def doc_source(world, plan_id):
+    """The one finished source issue that carries a ``--doc`` design source."""
+    matches = [i for i in kinds(world, TaskKind.PLAN) if i.dag_key == f"doc-{plan_id}"]
+    assert len(matches) == 1
+    source = world.store.get_work_item(matches[0].id)
+    assert source.status == WorkItemStatus.DONE and source.deliverable
+    return source
 
 
 def commit_all(project, message="arrange"):
@@ -287,9 +297,60 @@ def test_a_design_document_replaces_the_plan_stage(world, repo):
 
     assert create("demo-doc", "--doc", "docs") == exit_codes.OK
 
-    assert (repo.work / ".omac" / "demo-doc.yaml").exists() and not (repo.work / "AGENTS.md").exists()
-    assert kinds(world, TaskKind.PLAN) == [] or all(not i.dag_key.startswith("plan-") or i.created_at < world.n for i in [])
-    assert not ran(world.kit.stack, "alice") or True
+    manifest = yaml.safe_load((repo.work / ".omac" / "demo-doc.yaml").read_text())
+    assert not (repo.work / "AGENTS.md").exists()
+    source = doc_source(world, manifest["meta"]["plan_id"])
+    assert source.id == manifest["meta"]["source_issues"][0]
+    assert main(["plan", "resume", "--plan-id", manifest["meta"]["plan_id"]]) == exit_codes.VALIDATION    # never reworked by a planner
+
+
+def large_doc_file(repo):
+    text = PLAN_TEXT + "\n# " + ("x" * (70 * 1024))
+    (repo.work / "design.md").write_text(text, encoding="utf-8")
+    return "design.md"
+
+
+def large_doc_directory(repo):
+    (repo.work / "design").mkdir()
+    for index in range(800):      # the inventory, not the content, is the source: it takes this many files to pass 64 KiB
+        (repo.work / "design" / f"section-{index:04}.md").write_text(f"# {index}", encoding="utf-8")
+    return "design"
+
+
+@pytest.mark.parametrize("arrange", [large_doc_file, large_doc_directory])
+def test_a_large_design_source_stays_on_its_source_issue_and_stages_read_it_through_omac(world, repo, tmp_path, arrange):
+    doc = arrange(repo)
+    commit_all(repo)
+    script(world, plan=None)
+    name = f"demo-large-{arrange.__name__}"
+
+    assert create(name, "--doc", doc) == exit_codes.OK
+
+    meta = yaml.safe_load((repo.work / ".omac" / f"{name}.yaml").read_text())["meta"]
+    source = doc_source(world, meta["plan_id"])
+    acceptance = world.store.get_work_item(meta["source_issues"][1])
+    decompose = world.store.get_work_item(meta["source_issues"][2])
+    assert source.id == meta["source_issues"][0] and len(source.deliverable.encode()) > 64 * 1024
+    assert world.kit.runtime.list_runs(source.id) == []
+    for stage in (acceptance, decompose):
+        ref = next(ref for ref in stage.source_refs if ref["label"] == "plan")
+        assert ref["issue_id"] == source.id and ref["content_externalized"] is True
+        assert source.deliverable not in stage.description and "omac work read" in stage.description
+    output = tmp_path / "materialized.md"
+    assert main(["work", "read", decompose.id, "--source", "plan", "--output-file", str(output)]) == exit_codes.OK
+    assert output.read_text(encoding="utf-8") == source.deliverable
+
+
+def test_a_resume_completes_a_doc_source_issue_left_unfinished_without_creating_a_second(world, repo):
+    docs_in_repo(repo)
+    script(world, plan=None)
+    unfinished = world.store.create_work_item(world.store.config.workspace_id, "demo-doc-reuse", "interrupted", dag_key="doc-p-reuse01",
+                                              worker="alice", kind=TaskKind.PLAN)
+
+    assert main(["plan", "resume", "--plan-id", "p-reuse01", "--name", "demo-doc-reuse", "--doc", "docs/design.md"]) == exit_codes.OK
+
+    assert doc_source(world, "p-reuse01").id == unfinished.id
+    assert doc_source(world, "p-reuse01").deliverable == "# Current design"
 
 
 @pytest.mark.parametrize(("how", "flags", "config"), [("flag", ("--no-acceptance",), None), ("config", (), "workflow.acceptance_doc")])
@@ -408,9 +469,12 @@ def test_a_resumed_doc_pipeline_reuses_the_acceptance_issue_and_keeps_a_large_ac
     decompose_item = world.store.create_work_item(world.store.config.workspace_id, "demo-doc-resume 拆解", "oversized old body",
                                                   dag_key="decompose-p-doc1234", worker="bob", kind=TaskKind.DECOMPOSE)
 
-    def no_lookup(*_a, **_k):
-        raise AssertionError("exact recovery IDs must bypass dag-key list lookup")
-    monkeypatch.setattr("omac.pipeline.plan._find_by_dag_key", no_lookup)
+    real_lookup = plan_module._find_by_dag_key
+
+    def doc_source_lookup_only(ctx, kind, dag_key):
+        assert dag_key == "doc-p-doc1234", "exact recovery IDs must bypass the stage's dag-key list lookup"
+        return real_lookup(ctx, kind, dag_key)
+    monkeypatch.setattr(plan_module, "_find_by_dag_key", doc_source_lookup_only)
 
     assert main(["plan", "resume", "--plan-id", "p-doc1234", "--name", "demo-doc-resume", "--doc", "docs", "--restart-active",
                  "--acceptance-issue-id", acceptance_item.id, "--decompose-issue-id", decompose_item.id]) == exit_codes.OK
@@ -423,6 +487,7 @@ def test_a_resumed_doc_pipeline_reuses_the_acceptance_issue_and_keeps_a_large_ac
     reference = next(ref for ref in refreshed.source_refs if ref.get("label") == "acceptance")
     assert reference["issue_id"] == acceptance_item.id and reference["content_externalized"] is True
     assert [i for i in kinds(world, TaskKind.PLAN) if i.dag_key == "plan-p-doc1234"] == []
+    assert doc_source(world, "p-doc1234").id == next(ref for ref in refreshed.source_refs if ref.get("label") == "plan")["issue_id"]
 
 
 def test_a_resume_with_a_stalled_review_restarts_only_the_reviewer(world, repo):

@@ -1,8 +1,9 @@
 """plan create 流水线编排(§7.2):设计方案→验收文档→拆解,三阶段全部经 tasks.run_task。
 
 双模式一条流水线:
-  --doc 给了 → 跳过 planner 设计环节,直接进验收文档 + 拆解；目录输入会
-                形成通用设计源清单,由 Agent 按仓库规则和内容读取完整文档集
+  --doc 给了 → 跳过 planner 设计环节,由 OMAC 发布承载文档的来源 issue(deliverable 附件),
+                再进验收文档 + 拆解；目录输入会形成通用设计源清单,由 Agent 按仓库规则
+                和内容读取完整文档集
   没给     → planner 从零编写设计方案,评审通过后继续全程内置 review 门(--no-review 一刀切跳过,--no-acceptance 跳过验收文档);
 每个 LLM 环节修订有界(读 config.retry.review,缺省 ≤3),耗尽 → NeedsDecision(exit 20)。
 每个 phase 一条 issue,产出 → (lint 机器门)→ 评审 → 回退修订都在同一条 issue 上。
@@ -56,7 +57,9 @@ from .tasks import (
 )
 from .apply import Ports, apply, apply_one
 from .decide_transitions import rework_to_producer
-from .decide_effects import CancelRun, ClearAssignment, UpdateMetadata, UpdateStatus
+from .decide_effects import (
+    CancelRun, ClearAssignment, CreateWorkItem, UpdateMetadata, UpdateStatus,
+)
 
 
 @dataclass
@@ -519,6 +522,32 @@ def _plan_stage_payload(ctx: PlanContext, name: str, goal_text: Optional[str],
     return payload
 
 
+def _publish_doc_source(ctx: PlanContext, name: str, plan_id: str, text: str) -> str:
+    """--doc 等价于 planner 阶段已完成：发布承载文档的来源 issue，返回其 id。
+
+    dag_key 用 doc- 前缀：这条 issue 没有 Agent 产出，不能被无 --doc 的 plan resume
+    当作缺项目规范的 plan issue 退回 planner。不指派 Agent，因此不产生 Run。
+    """
+    store = ctx.engine.store
+    dag_key = f"doc-{plan_id}"
+    existing = _find_by_dag_key(ctx, TaskKind.PLAN, dag_key)
+    title = ui(f"{name} design (--doc)", f"{name} 设计方案（--doc）", language=ctx.language)
+    item = store.get_work_item(existing.id) if existing else apply_one(CreateWorkItem({
+        'workspace_id': store.config.workspace_id,
+        'title': title,
+        'description': title,
+        'dag_key': dag_key,
+        'worker': ctx.planner,
+        'kind': TaskKind.PLAN,
+    }), Ports(store=store))
+    # 文档变化时发布新版本；仍绑定旧摘要的下游 work read 会失败关闭。
+    if item.deliverable != text:
+        apply([UpdateMetadata(item.id, {'deliverable': text})], Ports(store=store))
+    if item.status != WorkItemStatus.DONE:
+        apply([UpdateStatus(item.id, WorkItemStatus.DONE)], Ports(store=store))
+    return item.id
+
+
 def _stage_source_refs(plan_item_id: Optional[str],
                        acceptance_item_id: Optional[str] = None) -> List[Dict[str, Any]]:
     refs = []
@@ -672,6 +701,7 @@ def plan_create(
     project_rules_text: Optional[str] = None
     if doc_path is not None:
         plan_text = _read_file(doc_path, language=ctx.language)
+        plan_item_id = _publish_doc_source(ctx, name, plan_id, plan_text)
     else:
         plan_item_id, plan_text, project_rules_text = _run_plan_stage(
             ctx, name, goal_text=goal_text, agents_snapshot=agents_snapshot,
@@ -721,7 +751,9 @@ def _resume_plan_stage(ctx: PlanContext, *, plan_key: str, name: Optional[str],
             raise ValidationError(ui(
                 "plan resume --doc requires --name because no plan issue exists",
                 "plan resume --doc 需要同时提供 --name,因为该流水线没有 plan issue"))
-        return name, None, _read_file(doc_path, language=ctx.language), None
+        plan_text = _read_file(doc_path, language=ctx.language)
+        source_id = _publish_doc_source(ctx, name, plan_id_from_dag_key(plan_key), plan_text)
+        return name, source_id, plan_text, None
     store = ctx.engine.store
     plan_item = _require_by_dag_key(ctx, TaskKind.PLAN, plan_key)
     if not plan_item.project_rules:
