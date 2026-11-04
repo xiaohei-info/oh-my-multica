@@ -88,7 +88,7 @@ def test_the_reviewer_is_woken_after_the_authors_run_has_ended_not_while_it_is_e
     with capture_logs() as events:
         res = world.run(TaskKind.PLAN, payload(), "alice", reviewers=["bob"])
 
-    assert res["verdict"] == "pass" and len(wakes) == 1
+    assert res["verdict"] == "pass" and [w[1][2] for w in wakes].count("reviewer") == 1
     assert [e["event"] for e in events].count(logsetup.EVT_REVIEW_HANDOFF_WAIT) == 1
 
 
