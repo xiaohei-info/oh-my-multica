@@ -8,6 +8,15 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [2.0.2] — 2026-11-04
+
+- Fix: a Reviewer handoff no longer fails while the author's Run is still ending. A submit lands before its Run ends, so
+  `omac plan create` / `plan resume` stopped with "still waiting for the prior direct Run to finish". The plan pipeline
+  now waits at its usual poll interval until that Run has ended, and `dag run` / `dag tick` retry on a later tick without
+  blocking the node or spending a retry budget. Nothing is assigned until then.
+- Fix: `omac plan resume --doc` without `--name` takes the name from the `doc-<plan_id>` source issue, and only asks for
+  `--name` when that issue does not exist.
+
 ## [2.0.1] — 2026-11-04
 
 - Fix: `omac plan create --doc` no longer fails on a design source over 64 KiB. OMAC now publishes every `--doc` file or

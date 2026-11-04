@@ -79,6 +79,19 @@ def test_handing_over_to_the_reviewer_posts_no_trigger_comment(world):
     assert handoff_comments(world, res["item_id"]) == []
 
 
+def test_the_reviewer_is_woken_after_the_authors_run_has_ended_not_while_it_is_ending(world):
+    # A real author submits and its Run goes on for longer than the wake's own short observation.
+    world.kit.stack.set_scenario("alice", [[world.plan(), {"hang": 5}]])
+    world.review("pass")
+    wakes = world.kit.record(world.kit.runtime, "wake")
+
+    with capture_logs() as events:
+        res = world.run(TaskKind.PLAN, payload(), "alice", reviewers=["bob"])
+
+    assert res["verdict"] == "pass" and len(wakes) == 1
+    assert [e["event"] for e in events].count(logsetup.EVT_REVIEW_HANDOFF_WAIT) == 1
+
+
 def test_a_changed_worker_follow_up_after_pass_with_nits_is_reviewed_again(world):
     world.author(world.plan("计划正文-v1"), world.plan("计划正文-v2"))
     world.review("pass-with-nits", "pass")

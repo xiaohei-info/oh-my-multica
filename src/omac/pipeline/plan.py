@@ -459,7 +459,7 @@ def _unstarted_stage_snapshot(
 
 def _name_from_plan_issue(item: WorkItem) -> str:
     title = re.sub(r"^(\[DAG:[^\]]+\]\s*)+", "", item.title or "").strip()
-    for suffix in (" design", " 设计方案"):
+    for suffix in (" design (--doc)", " 设计方案（--doc）", " design", " 设计方案"):
         if title.endswith(suffix):
             title = title[:-len(suffix)].strip()
             break
@@ -747,12 +747,16 @@ def _resume_plan_stage(ctx: PlanContext, *, plan_key: str, name: Optional[str],
                        doc_path: Optional[str], agents_snapshot, reviewers, poll_cb):
     """续跑 phase 1。返回 (resolved_name, plan_item_id, plan_text, project_rules_text)。"""
     if doc_path is not None:
+        plan_id = plan_id_from_dag_key(plan_key)
+        source = None if name else _find_by_dag_key(ctx, TaskKind.PLAN, f"doc-{plan_id}")
+        if source is not None:
+            name = _name_from_plan_issue(source)
         if not name:
             raise ValidationError(ui(
-                "plan resume --doc requires --name because no plan issue exists",
-                "plan resume --doc 需要同时提供 --name,因为该流水线没有 plan issue"))
+                f"plan resume --doc requires --name: no source issue doc-{plan_id} exists to take it from",
+                f"plan resume --doc 需要 --name:不存在可推断名字的来源 issue doc-{plan_id}"))
         plan_text = _read_file(doc_path, language=ctx.language)
-        source_id = _publish_doc_source(ctx, name, plan_id_from_dag_key(plan_key), plan_text)
+        source_id = _publish_doc_source(ctx, name, plan_id, plan_text)
         return name, source_id, plan_text, None
     store = ctx.engine.store
     plan_item = _require_by_dag_key(ctx, TaskKind.PLAN, plan_key)

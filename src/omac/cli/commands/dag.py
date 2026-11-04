@@ -61,7 +61,7 @@ DESCRIPTION = """manifest DAG 的检查、摘要与确定性执行。
 进度事件(走 stderr,不污染 stdout 数据线):默认人类文本,--json-logs /
 --log-format json 出 JSON-lines 供上层机器/CI 解析(也可设 OMAC_LOG_FORMAT 环境变量)。
 事件清单:dispatch / review_dispatch / verdict / revision(gate:worker|ci|review|guard)
-/ node_done / node_failed / human_gate_wait / cascade_blocked / unblock / converged
+/ node_done / node_failed / human_gate_wait / review_handoff_wait / cascade_blocked / unblock / converged
 / needs_decision。
 
 硬约束:

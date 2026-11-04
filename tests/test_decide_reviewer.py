@@ -10,7 +10,7 @@ from omac.core.taskmeta import (
 from omac.core.workitem import AgentRunObservation
 from omac.pipeline.decide_reviewer import (
     BaselineAction as B, BaselineObservation, DispatchBaselineObservation, NoSubmitAction as N, RunAction as A, RunObservation, decide_baseline,
-    decide_dispatch_baseline, decide_no_submit, decide_reviewer_run, no_submit_grace,
+    decide_dispatch_baseline, decide_no_submit, decide_reviewer_run, no_submit_grace, prior_run_active,
 )
 from omac.pipeline.decide_runs import observe_direct_run_attempt
 
@@ -251,3 +251,19 @@ def test_comment_runs_and_other_agents_failures_never_count_for_the_reviewer():
     comment_run = replace(run("run-comment", "failed", created="2026-08-01T01:02:00Z",
                               error="Our servers are currently overloaded"), kind="comment")
     assert decide([history, other_agent, comment_run], baseline_ids=("run-history",)).action is A.WAIT
+
+
+@pytest.mark.parametrize("kind,status,agent,expected", [
+    ("direct", "running", "worker", True),
+    ("direct", "queued", "worker", True),
+    ("direct", "completed", "worker", False),
+    ("direct", "running", "reviewer", False),   # the Reviewer's own Run is the wake's business
+    ("comment", "running", "worker", False),
+])
+def test_only_another_agents_unfinished_direct_run_holds_the_reviewer_back(kind, status, agent, expected):
+    run = AgentRunObservation(id="r", kind=kind, status=status, agent_id=agent)
+    assert prior_run_active([run], "reviewer") is expected
+
+
+def test_no_runs_hold_nothing_back():
+    assert prior_run_active([], "reviewer") is False

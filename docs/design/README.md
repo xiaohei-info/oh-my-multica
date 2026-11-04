@@ -190,6 +190,11 @@ delivery only if the Run, the attachment and the pull-request head line up (`del
 controller). The Reviewer is dispatched against a subject digest; a verdict applies to that subject only. A rejected
 delivery returns to the Worker within the review budget and must move the pull-request head.
 
+An author submits before its Run ends, so a Reviewer dispatch first observes the Runs: while another agent's direct Run is
+active nothing is assigned, the plan pipeline waits at its poll interval and the Loop retries on a later tick. That wait
+is neither an error nor a budget, and it lasts as long as the Run does. The adapter's own check in `wake` remains for a Run
+that appears after this observation.
+
 ### 7.5 Dependencies and abandonment
 
 A node is ready when every blocker is `done` or `abandoned`. `node abandon` turns a blocked node into `abandoned` and
