@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
-from typing import Tuple
+from typing import Iterable, Tuple
 
 from ..core.taskmeta import REVIEWER_RUN_BASELINE_SCHEMA, DeliveryIdentity, ReviewerRunBaseline
 from ..core.workitem import AgentRunObservation
@@ -19,6 +19,11 @@ from .decide_runs import (
 )
 
 NO_SUBMIT_GRACE_SECONDS_DEFAULT = 30
+
+
+def prior_run_active(runs: Iterable[AgentRunObservation], reviewer_id: str | None) -> bool:
+    """Another agent's direct Run has not ended: normal right after a submit, so the handoff waits instead of failing."""
+    return any(run.kind == "direct" and run.active and run.agent_id != reviewer_id for run in runs)
 
 
 # ---- which baseline binds the Reviewer Run -------------------------------------------------------------------

@@ -94,7 +94,7 @@ from .decide_recovery import (
 )
 from .decide_reviewer import (
     BaselineAction, BaselineObservation, DispatchBaselineObservation, NoSubmitAction, RunAction, RunObservation, decide_baseline,
-    decide_dispatch_baseline, decide_no_submit, decide_reviewer_run, no_submit_grace,
+    decide_dispatch_baseline, decide_no_submit, decide_reviewer_run, no_submit_grace, prior_run_active,
 )
 from .decide_runs import (
     foreign_unbaselined_runs, is_active_formal_run,
@@ -750,6 +750,8 @@ def _resume_reviewer_run(
     if not node.reviewer:
         return False
     item_id = node.work_item_id
+    if prior_run_active(runtime.list_runs(item_id), store.resolve_agent_id(node.reviewer)):
+        return False    # the next tick observes again
     if manifest is not None and key is not None:
         if _guard_reviewer_dispatch_control(
             store, manifest, key, item_id) is not None:
@@ -1306,6 +1308,12 @@ def _dispatch_prepared_reviewer(store, runtime, code_host, manifest, key, node, 
         or (current.reviewer, current.platform_assignee_id) != assignment
     ):
         raise PlatformError("Reviewer source or Run baseline changed before dispatch")
+    if prior_run_active(runtime.list_runs(item_id), baseline.target_agent_id):
+        if any(assignment):
+            # The next tick's Run observation only re-dispatches a prepared review that nobody is assigned to.
+            apply([ClearAssignment(item_id)], Ports(store=store))
+        log.info(logsetup.EVT_REVIEW_HANDOFF_WAIT, kind=_DAG_KIND, node=key, id=item_id, reviewer=node.reviewer)
+        return False
     if not apply_one(DispatchReviewer(item_id, node.reviewer), Ports(store=store, runtime=runtime)):
         _guard_reviewer_dispatch_control(store, manifest, key, item_id)
         return False
@@ -3441,6 +3449,8 @@ def _observe_reviewer_run(c: _Collect, n: _Node) -> bool:
     if dispatch_block is not None:
         c.failures[key] = dispatch_block
         return True
+    if prior_run_active(c.runtime.list_runs(node.work_item_id), reviewer_id):
+        return True     # the budget is not touched: the next tick decides again
     retry_error = _retry_reviewer_attempt(
         c.store, c.runtime, node, n.item, baseline,
         manifest=c.manifest, key=key)

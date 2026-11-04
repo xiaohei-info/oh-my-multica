@@ -39,6 +39,7 @@ from .dispatch import (
     normalize_source_refs, render_issue_body, reviewer_dispatch_stopped,
 )
 from .apply import Ports, apply, apply_one
+from .decide_reviewer import prior_run_active
 from .decide_transitions import block_in_phase, block_if_needed
 from .decide_task import (
     Fact, Stage, TERMINAL, TaskObs, decide_task_step, plan_machine_feedback,
@@ -1726,10 +1727,23 @@ class _TaskRun:
             subject_digest=self.subject_digest, feedback=feedback,
             feedback_summary=machine_feedback_summary(self.item_id, feedback))
 
+    def _wait_for_prior_runs(self) -> None:
+        """The producer's Run ends some time after its submit; no end is promised here beyond the Run's own."""
+        reviewer_id = self.store.resolve_agent_id(self.reviewer)
+        waiting = False
+        while prior_run_active(self.runtime.list_runs(self.item_id), reviewer_id):
+            if not waiting:
+                log.info(logsetup.EVT_REVIEW_HANDOFF_WAIT, kind=self.kind.value, id=self.item_id,
+                         reviewer=self.reviewer)
+                waiting = True
+            self.poll()
+            _raise_if_reviewer_dispatch_stopped(self.store, self.item_id, self.kind)
+
     def _at_review_dispatch(self):
         _raise_if_reviewer_dispatch_stopped(self.store, self.item_id, self.kind)
         reviewer_baseline = None
         if self.runtime.capabilities.stable_direct_run_identity:
+            self._wait_for_prior_runs()
             reviewer_baseline = {
                 run.id for run in self.runtime.list_runs(self.item_id) if run.kind == "direct"
             }

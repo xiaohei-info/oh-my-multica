@@ -65,7 +65,11 @@ class AgentRuntime(ABC):
     def dispatch_reviewer(
         self, store: "WorkItemStore", item_id: str, agent: str, *, admission=None,
     ) -> bool:
-        """Assign and wake one Reviewer through the guarded interface seam."""
+        """Assign and wake one Reviewer through the guarded interface seam.
+
+        The caller waits until other agents' Runs have ended (``decide_reviewer.prior_run_active``): an adapter's
+        ``wake`` may refuse while one is active, and that is then a real failure, not the normal wait.
+        """
         with store.reviewer_dispatch_lock(item_id):
             if admission is None:
                 if not store.assign_reviewer(item_id, agent):

@@ -341,6 +341,26 @@ def test_a_large_design_source_stays_on_its_source_issue_and_stages_read_it_thro
     assert output.read_text(encoding="utf-8") == source.deliverable
 
 
+def test_a_doc_resume_without_a_name_takes_it_from_the_source_issue(world, repo):
+    docs_in_repo(repo)
+    script(world, plan=None)
+    world.store.create_work_item(world.store.config.workspace_id, "demo-doc-named 设计方案（--doc）", "interrupted",
+                                 dag_key="doc-p-named01", worker="alice", kind=TaskKind.PLAN)
+
+    assert main(["plan", "resume", "--plan-id", "p-named01", "--doc", "docs/design.md"]) == exit_codes.OK
+
+    assert (repo.work / ".omac" / "demo-doc-named.yaml").exists()
+
+
+def test_a_doc_resume_without_a_name_or_a_source_issue_asks_for_the_name(world, repo, capsys):
+    docs_in_repo(repo)
+    script(world, plan=None)
+
+    assert main(["plan", "resume", "--plan-id", "p-unnamed1", "--doc", "docs/design.md"]) == exit_codes.VALIDATION
+
+    assert "--name" in capsys.readouterr().err
+
+
 def test_a_resume_completes_a_doc_source_issue_left_unfinished_without_creating_a_second(world, repo):
     docs_in_repo(repo)
     script(world, plan=None)

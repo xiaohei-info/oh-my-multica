@@ -10,7 +10,7 @@ from _support.loopkit import HANG, contract
 from _support.rework import delayed_verdict
 from omac.core.manifest import load_manifest
 from omac.core.taskmeta import TaskPhase
-from omac.core.workitem import WorkItemStatus
+from omac.core.workitem import AgentRunObservation, WorkItemStatus
 from omac.errors import PlatformError, ValidationError
 from omac.pipeline import loop
 
@@ -163,6 +163,70 @@ def test_a_silent_assignment_defers_the_run_until_wake_and_a_second_wake_adds_no
 
     kit.runtime.wake(item.id, "bob", "reviewer")
     assert [r.id for r in kit.reviewer_runs(item.id)] == [woken[0].id]
+
+
+def prior_run_still_ending(kit):
+    """Another agent's direct Run stays listed as active until the returned callable ends it."""
+    prior = AgentRunObservation(id="prior-run", kind="direct", status="running", agent_id="prior-agent",
+                                created_at="2026-01-01T00:00:00Z", updated_at="2026-01-01T00:00:00Z")
+    active, real = [prior], kit.runtime.list_runs
+    kit.monkeypatch.setattr(kit.runtime, "list_runs", lambda item_id: [*real(item_id), *active])
+    return active.clear
+
+
+def test_a_reviewer_handoff_waits_over_ticks_for_the_prior_run_without_blocking_the_node(kit):
+    manifest, path, item = kit.in_review()
+    prepared(kit, manifest, path, item, reviewer_run_baseline={})
+    runs_before = len(kit.reviewer_runs(item.id))
+    end_prior_run = prior_run_still_ending(kit)
+    wakes = kit.record(kit.runtime, "wake")
+
+    for _tick in range(2):
+        assert kit.collect(manifest, path) == {}
+        waiting = kit.store.get_work_item(item.id)
+        assert wakes == [] and manifest.nodes["a"].status == "in_review"
+        assert waiting.status is WorkItemStatus.IN_REVIEW and not waiting.reviewer and not waiting.platform_assignee_id
+
+    end_prior_run()
+    assert kit.collect(manifest, path) == {}
+    assert len(wakes) == 1 and len(kit.reviewer_runs(item.id)) == runs_before + 1
+    assert kit.store.get_work_item(item.id).reviewer == "bob"
+
+
+def test_a_handoff_that_finds_a_reviewer_assigned_clears_it_so_a_later_tick_can_dispatch(kit):
+    manifest, path, item = kit.in_review()
+    prepared(kit, manifest, path, item, reviewer_run_baseline={})
+    kit.store.assign_work_item(item.id, "bob", "reviewer", start_run=False)
+    end_prior_run = prior_run_still_ending(kit)
+
+    assert dispatch(kit, manifest) is False
+    assert not kit.store.get_work_item(item.id).platform_assignee_id
+
+    end_prior_run()
+    assert dispatch(kit, manifest) is True
+
+
+def test_resuming_a_reviewer_waits_for_the_prior_run_and_writes_nothing(kit):
+    manifest, path, item = kit.in_review()
+    prior_run_still_ending(kit)
+    kit.forbid(kit.store, "assign_work_item")
+    kit.forbid(kit.runtime, "wake")
+
+    assert loop._resume_reviewer_run(kit.store, kit.runtime, manifest.nodes["a"]) is False
+
+
+def test_a_no_submit_retry_waits_for_the_prior_run_without_spending_the_budget(kit):
+    manifest, path, item = kit.in_review(IDLE, *HANG)
+    kit.wait_runs_ended(item.id)
+    end_prior_run = prior_run_still_ending(kit)
+    wakes = kit.record(kit.runtime, "wake")
+
+    assert kit.collect(manifest, path) == {}
+    assert wakes == [] and kit.store.get_work_item(item.id).reviewer_run_baseline.attempt == 1
+
+    end_prior_run()
+    assert kit.collect(manifest, path) == {}
+    assert len(wakes) == 1 and kit.store.get_work_item(item.id).reviewer_run_baseline.attempt == 2
 
 
 def test_resuming_a_reviewer_assigns_without_resuming_the_old_session(kit):
