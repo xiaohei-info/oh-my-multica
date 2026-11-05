@@ -27,3 +27,19 @@ def test_failure_cascade_preserves_merged_descendant_and_blocks_unfinished_peer(
     assert manifest.nodes["merged-descendant"].merged is True
     assert manifest.nodes["unfinished-descendant"].status == "blocked"
     assert newly_blocked == {"unfinished-descendant"}
+
+
+def test_failure_cascade_leaves_a_branch_that_does_not_depend_on_the_failure_alone(tmp_path):
+    manifest = Manifest(meta={}, nodes={
+        "failed-upstream": Node(id="failed-upstream", worker="alice", status="blocked"),
+        "dependent": Node(id="dependent", worker="bob", blocked_by=["failed-upstream"], status="todo"),
+        "other-root": Node(id="other-root", worker="bob", status="todo"),
+        "other-child": Node(id="other-child", worker="bob", blocked_by=["other-root"], status="todo"),
+    })
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+
+    newly_blocked = loop._mark_downstream_blocked(manifest, path, {"failed-upstream"})
+
+    assert newly_blocked == {"dependent"}
+    assert manifest.nodes["other-root"].status == manifest.nodes["other-child"].status == "todo"

@@ -13,7 +13,7 @@ import yaml
 
 import omac.cli.commands.node as node_cmd
 from _support.loopkit import HANG
-from _support.rework import causal_intent, delayed_verdict, nits_review, rejected
+from _support.rework import NITS_DECIDE, causal_intent, delayed_verdict, nits_review, rejected
 from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.core.manifest import Contract, load_manifest
@@ -26,7 +26,7 @@ from omac.pipeline.decide_recovery import reviewer_recovery_decision
 
 def test_accept_nits_waits_for_a_quiet_reviewer_keeps_its_facts_and_a_retry_clears_the_acceptance(kit, node):
     manifest, path, item = nits_review(kit)
-    assert kit.tick(manifest, path).state == "needs_decision"
+    assert kit.tick(manifest, path, config=NITS_DECIDE).state == "needs_decision"
     reviewed = kit.store.get_work_item(item.id)
     kit.store.assign_work_item(item.id, "bob", "reviewer")                  # a Run of the Reviewer starts and stays active
     kit.wait_for(lambda: any(run.active for run in kit.runtime.list_runs(item.id)), what="the active Run")

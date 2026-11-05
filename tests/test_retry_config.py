@@ -36,6 +36,20 @@ def test_resolve_retry_merges_over_the_defaults(config, expected):
     assert config_mod.resolve_retry(config) == expected
 
 
+@pytest.mark.parametrize(("config", "expected"), [
+    ({}, "accept"), ({"review": {}}, "accept"), ({"review": {"node_nits": "decide"}}, "decide"),
+    ({"review": {"node_nits": "accept"}}, "accept"),
+])
+def test_review_node_nits_defaults_to_accept(config, expected):
+    assert config_mod.resolve_node_nits(config) == expected
+
+
+@pytest.mark.parametrize("review", [{"node_nits": "maybe"}, {"node_nits": True}, {"node_nits": None}, "accept"])
+def test_review_node_nits_rejects_anything_but_accept_or_decide(review):
+    with pytest.raises(ValidationError, match="review"):
+        config_mod.resolve_node_nits({"review": review})
+
+
 @pytest.mark.parametrize("retry", [{"ci": -1}, {"review": "abc"}])
 def test_resolve_retry_rejects_negative_and_non_integer_values(retry):
     with pytest.raises(ValidationError):

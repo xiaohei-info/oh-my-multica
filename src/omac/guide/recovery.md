@@ -27,8 +27,11 @@
 
 ### `pass-with-nits` 接受决策
 
-develop 节点收到 `pass-with-nits` 后会停在 blocked，等待调用者决策；OMAC 不会为未变化的
-verification 自动再次派发 Worker。检查 sealed delivery 和 review report 后选择：
+DAG develop 节点收到 `pass-with-nits` 默认（`review.node_nits: accept`）视为通过：照常合并，nits 原文留在评审报告和
+节点证据里（`omac node show <manifest> <node_key>` 的 `evidence.review_verdict` / `review_report.nits`），不阻塞下游。
+`.omac/config.yaml` 设 `review.node_nits: decide`（或 `omac config set review.node_nits decide`）恢复旧行为：
+节点停在 blocked，等待调用者决策；OMAC 不会为未变化的 verification 自动再次派发 Worker。该配置不影响 plan /
+acceptance / decompose 阶段与 amendment（它们始终等人）。`decide` 下检查 sealed delivery 和 review report 后选择：
 
 ```bash
 omac node accept-nits <manifest> <node_key>

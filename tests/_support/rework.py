@@ -97,9 +97,9 @@ def with_handoff_round(kit, item, round_index, **fields):
     return kit.store.get_work_item(item.id).worker_handoff
 
 
-def nits_review(kit, *, bounces=0, continuation=None):
+def nits_review(kit, *, bounces=0, continuation=None, others=()):
     """Node `a` reviewed with pass-with-nits as its ``bounces + 1``-th review; the Loop has not collected the verdict."""
-    manifest, path, item = kit.in_review([{"hang": 4}, kit.stack.review("pass-with-nits")], *HANG)
+    manifest, path, item = kit.in_review([{"hang": 4}, kit.stack.review("pass-with-nits")], *HANG, others=others)
     kit.wait_for(lambda: kit.store.get_work_item(item.id).review_verdict == "pass-with-nits", what="the verdict")
     kit.wait_runs_ended(item.id)
     if bounces:
@@ -110,6 +110,8 @@ def nits_review(kit, *, bounces=0, continuation=None):
                                             reviewer_run_baseline=replace(current.reviewer_run_baseline, subject_digest=subject))
     return manifest, path, item
 
+
+NITS_DECIDE = {"review": {"node_nits": "decide"}}   # config that restores the stop on a node's pass-with-nits
 
 CONTINUATION = {"schema": "omac.review-continuation/v1", "stage": "develop", "mode": "producer-rework", "authorized_through_round": 10,
                 "decision_count": 1, "reason": "operator approved one additional review round"}

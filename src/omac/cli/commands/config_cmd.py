@@ -107,6 +107,10 @@ def _validate_set_value(key: str, value):
                 f"{key} 不能为负数(非法值 {value});需 ≥ 0"))
         return
 
+    if key == "review.node_nits":
+        config_mod.validate_node_nits(value)
+        return
+
     if key.startswith("reconcile."):
         sub = key.split(".", 1)[1]
         if sub not in config_mod.DEFAULT_RECONCILE:

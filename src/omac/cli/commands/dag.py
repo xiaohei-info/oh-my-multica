@@ -11,7 +11,7 @@ from .. import exit_codes
 from ..output import add_output_flag, hint, print_json, print_table
 from ...core.config import (
     CONFIG_DIR, CONFIG_PATH, DEFAULTS,
-    load_config, resolve_no_submit_runs,
+    load_config, resolve_no_submit_runs, resolve_node_nits,
     resolve_reconcile, resolve_retry,
 )
 from ...core.amendment import ensure_amendment_apply_complete
@@ -749,6 +749,7 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
     retry_limits = resolve_retry(config)
     # fail-closed:非法 retry.no_submit_runs 在进 tick 前报错(exit 5)
     resolve_no_submit_runs(config)
+    resolve_node_nits(config)
     _validate_execution_invariants(manifest, args.manifest)
     max_parallel = _default_max_parallel(args)
     max_rounds = getattr(args, "max_rounds", None)

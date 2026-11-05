@@ -109,7 +109,8 @@ Commands take `--output json|table`; agents and the web use JSON. `dag run --out
 (required: every issue belongs to a project), `roles` (planner, orchestrator, workers, reviewers, acceptor),
 `defaults` (`max_parallel`, `poll_interval`, `coverage_gate`), `workflow` (human-in-the-loop, review, acceptance doc),
 `ci.check_command`, `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
-`retry` (`worker|ci|review|merge`, `no_submit_runs`), `reconcile`, `acceptance.max_rounds`. `omac init` writes it;
+`retry` (`worker|ci|review|merge`, `no_submit_runs`), `review.node_nits` (`accept` default | `decide`: whether a develop
+node's `pass-with-nits` is a pass or an exit-20 stop; plan stages and amendments always stop), `reconcile`, `acceptance.max_rounds`. `omac init` writes it;
 the engine prompt defaults to `multica`.
 
 ## 7. The Loop
@@ -133,7 +134,8 @@ it must be committed and pushed. `plan resume` never rewrites a manifest that al
 Every stop of a stage is built by `decide_stop.build_stop`, so the persisted decision and the exit-20 report are one dict.
 `STOP_RELEASES` says which command releases which stop, `render_release` spells those commands, and `decide_release`
 decides whether `plan continue-review` / `plan accept-nits` may act and what they write. `pass-with-nits` stops a stage
-for a person, as it does a develop node (§7.5): `accept-nits` finishes the stage on the reviewed delivery, `continue-review`
+for a person, unlike a develop node (a develop node's `pass-with-nits` is a pass under the default `review.node_nits: accept`,
+decided once in `decide_review.decide_verdict_path`; `decide` stops it for `node accept-nits`): `accept-nits` finishes the stage on the reviewed delivery, `continue-review`
 sends the nits back as a counted round. A resumed issue is classified by `decide_stop.classify_resume`.
 
 The human gate is such a stop too (`confirmation-required`): after a Reviewer pass the stage ends with exit 20 and the
@@ -166,6 +168,9 @@ reconcile → result collection (collect_results) → evidence / CI / merge gate
   is never followed by a second merge request; after an unknown outcome the node stops (exit 20) and `omac node retry`
   is the explicit decision. Success is concluded only from the *observed* pull request, never from the command's exit code.
 * **ready nodes** (就绪节点) are nodes whose blockers are `done` or `abandoned`.
+* **A stopped node blocks only what depends on it.** `loop._mark_downstream_blocked` marks the transitive downstream
+  (`graph.downstream_of`) of needs-decision nodes `blocked`; independent branches keep being dispatched, and the tick
+  reports `needs_decision` (exit 20) only when no node is running.
 
 #### 7.3.1 Observation → Plan → apply
 
@@ -227,7 +232,7 @@ a later tick; otherwise a Worker that redelivers first gets a review that starts
 ### 7.5 Dependencies and abandonment
 
 A node is ready when every blocker is `done` or `abandoned`. `node abandon` turns a blocked node into `abandoned` and
-unlocks its downstream. `node accept-nits|accept|retry` are the other explicit decisions.
+unlocks its downstream. `node accept-nits|accept|retry` are the other explicit decisions (`accept-nits` is needed only under `review.node_nits: decide`).
 
 ### 7.6 Acceptance and amendments
 

@@ -8,6 +8,20 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-11-05
+
+- Behavior change: a DAG develop node whose Reviewer returns a clean `pass-with-nits` (no blockers, valid evidence) is now a
+  pass: it goes on to `merging` and `done`, its nits stay verbatim in the review report and the node evidence
+  (`omac node show`), and no decision is requested. Before, the node was blocked, every downstream node was cascaded to
+  `blocked`, and `dag run` exited 20 until `omac node accept-nits`. The decision is made once, in
+  `decide_review.decide_verdict_path`.
+- New config: `review.node_nits: accept|decide` (default `accept`; `omac config set review.node_nits decide`). `decide`
+  restores the earlier stop. An invalid value is exit 5 before the first tick.
+- Unchanged: plan, acceptance and decompose stages and amendments still stop on `pass-with-nits` (`plan accept-nits` /
+  `plan continue-review`, `dag amend accept-nits`); reject, exhausted budgets, review-convergence and blockers still stop.
+- Documented: a stopped node blocks only its transitive downstream; independent branches keep advancing and exit 20 is
+  returned only when nothing is running (`loop._mark_downstream_blocked`, `decide_loop.decide_tick_state`). Regression-tested.
+
 ## [2.2.0] — 2026-11-05
 
 - Behavior change: the plan pipeline's human gate (`workflow.human_in_loop`) is a stop, not a wait. After a Reviewer pass,
