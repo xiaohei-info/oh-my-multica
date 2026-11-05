@@ -4,7 +4,8 @@ No I/O and no platform access (enforced by tests/test_architecture.py). ``tasks.
 the handler observes (reads the platform, waits for a Run, calls the producer) and names what it saw as a ``Fact``.
 ``decide_task_step(stage, fact, obs)`` looks the pair up in ``TRANSITIONS`` and returns the next stage plus the effects
 to apply before entering it. A pair that is not in the table raises: every reachable combination is a row, and
-``tests/test_decide_task.py`` walks every row.
+``tests/test_decide_task.py`` walks every row. No stage waits for a person: a human gate is a stop (``STOPPED``) that
+names its release commands, like every other stop.
 
 Observation points between effects are stages of their own. For example a budget stop persists feedback, *then* reads the
 item back (``BLOCK_BUDGET``), *then* blocks it; each arrow is one row, so a restart between any two is a state the table
@@ -41,7 +42,6 @@ class Stage(Enum):
     PRODUCE_REJECT = "produce-reject"      # producer redelivers after a reject
     BLOCK_BUDGET = "block-budget"          # read the item, then project the exhausted budget decision
     FINISH = "finish"                      # settle the issue after a pass
-    FINISH_WAIT = "finish-wait"            # wait for the human confirmation
     STOPPED = "stopped"                    # terminal: the handler raises NeedsDecision
     DONE = "done"                          # terminal: the result is ready
 
@@ -80,9 +80,9 @@ class Fact(Enum):
     REJECT_RETRY = "reject-retry"
     OBSERVED = "observed"
     UNCONFIRMED = "unconfirmed"
-    CONFIRM_PAUSE = "confirm-pause"
-    CONFIRM_WAIT = "confirm-wait"
-    CONFIRMED = "confirmed"
+    CONFIRM_PAUSE = "confirm-pause"        # the caller takes the pending confirmation as the result (amendment)
+    CONFIRMED = "confirmed"                # a person already confirmed the gate
+    CONFIRM_STOP = "confirm-stop"          # the human gate: stop with the commands that confirm or return the stage
 
 
 @dataclass(frozen=True)
@@ -237,8 +237,8 @@ TRANSITIONS: dict[tuple[Stage, Fact], tuple[Stage, Builder]] = {
     (S.BLOCK_BUDGET, F.OBSERVED): _row(S.STOPPED, _project_exhausted_budget),
     (S.FINISH, F.UNCONFIRMED): _row(S.DONE, _finish_unconfirmed),
     (S.FINISH, F.CONFIRM_PAUSE): _row(S.DONE, _finish_confirmation),
-    (S.FINISH, F.CONFIRM_WAIT): _row(S.FINISH_WAIT, _finish_confirmation),
-    (S.FINISH_WAIT, F.CONFIRMED): _row(S.DONE),
+    (S.FINISH, F.CONFIRMED): _row(S.DONE, _finish_confirmation),
+    (S.FINISH, F.CONFIRM_STOP): _row(S.STOPPED, _finish_confirmation),
 }
 TERMINAL = {Stage.STOPPED, Stage.DONE}
 

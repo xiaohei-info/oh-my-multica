@@ -8,6 +8,23 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-11-05
+
+- Behavior change: the plan pipeline's human gate (`workflow.human_in_loop`) is a stop, not a wait. After a Reviewer pass,
+  a plan or acceptance stage ends `plan create` / `plan resume` with exit 20 (`confirmation-required`) instead of polling for
+  hours until the issue is moved to Done. The report carries `next_action` (`omac plan confirm --dag-key <stage-key>`),
+  `alternatives` (the same command with `--reject --reason "<what to change>"`) and `then` (`omac plan resume --plan-id <id>`);
+  the stop is in `STOP_RELEASES`, so the contract test parses and exercises these commands. `plan confirm` no longer makes a
+  waiting process continue: run `plan resume` after it. No other wait on a person remains (the waits left are for Agent Runs).
+- New: `omac plan confirm --reject --reason <text>` returns a stage at the gate to its author. The reason is the author's
+  rework input (`context.machine_feedback`); the Reviewer's budget is not charged.
+- Fix: a replaced `--doc` source (`plan resume --doc`) now reaches the redone stage. The author's issue body carries a
+  source-change section (both revisions and a bounded diff of the source set, with the previous delivery's sha256), and the
+  Reviewer gets a `source-change:plan` obligation, marked `delivery_unchanged: true` when the delivery is byte-identical to the
+  previous one. Before, a redone stage saw only the new source with no sign it had changed, and the Reviewer could not tell an
+  unchanged document from a covered change.
+- Fix: a `--no-review` pipeline with the human gate on can be resumed after the confirmation.
+
 ## [2.1.0] — 2026-11-05
 
 - Behavior change: a plan, acceptance, or decompose review that returns `pass-with-nits` now stops with exit 20

@@ -44,7 +44,7 @@ from ..core.workitem import WorkItem, WorkItemStatus
 from ..errors import ValidationError
 from ..i18n import CN, ui
 from .decide_stop import Release, render_release
-from .plan_source import build_design_source, source_identity
+from .plan_source import build_design_source, source_change, source_identity
 from .stage_release import accept_nits, release_stage
 from .tasks import run_task
 from .apply import Ports, apply, apply_one
@@ -450,7 +450,7 @@ def _run_plan_stage(ctx: PlanContext, name: str, *, goal_text: Optional[str], ag
 def _run_acceptance_stage(
     ctx: PlanContext, name: str, *, plan_text: str, plan_item_id: Optional[str], reviewers,
     poll_cb, dag_key: str, resume_item_id: Optional[str], restart_active: bool = False,
-    refresh_source: bool = False, title: Optional[str] = None,
+    refresh_source: bool = False, title: Optional[str] = None, source_change: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, acceptance_mod.AcceptanceDoc, str]:
     """phase 2:验收文档。返回 (text, doc, item_id);落盘在 _write_plan_outputs。"""
     res = run_task(
@@ -458,7 +458,7 @@ def _run_acceptance_stage(
         TaskKind.ACCEPTANCE,
         {"title": title or ui(
             f"{name} acceptance document", f"{name} 验收文档", language=ctx.language),
-         "source_of_truth": {"plan": plan_text}},
+         "source_of_truth": {"plan": plan_text}, "source_change": source_change},
         ctx.planner,
         reviewers=reviewers,
         max_revisions=ctx.max_revisions,
@@ -479,7 +479,7 @@ def _run_decompose_stage(
     ctx: PlanContext, name: str, *, plan_text: str, acceptance_text: Optional[str],
     acceptance_doc, plan_item_id: Optional[str], acceptance_item_id: Optional[str],
     reviewers, poll_cb, dag_key: str, resume_item_id: Optional[str], restart_active: bool = False,
-    refresh_source: bool = False,
+    refresh_source: bool = False, source_change: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, str]:
     """phase 3:拆解(经 lint 机器门 ≤ max_revisions 轮 + 内置 review)。返回 (manifest_text, item_id)。"""
     inputs = {"plan": plan_text}
@@ -489,7 +489,7 @@ def _run_decompose_stage(
         ctx.engine,
         TaskKind.DECOMPOSE,
         {"title": ui(f"{name} decomposition", f"{name} 拆解", language=ctx.language),
-         "source_of_truth": inputs},
+         "source_of_truth": inputs, "source_change": source_change},
         ctx.orchestrator,
         reviewers=reviewers,
         max_revisions=ctx.max_revisions,
@@ -663,6 +663,7 @@ class _Source:
     text: str
     project_rules: Optional[str] = None
     changed: bool = False       # an explicit --doc replaced the published source
+    change: Optional[Dict[str, Any]] = None     # what it changed (plan_source.source_change), handed to the redone stages
 
 
 def _resume_doc_source(ctx: PlanContext, plan_id: str, doc: Optional[WorkItem], name: Optional[str],
@@ -675,11 +676,13 @@ def _resume_doc_source(ctx: PlanContext, plan_id: str, doc: Optional[WorkItem], 
             f"plan resume --doc requires --name: no source issue doc-{plan_id} exists to take it from",
             f"plan resume --doc 需要 --name:不存在可推断名字的来源 issue doc-{plan_id}"))
     text = doc.deliverable if doc else None
-    changed = False
+    changed, change = False, None
     if doc_path is not None:
         fresh = build_design_source(
             doc_path, engine_type=ctx.engine.store.config.engine_type, language=ctx.language)
         changed = text is not None and source_identity(fresh) != source_identity(text)
+        if changed:
+            change = source_change(text, fresh)
         if text is None or changed:
             text = fresh
     if not text:
@@ -688,7 +691,7 @@ def _resume_doc_source(ctx: PlanContext, plan_id: str, doc: Optional[WorkItem], 
             f"`omac plan resume --plan-id {plan_id} --doc <file-or-directory>` to publish it.",
             f"来源 issue doc-{plan_id} 没有设计文本。请运行 "
             f"`omac plan resume --plan-id {plan_id} --doc <文件或目录>` 发布。"))
-    return _Source(name, _publish_doc_source(ctx, name, plan_id, text), text, changed=changed)
+    return _Source(name, _publish_doc_source(ctx, name, plan_id, text), text, changed=changed, change=change)
 
 
 def _resume_goal_source(ctx: PlanContext, plan_key: str, name: Optional[str], agents_snapshot,
@@ -791,7 +794,7 @@ def plan_resume(
             ctx, source.name, plan_text=source.text, plan_item_id=source.item_id,
             dag_key=make_dag_key(TaskKind.ACCEPTANCE, scope=plan_id_value),
             resume_item_id=acceptance_item.id if acceptance_item else None,
-            restart_active=restart == TaskKind.ACCEPTANCE, refresh_source=refresh,
+            restart_active=restart == TaskKind.ACCEPTANCE, refresh_source=refresh, source_change=source.change,
             title=ui(f"{source.name} acceptance document", f"{source.name} 验收文档", language=ctx.language),
             **stage)
         refresh = refresh and bool(acceptance_item) and acceptance_item.status == WorkItemStatus.DONE
@@ -804,7 +807,7 @@ def plan_resume(
         acceptance_item_id=acceptance_item_id,
         dag_key=make_dag_key(TaskKind.DECOMPOSE, scope=plan_id_value),
         resume_item_id=decompose_item.id if decompose_item else None,
-        restart_active=restart == TaskKind.DECOMPOSE, refresh_source=refresh, **stage)
+        restart_active=restart == TaskKind.DECOMPOSE, refresh_source=refresh, source_change=source.change, **stage)
 
     _write_plan_outputs(
         ctx, plan_id=plan_id_value, name=source.name, manifest_text=manifest_text,

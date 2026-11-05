@@ -124,6 +124,31 @@ def test_build_review_obligations_is_stable_and_contract_aware():
     ]
 
 
+@pytest.mark.parametrize("deliverable,unchanged", [("same text", True), ("revised text", False)])
+def test_a_redone_stage_obliges_the_reviewer_to_check_source_coverage_and_marks_an_unchanged_delivery(deliverable, unchanged):
+    import hashlib
+
+    item = _item()
+    item.deliverable = deliverable
+    item.source_refs = [
+        {"label": "plan", "kind": "plan", "issue_id": "i", "source_changed_from_sha256": "old", "source_sha256": "new",
+         "previous_delivery_sha256": hashlib.sha256(b"same text").hexdigest()},
+        {"label": "acceptance", "kind": "acceptance", "issue_id": "j"}]
+
+    [obligation] = [o for o in build_review_obligations(item) if o["category"] == "source-change"]
+
+    assert obligation["obligation_id"] == "source-change:plan"
+    assert obligation["subject"] == {"changed_from_sha256": "old", "source_sha256": "new", "delivery_unchanged": unchanged}
+    assert obligation["requirement"].startswith("The delivery is byte-identical") == unchanged
+
+
+def test_a_stage_that_was_not_redone_has_no_source_change_obligation():
+    item = _item()
+    item.deliverable, item.source_refs = "text", [{"label": "plan", "kind": "plan", "issue_id": "i"}]
+
+    assert not [o for o in build_review_obligations(item) if o["category"] == "source-change"]
+
+
 def test_amendment_review_requires_disposition_of_compact_before_after_responsibility_matrix():
     manifest = _amendment_manifest()
     item = _amendment_item(manifest)

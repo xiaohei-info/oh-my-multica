@@ -10,11 +10,13 @@ from _support.tasksworld import World, payload, review_report
 from omac.core import logsetup
 from omac.core.amendment import build_reviewed_amendment, historical_work_item_evidence_digest
 from omac.core.manifest import Contract, Manifest, Node
-from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.core.taskmeta import TaskKind, TaskPhase, plan_id_of
 from omac.core.workitem import WorkItemStatus
 from omac.errors import NeedsDecision
+from omac.pipeline.decide_stop import Release
 from omac.pipeline.dispatch import build_show_output
 from omac.pipeline.plan import plan_continue_review
+from omac.pipeline.stage_release import release_stage
 from omac.pipeline.tasks import run_task
 
 
@@ -37,18 +39,6 @@ def authored(world, item):
     world.kit.stack.set_scenario("alice", [[]])
     world.kit.assign(item.id, "alice")
     world.kit.wait_runs_ended(item.id)
-
-
-def human_confirms(world, item_id):
-    """The poll hook of a test that acts as the human: it marks the issue Done once the review has passed."""
-    def poll():
-        import time
-
-        time.sleep(0.1)
-        current = world.store.get_work_item(item_id) if item_id else None
-        if current is not None and current.phase is TaskPhase.CONFIRMATION and current.status is not WorkItemStatus.DONE:
-            world.store.update_status(current.id, WorkItemStatus.DONE)
-    return poll
 
 
 # ---- reviewing --------------------------------------------------------------------------------------------------------------
@@ -226,46 +216,69 @@ def test_a_failed_production_stops_the_task_at_once(world):
 
 # ---- the human gate ---------------------------------------------------------------------------------------------------------
 
-def test_the_human_gate_waits_until_somebody_confirms(world):
+def at_the_gate(world, title, **kwargs):
+    """Run a plan stage with the human gate on until it stops there; returns the report of the stop."""
+    with capture_logs() as events, pytest.raises(NeedsDecision) as raised:
+        world.run(TaskKind.PLAN, payload(title=title), "alice", **kwargs)
+    assert logsetup.EVT_NEEDS_DECISION in [event["event"] for event in events]
+    return raised.value.report
+
+
+def test_the_human_gate_stops_with_the_commands_that_release_it_instead_of_waiting(world):
     world.author(world.plan())
     world.review("pass")
-    polls = []
 
-    def bounded_poll():
-        import time
+    report = at_the_gate(world, "human-gate-stops", reviewers=["bob"], confirm=True)
 
-        time.sleep(0.1)
-        polls.append(1)
-        if len(polls) > 12:
-            raise TimeoutError("not confirmed")
-
-    with capture_logs() as events, pytest.raises(TimeoutError):
-        world.run(TaskKind.PLAN, payload(title="human-gate-waits"), "alice", reviewers=["bob"], confirm=True, poll=bounded_poll)
-
-    assert logsetup.EVT_HUMAN_GATE_WAIT in [event["event"] for event in events]
-
-    item = next(i for i in world.store.list_work_items(world.kit.workspace) if i.title.endswith("human-gate-waits"))
-    assert (item.review_verdict, item.phase.value) == ("pass", "confirmation") and not item.reviewer
+    item = world.store.get_work_item(report["item_id"])
+    assert (item.review_verdict, item.phase.value, item.status) == ("pass", "confirmation", WorkItemStatus.IN_REVIEW) and not item.reviewer
+    assert (report["reason_code"], report["gate"], report["phase"]) == ("confirmation-required", "confirmation", "confirmation")
+    assert report["next_action"] == f"omac plan confirm --dag-key {item.dag_key}"
+    assert report["alternatives"] == [f'omac plan confirm --dag-key {item.dag_key} --reject --reason "<what to change>"']
+    assert report["then"] == f"omac plan resume --plan-id {plan_id_of(item.dag_key)}"
 
 
-def test_a_human_confirmation_moves_a_reviewed_issue_to_done(world):
+def test_a_confirmed_gate_lets_the_same_issue_finish_without_dispatching_anyone(world):
+    kit = world.kit
     world.author(world.plan())
     world.review("pass")
-    hook = []
+    report = at_the_gate(world, "human-confirms", reviewers=["bob"], confirm=True)
+    item = world.store.get_work_item(report["item_id"])
+    assigns = kit.record(kit.store, "assign_work_item")
 
-    def poll():
-        import time
+    # still unconfirmed: resuming stops at the same gate and changes nothing
+    again = at_the_gate(world, "human-confirms", reviewers=["bob"], confirm=True, resume_item_id=item.id)
+    assert again["next_action"] == report["next_action"] and not assigns
 
-        time.sleep(0.1)
-        for item in world.store.list_work_items(world.kit.workspace):
-            if item.title.endswith("human-confirms") and item.phase is TaskPhase.CONFIRMATION and item.status is not WorkItemStatus.DONE:
-                world.store.update_status(item.id, WorkItemStatus.DONE)
-                hook.append(item.id)
+    release_stage(kit.engine, item, Release.CONFIRM, configured_limit=3)
+    res = world.run(TaskKind.PLAN, payload(title="human-confirms"), "alice", reviewers=["bob"], confirm=True, resume_item_id=item.id)
 
-    res = world.run(TaskKind.PLAN, payload(title="human-confirms"), "alice", reviewers=["bob"], confirm=True, poll=poll)
+    done = world.store.get_work_item(res["item_id"])
+    assert res["verdict"] == "pass" and done.status == WorkItemStatus.DONE and (done.review_verdict, done.phase.value) == ("pass", "confirmation")
+    assert not assigns
 
-    item = world.store.get_work_item(res["item_id"])
-    assert res["verdict"] == "pass" and item.status == WorkItemStatus.DONE and (item.review_verdict, item.phase.value) == ("pass", "confirmation")
+
+def test_a_returned_gate_gives_the_author_the_reason_and_is_reviewed_again(world):
+    kit = world.kit
+    world.author(world.plan())
+    world.review("pass")
+    report = at_the_gate(world, "human-returns", reviewers=["bob"], confirm=True)
+    item = world.store.get_work_item(report["item_id"])
+
+    release_stage(kit.engine, item, Release.REJECT_CONFIRMATION, configured_limit=3, reason="cover the new appendix")
+
+    returned = world.store.get_work_item(item.id)
+    assert (returned.status, returned.phase, bool(returned.review_verdict), returned.bounces.review) == (
+        WorkItemStatus.TODO, TaskPhase.AUTHORING, False, 0)                         # a person's decision is not a Reviewer bounce
+    shown = build_show_output(returned, "worker")
+    assert shown["context"]["machine_feedback"]["errors"] == ["cover the new appendix"]
+
+    world.author(world.plan())
+    world.review("pass")
+    gate_again = at_the_gate(world, "human-returns", reviewers=["bob"], confirm=True, resume_item_id=item.id)
+    assert gate_again["next_action"] == report["next_action"]
+    assert world.store.get_work_item(item.id).deliverable and "cover the new appendix" not in (
+        world.store.get_work_item(item.id).review_comment or "")                  # the author's submit consumed the feedback
 
 
 def test_the_confirmation_phase_is_the_last_write_after_the_assignment_is_cleared(world):
@@ -284,15 +297,7 @@ def test_the_confirmation_phase_is_the_last_write_after_the_assignment_is_cleare
     kit.monkeypatch.setattr(kit.store, "update_work_item_metadata", tracking_update)
     kit.monkeypatch.setattr(kit.store, "clear_assignment", lambda item_id: (events.append("clear"), original_clear(item_id))[1])
 
-    def poll():
-        import time
-
-        time.sleep(0.1)
-        for item in world.store.list_work_items(kit.workspace):
-            if item.title.endswith("confirm-last") and item.phase is TaskPhase.CONFIRMATION and item.status is not WorkItemStatus.DONE:
-                world.store.update_status(item.id, WorkItemStatus.DONE)
-
-    world.run(TaskKind.PLAN, payload(title="confirm-last"), "alice", reviewers=["bob"], confirm=True, poll=poll)
+    at_the_gate(world, "confirm-last", reviewers=["bob"], confirm=True)
 
     assert events[-2:] == ["clear", "phase"]
 
@@ -300,15 +305,10 @@ def test_the_confirmation_phase_is_the_last_write_after_the_assignment_is_cleare
 def test_without_reviewers_the_human_confirmation_is_the_end(world):
     world.author(world.plan())
 
-    def poll():
-        import time
-
-        time.sleep(0.1)
-        for item in world.store.list_work_items(world.kit.workspace):
-            if item.title.endswith("human-only") and item.phase is TaskPhase.CONFIRMATION and item.status is not WorkItemStatus.DONE:
-                world.store.update_status(item.id, WorkItemStatus.DONE)
-
-    res = world.run(TaskKind.PLAN, payload(title="human-only"), "alice", confirm=True, poll=poll)
+    report = at_the_gate(world, "human-only", confirm=True)
+    item = world.store.get_work_item(report["item_id"])
+    release_stage(world.kit.engine, item, Release.CONFIRM, configured_limit=3)
+    res = world.run(TaskKind.PLAN, payload(title="human-only"), "alice", confirm=True, resume_item_id=item.id)
 
     assert res["verdict"] == "pass" and world.store.get_work_item(res["item_id"]).status == WorkItemStatus.DONE
 

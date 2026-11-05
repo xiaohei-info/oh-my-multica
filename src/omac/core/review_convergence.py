@@ -826,6 +826,33 @@ def build_review_convergence_decision(
     return decision
 
 
+def source_change_obligations(item: Any) -> list[dict]:
+    """One obligation per design source this stage was redone against: the Reviewer must check the delivery covers it.
+
+    The facts come from the issue's source refs (written when the stage was reopened). A delivery byte-identical to the
+    previous one is marked, so the Reviewer cannot take an unchanged document for a covered change.
+    """
+    digest = hashlib.sha256((getattr(item, "deliverable", None) or "").encode("utf-8")).hexdigest()
+    found = []
+    for ref in getattr(item, "source_refs", None) or []:
+        if not (isinstance(ref, dict) and ref.get("source_changed_from_sha256")):
+            continue
+        unchanged = ref.get("previous_delivery_sha256") == digest
+        found.append({
+            "obligation_id": f"source-change:{ref.get('label') or 'source'}",
+            "category": "source-change",
+            "requirement": (
+                ("The delivery is byte-identical to the previous one although the design source changed. " if unchanged else "")
+                + "The design source this stage was redone against differs from the one the previous delivery "
+                "was written for (see the source-change section of the issue body). Verify that the delivery covers "
+                "every change, and reject it if any change is not covered."),
+            "subject": {
+                "changed_from_sha256": ref["source_changed_from_sha256"], "source_sha256": ref.get("source_sha256"),
+                "delivery_unchanged": unchanged},
+        })
+    return found
+
+
 def build_review_obligations(
     item: Any,
     *,
@@ -838,6 +865,7 @@ def build_review_obligations(
         {"obligation_id": obligation_id, "category": "dimension", "requirement": requirement}
         for obligation_id, requirement in _BASE_OBLIGATIONS
     ]
+    obligations.extend(source_change_obligations(item))
     contract = getattr(item, "contract", None)
     acceptance = sorted({
         value for value in full_claims(contract)

@@ -81,6 +81,9 @@ blocked / in_review ── omac node accept ──► done        上游修复�
 预算用尽走 `MACHINE_GATE → BLOCK_BUDGET → STOPPED`；`pass-with-nits` 走 `REVIEW_VERDICT → STOPPED`（等 `plan accept-nits`
 或 `plan continue-review`），不自动返工。改动任何一行都要同步 `tests/test_decide_task.py`。
 
+阶段机里没有等人的阻塞轮询：人机确认门也是一种停止（`FINISH → STOPPED`，`confirmation-required`，放行命令
+`plan confirm [--reject --reason]`）；仅剩的等待是等 Agent Run 收尾。
+
 表外的三件事收在 `pipeline/decide_stop.py`：停止原因与放行命令（`StopReason`、`STOP_RELEASES`、`build_stop`、
 `render_release`、`decide_release`）、已停止 issue 的恢复分类（`classify_resume`）。exit 20 报告里的 `next_action`
 只能由 `render_release` 生成，`tests/test_decide_task.py` 用真实 argparse 解析每条放行命令。

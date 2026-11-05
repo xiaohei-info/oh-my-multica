@@ -1516,6 +1516,7 @@ def normalize_source_refs(
             for key in (
                 "label", "kind", "url", "content_sha256", "delivery_key",
                 "issue_key", "relation", "report_sha256", "docs_sha256",
+                "source_changed_from_sha256", "source_sha256", "previous_delivery_sha256",
             ):
                 value = raw.get(key)
                 if value:

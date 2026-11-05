@@ -59,8 +59,8 @@ EXPECTED = {
     (T.BLOCK_BUDGET, F.OBSERVED): (T.STOPPED, DECISION_WRITE),
     (T.FINISH, F.UNCONFIRMED): (T.DONE, (UpdateStatus("i", S.DONE),)),
     (T.FINISH, F.CONFIRM_PAUSE): (T.DONE, (ClearAssignment("i"), UpdateMetadata("i", {"phase": TaskPhase.CONFIRMATION}))),
-    (T.FINISH, F.CONFIRM_WAIT): (T.FINISH_WAIT, (ClearAssignment("i"), UpdateMetadata("i", {"phase": TaskPhase.CONFIRMATION}))),
-    (T.FINISH_WAIT, F.CONFIRMED): (T.DONE, ()),
+    (T.FINISH, F.CONFIRMED): (T.DONE, (ClearAssignment("i"), UpdateMetadata("i", {"phase": TaskPhase.CONFIRMATION}))),
+    (T.FINISH, F.CONFIRM_STOP): (T.STOPPED, (ClearAssignment("i"), UpdateMetadata("i", {"phase": TaskPhase.CONFIRMATION}))),
 }
 
 
@@ -146,8 +146,9 @@ _STOPPED_ON = {
     StopReason.COMPLETED_WITHOUT_SUBMIT: dict(status=S.BLOCKED, phase=TaskPhase.AUTHORING),
     StopReason.UNSAFE_AUTHORING_RESUME: dict(status=S.BLOCKED, phase=TaskPhase.AUTHORING),
     StopReason.REVIEWER_COMPLETED_WITHOUT_VERDICT: dict(status=S.BLOCKED),
+    StopReason.CONFIRMATION_REQUIRED: dict(status=S.IN_REVIEW, phase=TaskPhase.CONFIRMATION, verdict="pass"),
 }
-_GATES = {StopReason.REVIEW_NITS_BUDGET: "review-nits", StopReason.REVIEW_NITS_ACCEPTANCE: "review-nits",
+_GATES = {StopReason.CONFIRMATION_REQUIRED: "confirmation", StopReason.REVIEW_NITS_BUDGET: "review-nits", StopReason.REVIEW_NITS_ACCEPTANCE: "review-nits",
           StopReason.REVIEW_CONVERGENCE: "review-convergence", StopReason.GUARD_BUDGET: "guard"}
 
 
@@ -164,6 +165,8 @@ def test_every_command_a_stop_names_parses_and_is_accepted_for_that_stop(reason,
     stop = build_stop(reason, kind=kind, item_id="i", dag_key=key, gate=_GATES.get(reason, "review"), rounds=3)
     commands = [stop["next_action"], *stop.get("alternatives", [])]
     assert len(commands) == len(STOP_RELEASES[reason])
+    if "then" in stop:                                       # a release that does not continue the pipeline names what does
+        commands.append(stop["then"])
     for command in commands:
         argv = shlex.split(command)
         assert argv[0] == "omac"
@@ -172,7 +175,37 @@ def test_every_command_a_stop_names_parses_and_is_accepted_for_that_stop(reason,
         **stop, "reason_code": reason.value}, bounce=3, limit=3, continuation=None)
     facts = ReleaseFacts(**{**facts.__dict__, **_STOPPED_ON[reason]})
     for release in STOP_RELEASES[reason]:
-        assert not isinstance(decide_release(release, facts, stage=kind.value), Refusal), (release, reason)
+        assert not isinstance(decide_release(release, facts, stage=kind.value, reason="why"), Refusal), (release, reason)
+
+
+def test_a_stop_released_by_something_other_than_resume_names_resume_as_the_next_step():
+    for reason, releases in STOP_RELEASES.items():
+        stop = build_stop(reason, kind=TaskKind.ACCEPTANCE, item_id="i", dag_key="acceptance-p-1", gate="review", rounds=1)
+        assert ("then" in stop) == (releases[0] not in (Release.RESUME, Release.RESTART_ACTIVE)), reason
+        assert stop.get("then", "omac plan resume --plan-id p-1") == "omac plan resume --plan-id p-1"
+
+
+def _gate(**over):
+    base = dict(item_id="i", status=S.IN_REVIEW, phase=TaskPhase.CONFIRMATION, verdict="pass", has_deliverable=True,
+                decision=None, bounce=0, limit=3, continuation=None)
+    return ReleaseFacts(**{**base, **over})
+
+
+def test_the_human_gate_is_confirmed_or_returned_with_a_reason_and_nothing_else():
+    confirmed = decide_release(Release.CONFIRM, _gate())
+    assert confirmed.effects == (UpdateStatus("i", S.DONE),)
+
+    returned = decide_release(Release.REJECT_CONFIRMATION, _gate(), reason="cover the new appendix")
+    assert returned.effects[:2] == (ResetReview("i"), TODO)                        # back to the author, nothing counted
+    [feedback] = returned.effects[2:]
+    assert feedback.fields["machine_feedback"]["errors"] == ["cover the new appendix"]
+    assert "cover the new appendix" in feedback.fields["review_comment"]
+
+    for release in (Release.CONFIRM, Release.REJECT_CONFIRMATION):
+        for facts in (_gate(phase=TaskPhase.REVIEW), _gate(status=S.DONE), _gate(status=S.BLOCKED)):
+            assert isinstance(decide_release(release, facts, reason="x"), Refusal)
+    assert isinstance(decide_release(Release.REJECT_CONFIRMATION, _gate(), reason="  "), Refusal)
+    assert isinstance(decide_release(Release.CONFIRM, _gate(active_runs=("r",))), Refusal)
 
 
 def test_a_stop_of_a_kind_no_plan_command_releases_names_no_plan_command():

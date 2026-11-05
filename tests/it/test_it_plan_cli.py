@@ -5,8 +5,8 @@ decide from facts without a platform (help, argument handling, `dag show`) stays
 """
 import json
 import re
+import shlex
 import subprocess
-import threading
 import uuid
 import time
 
@@ -410,29 +410,21 @@ def test_a_manifest_that_fails_lint_is_refused_at_submit_and_the_stage_waits_for
     assert not kinds(world, TaskKind.DECOMPOSE)[-1].deliverable                     # the refused manifest was never recorded
 
 
-def test_the_human_gate_holds_each_stage_until_it_is_confirmed(world, repo):
+def test_the_human_gate_ends_each_stage_with_exit_20_and_the_printed_commands_release_it(world, repo, capsys):
     assert main(["config", "set", "workflow.human_in_loop", "true"]) == exit_codes.OK
     script(world)
-    outcome = {}
+    capsys.readouterr()
+    gates, code = [], create("demo-gate")
 
-    def create_in_background():
-        outcome["done"] = repo.omac("plan", "create", "--name", "demo-gate", timeout=240)
+    while code == exit_codes.NEEDS_DECISION:                    # nobody waits: the process ends, the caller runs the printed commands
+        stop = json.loads(capsys.readouterr().out)
+        assert stop["reason_code"] == "confirmation-required"
+        gates.append(stop["next_action"].rsplit(" ", 1)[1])
+        assert main(shlex.split(stop["next_action"])[1:]) == exit_codes.OK
+        code = main(shlex.split(json.loads(capsys.readouterr().out)["next_action"])[1:])
 
-    thread = threading.Thread(target=create_in_background)
-    thread.start()
-    confirmed, deadline = [], time.time() + 200
-    while thread.is_alive() and time.time() < deadline:
-        for item in world.store.list_work_items(world.store.config.workspace_id):
-            if (item.dag_key or "").startswith(("plan-p-", "acceptance-p-", "decompose-p-")) and item.dag_key not in confirmed:
-                if item.phase is TaskPhase.CONFIRMATION and item.status is WorkItemStatus.IN_REVIEW:
-                    done = repo.omac("plan", "confirm", "--dag-key", item.dag_key)
-                    if done.returncode == 0:
-                        confirmed.append(item.dag_key)
-        time.sleep(0.5)
-    thread.join(timeout=30)
-
-    assert not thread.is_alive() and outcome["done"].returncode == 0, outcome["done"].stdout + outcome["done"].stderr
-    assert len(confirmed) >= 2 and {k.split("-p-")[0] for k in confirmed} >= {"plan", "acceptance"}
+    assert code == exit_codes.OK and [g.split("-p-")[0] for g in gates] == ["plan", "acceptance"]
+    assert (repo.work / ".omac" / "demo-gate.yaml").exists()
 
 
 # ---- plan confirm ---------------------------------------------------------------------------------------------------------------
@@ -467,6 +459,28 @@ def test_confirm_by_dag_key_selects_exactly_one_of_two_issues_with_the_same_name
 
     assert world.store.get_work_item(first.id).status is WorkItemStatus.IN_REVIEW
     assert world.store.get_work_item(second.id).status is WorkItemStatus.DONE
+
+
+def test_confirm_reject_returns_the_stage_to_its_author_with_the_reason(world, repo, capsys):
+    item = waiting(world, TaskKind.PLAN, "plan-p-reject01", title="demo-reject 设计方案")
+    capsys.readouterr()
+
+    assert main(["plan", "confirm", "--dag-key", "plan-p-reject01", "--reject", "--reason", "add the failure flows"]) == exit_codes.OK
+
+    out = json.loads(capsys.readouterr().out)
+    returned = world.store.get_work_item(item.id)
+    assert out["next_action"] == "omac plan resume --plan-id p-reject01"
+    assert (returned.status, returned.phase) == (WorkItemStatus.TODO, TaskPhase.AUTHORING)
+    assert returned.machine_feedback["errors"] == ["add the failure flows"]
+
+
+@pytest.mark.parametrize("flags", [["--reject"], ["--reason", "no reject given"], ["--reject", "--reason", " "]])
+def test_confirm_reject_needs_a_reason_and_a_reason_needs_reject_and_nothing_changes_otherwise(world, repo, flags):
+    item = waiting(world, TaskKind.PLAN, "plan-p-reject02", title="demo-refuse 设计方案")
+
+    assert main(["plan", "confirm", "--dag-key", "plan-p-reject02", *flags]) == exit_codes.VALIDATION
+
+    assert world.store.get_work_item(item.id).status is WorkItemStatus.IN_REVIEW
 
 
 def test_confirm_with_nothing_waiting_is_a_validation_error(world, repo):
