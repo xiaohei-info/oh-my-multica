@@ -3,9 +3,37 @@ from __future__ import annotations
 
 from typing import Any
 
+from .taskmeta import DECISION_REQUIRED_SCHEMA, TaskPhase
+from .workitem import WorkItemStatus
+
 
 REVIEW_CONTINUATION_SCHEMA = "omac.review-continuation/v1"
 REVIEW_CONTINUATION_MODES = {"producer-rework", "review-only"}
+# Before 2.0.4 a stop at review entry wrote "review" even for a delivery awaiting re-review, so both gates can name one.
+REVIEW_BUDGET_GATES = frozenset({"review", "review-nits"})
+
+
+def review_budget_gate(item: Any) -> str:
+    """Gate of a review-budget stop: a reject awaits rework, any other stop leaves a delivery awaiting review."""
+    return "review" if item.review_verdict == "reject" else "review-nits"
+
+
+def review_continuation_mode(item: Any) -> str | None:
+    """What `plan continue-review` can authorize for an item at its review limit; None if it stopped for another reason."""
+    if item.review_verdict == "reject":
+        return "producer-rework"
+    if item.review_verdict or item.phase != TaskPhase.REVIEW or not item.deliverable:
+        return None
+    if item.status == WorkItemStatus.IN_REVIEW:
+        return "review-only"
+    decision = item.decision_required if isinstance(item.decision_required, dict) else {}
+    stopped_on_review_budget = (
+        item.status == WorkItemStatus.BLOCKED
+        and decision.get("schema") == DECISION_REQUIRED_SCHEMA
+        and decision.get("gate") in REVIEW_BUDGET_GATES
+        and decision.get("rounds") == max(0, item.bounces.review)
+    )
+    return "review-only" if stopped_on_review_budget else None
 
 
 def valid_review_continuation(value: Any, *, stage: str | None = None) -> bool:

@@ -402,6 +402,33 @@ def test_the_final_pass_with_nits_can_be_continued_for_one_more_review_round(wor
     assert result["verdict"] == "pass" and result["rounds"] == 2 and roles(assigns)[-1] == "reviewer"
 
 
+@pytest.mark.parametrize("recorded_gate", ["review-nits", "review"])
+def test_a_final_delivery_stopped_at_review_entry_is_continued_and_goes_to_the_reviewer(world, recorded_gate):
+    kit = world.kit
+    item = exhausted_decompose(world, f"decompose-p-entry-stop-{recorded_gate}", verdict=None)
+    assigns = kit.record(kit.store, "assign_work_item")
+
+    with pytest.raises(NeedsDecision) as raised:
+        world.run(TaskKind.DECOMPOSE, {"title": "decompose review"}, "alice", reviewers=["bob"], max_revisions=8,
+                  poll=lambda: pytest.fail("an exhausted budget must not dispatch"), resume_item_id=item.id)
+
+    blocked = kit.store.get_work_item(item.id)
+    assert raised.value.report["gate"] == "review-nits" and blocked.status == WorkItemStatus.BLOCKED
+    assert blocked.decision_required["reason_code"] == "review-nits-budget-exhausted"
+    if recorded_gate == "review":      # what versions before 2.0.4 left on the issue
+        kit.store.update_work_item_metadata(item.id, decision_required={
+            **blocked.decision_required, "reason_code": "review-budget-exhausted", "gate": "review"})
+
+    decision = plan_continue_review(kit.engine, 8, dag_key=item.dag_key)
+
+    authorized = kit.store.get_work_item(item.id)
+    assert decision["mode"] == "review-only" and decision["authorized_through_round"] == 9
+    assert authorized.status == WorkItemStatus.IN_REVIEW and authorized.decision_required in (None, {})
+    world.review("pass")
+    result = world.run(TaskKind.DECOMPOSE, {"title": "decompose review"}, "alice", reviewers=["bob"], max_revisions=8, resume_item_id=item.id)
+    assert result["verdict"] == "pass" and result["rounds"] == 9 and roles(assigns) == ["reviewer"]
+
+
 def test_a_consumed_review_continuation_does_not_reset_the_budget_again(world):
     item = exhausted_decompose(world, "decompose-continuation-consumed", bounce=9, continuation=CONTINUATION)
     assigns = world.kit.record(world.store, "assign_work_item")

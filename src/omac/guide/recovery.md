@@ -110,6 +110,7 @@ omac plan resume --plan-id p-xxxx
   review 或 machine-feedback 附件承载，不复制进 metadata。
 - exhausted reject 会通过 OMAC `reset_review` 和 status 恢复到 authoring/todo，让 producer
   先更新交付；final pass-with-nits 已有新交付时只开放下一 Reviewer round。
+  这类停止记录为 `gate=review-nits`；旧版本记成 `gate=review` 且无 verdict 的 issue 同样可直接放行。
 - 该命令不修改 `.omac/config.yaml` 或 `retry.review`，因此不会为了单次人工决策制造项目
   Git revision 漂移。`retry.review` 仍是新任务和旧自动化入口的默认预算。
 - 命令只读检查 active Agent；发现活跃 run 时拒绝，不会自动 cancel。等待当前 run 结束后

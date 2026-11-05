@@ -168,6 +168,8 @@ omac plan resume --plan-id p-xxxx
 - An exhausted reject is restored through OMAC `reset_review` and todo status so
   the producer revises first. A final pass-with-nits delivery that was already
   revised proceeds directly to its next Reviewer round.
+  That stop is recorded as `gate=review-nits`; an issue an older version recorded
+  as `gate=review` with no verdict is released the same way.
 - The command does not modify `.omac/config.yaml` or `retry.review`, so a
   one-off operator decision cannot change the reviewed Git revision.
   `retry.review` remains the default budget for new work and legacy automation.

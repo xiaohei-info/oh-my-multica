@@ -25,7 +25,7 @@ from ..core.machine_feedback import (
 from ..core.review_convergence import (
     bounded_decision_required, build_review_obligations,
 )
-from ..core.review_continuation import authorized_review_limit
+from ..core.review_continuation import REVIEW_BUDGET_GATES, authorized_review_limit, review_budget_gate
 from ..core.review_preflight import run_review_preflight
 from ..core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, DELIVERY_CONTENT_KEY, TaskKind, TaskPhase,
@@ -380,7 +380,7 @@ def _budget_exhausted_decision(
         value = getattr(item, key, None)
         if isinstance(value, dict) and value:
             decision[key] = value
-    action = _review_continuation_action(item)
+    action = _review_continuation_action(item) if gate in REVIEW_BUDGET_GATES else None
     if action:
         decision["next_action"] = action
     return decision
@@ -1708,7 +1708,7 @@ class _TaskRun:
         self.next_round = review_bounce + 1
         if review_bounce < self.review_limit:
             return Fact.ROUNDS_REMAIN, self._obs()
-        self.stop = _Stop("review", "review", review_bounce, _review_opinion(self.delivered))
+        self.stop = _Stop("review", review_budget_gate(self.delivered), review_bounce, _review_opinion(self.delivered))
         return Fact.BUDGET_EXHAUSTED, self._obs()
 
     def _at_review_round(self):
@@ -1803,7 +1803,7 @@ class _TaskRun:
         log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
                  gate="review", round=round_index, max=self.review_limit)
         if round_index >= self.review_limit:
-            self.stop = _Stop("review", "review", round_index, self.last_opinion)
+            self.stop = _Stop("review", review_budget_gate(reviewed), round_index, self.last_opinion)
             return Fact.REJECT_EXHAUSTED, self._obs()
         return Fact.REJECT_RETRY, self._obs()
 
@@ -1822,7 +1822,7 @@ class _TaskRun:
         self.delivered = self._produce()
         self.delivery = _delivery_of(self.kind, self.delivered)
         if self.round_index >= self.review_limit:
-            self.stop = _Stop("review", "review-nits", self.round_index, _review_opinion(self.reviewed))
+            self.stop = _Stop("review", review_budget_gate(self.delivered), self.round_index, _review_opinion(self.reviewed))
             return Fact.PRODUCED_AT_LIMIT, self._obs()
         # Whatever the size of the change, the final delivery is reviewed again: the next round's
         # prepare_review_cycle clears the old verdict with the new subject digest.

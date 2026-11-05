@@ -42,10 +42,10 @@ from ..core.project_rules import read_agents_snapshot, write_project_rules
 from ..core.repository_files import revision_directory_files
 from ..core.review_preflight import plan_manifest_preflight
 from ..core.review_continuation import (
-    authorized_review_limit, build_review_continuation,
+    authorized_review_limit, build_review_continuation, review_continuation_mode,
 )
 from ..core.taskmeta import (
-    DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase, make_dag_key, make_plan_id,
+    TaskKind, TaskPhase, make_dag_key, make_plan_id,
 )
 from ..core.workitem import WorkItem, WorkItemStatus
 from ..errors import ValidationError
@@ -348,29 +348,8 @@ def plan_continue_review(
             f"当前已授权到 review round {current_limit}；请运行 plan resume，"
             "不要重复叠加 decision。"))
 
-    decision = (
-        item.decision_required
-        if isinstance(item.decision_required, dict)
-        else {}
-    )
-    projected_final_nits = (
-        item.status == WorkItemStatus.BLOCKED
-        and decision.get("schema") == DECISION_REQUIRED_SCHEMA
-        and decision.get("gate") == "review-nits"
-        and decision.get("rounds") == current_round
-    )
-    review_only = (
-        item.phase == TaskPhase.REVIEW
-        and item.status in {WorkItemStatus.IN_REVIEW, WorkItemStatus.BLOCKED}
-        and (item.status != WorkItemStatus.BLOCKED or projected_final_nits)
-        and not item.review_verdict
-        and bool(item.deliverable)
-    )
-    if item.review_verdict == "reject":
-        mode = "producer-rework"
-    elif review_only:
-        mode = "review-only"
-    else:
+    mode = review_continuation_mode(item)
+    if mode is None:
         raise ValidationError(ui(
             f"Work item {item.id} is not in an exhausted reject or final-nits state.",
             f"Work item {item.id} 不处于 review reject 耗尽或 final-nits 待复评状态。"))
@@ -390,7 +369,7 @@ def plan_continue_review(
     ], Ports(store=store))
     if mode == "producer-rework":
         apply(rework_to_producer(item.id), Ports(store=store))
-    elif projected_final_nits:
+    elif item.status == WorkItemStatus.BLOCKED:
         apply([
             UpdateMetadata(item.id, {'decision_required': {}}),
             UpdateStatus(item.id, WorkItemStatus.IN_REVIEW),

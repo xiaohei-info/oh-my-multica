@@ -8,6 +8,16 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [2.0.4] — 2026-11-05
+
+- Fix: `omac plan continue-review` now accepts the stop it is named in. When a resumed `plan resume` reached the review
+  budget with a final delivery awaiting re-review after `pass-with-nits`, the issue was blocked with `gate=review`, and the
+  command refused it because it only recognized `gate=review-nits`. That stop is now recorded as `review-nits`, and issues
+  already blocked with `gate=review` are accepted without editing metadata. The gate and the command's check share
+  `core/review_continuation.py`.
+- Fix: a machine-gate budget stop no longer names `omac plan continue-review` as its `next_action`. That command cannot
+  release this stop.
+
 ## [2.0.3] — 2026-11-05
 
 - Fix: a running `omac plan resume` no longer idles forever after a review returns the issue to its author. After a
