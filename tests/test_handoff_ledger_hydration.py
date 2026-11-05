@@ -14,9 +14,10 @@ from omac.core.taskmeta import current_review_ledger
 from omac.engines.models import EngineConfig
 from omac.core.workitem import AgentRunObservation, WorkItemPayload
 from omac.engines.multica import MulticaStore
-from omac.errors import PlatformError
+from omac.errors import ObservationConflict, PlatformError
 from omac.pipeline import loop
 from omac.pipeline.convergence import ResolutionState
+from omac.pipeline.observation_conflict import conflict_streaks
 from _support.remote import _RemoteFixture
 
 
@@ -273,3 +274,68 @@ def test_loaded_body_does_not_hide_new_control_facts(case, field):
             item, intent, "harness-node", store=store
         )
     assert remote.attachment_downloads == before
+
+
+def _conflicting_write(remote, item_id):
+    """A concurrent writer: every read of the issue sees a status the previous read did not."""
+    def hook(read_id, _count):
+        if read_id == item_id:
+            raw = remote.issues[item_id]
+            raw["status"] = "in_review" if raw["status"] == "in_progress" else "in_progress"
+    remote.issue_get_hook = hook
+
+
+def _two_node_case(case, monkeypatch):
+    """The round-3 node plus a second running node that nobody is writing to."""
+    from _support.remote import _issue
+
+    store, remote, projection, _, manifest, runtime = case
+    monkeypatch.setattr(store, "resolve_agent_id", lambda _name: "agent-a")
+    raw, attachments = _issue("item-b", status="in_progress", phase="authoring")
+    raw["metadata"].update({"dag_key": "other-node", "worker": "worker-a", "blocked_by": []})
+    remote.issues["item-b"] = raw
+    remote.attachments.update(attachments)
+    manifest.nodes["other-node"] = Node(
+        id="other-node", worker="worker-a", work_item_id="item-b", status="in_progress")
+    listed = []
+    runtime.list_runs = (lambda original: lambda item_id: listed.append(item_id) or original(item_id))(runtime.list_runs)
+    return store, remote, manifest, runtime, listed
+
+
+def test_conflicted_item_is_skipped_and_the_others_are_collected(case, monkeypatch, tmp_path):
+    store, remote, manifest, runtime, listed = _two_node_case(case, monkeypatch)
+    _conflicting_write(remote, "item-round3")
+
+    failures = loop.collect_results(
+        store, runtime, UnusedCodeHost(), manifest, str(tmp_path / "dag.yaml"))
+
+    assert failures == {}
+    assert manifest.nodes["harness-node"].status == "in_progress"
+    assert "item-b" in listed, "the item after the conflicted one was still processed"
+    assert conflict_streaks(manifest).counts == {"harness-node": 1}
+
+
+def test_skipped_item_is_processed_again_on_the_next_tick(case, monkeypatch, tmp_path):
+    store, remote, manifest, runtime, listed = _two_node_case(case, monkeypatch)
+    _conflicting_write(remote, "item-round3")
+    path = str(tmp_path / "dag.yaml")
+    loop.collect_results(store, runtime, UnusedCodeHost(), manifest, path)
+    conflict_streaks(manifest).end_tick()
+
+    remote.issue_get_hook = None   # the writer is done
+    loop.collect_results(store, runtime, UnusedCodeHost(), manifest, path)
+    conflict_streaks(manifest).end_tick()
+
+    assert manifest.nodes["harness-node"].status == "in_progress"
+    assert conflict_streaks(manifest).counts == {}, "a clean tick ends the streak"
+
+
+def test_real_platform_error_still_fails_the_collect(case, tmp_path):
+    store, remote, projection, _, manifest, runtime = case
+    remote.fail_attachment_id = projection.work_item.review_ledger_ref["attachment_id"]
+
+    with pytest.raises(PlatformError) as caught:
+        loop.collect_results(
+            store, runtime, UnusedCodeHost(), manifest, str(tmp_path / "dag.yaml"))
+
+    assert not isinstance(caught.value, ObservationConflict)

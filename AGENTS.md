@@ -228,6 +228,7 @@ Worker/Reviewer 交接检查点是守护协议：每次 `apply` 只带一个效�
 | 决策函数 / decision function | 代码中的纯函数：事实进，`Plan` 或动作名出 | `pipeline/decide_*.py` |
 | 显式决策 / explicit decision | 只能由人或调用方做的选择，exit 20 + 结构化报告 | `NeedsDecision`、`omac node retry|abandon|accept|accept-nits` |
 | Worker 阻断 / worker blocker | Agent 请求人做显式决策的结构化报告；是否 exit 20 由代码判定 | `omac work block`、`pipeline/worker_blocker.py`（`omac.worker-blocker/v2`） |
+| 观察冲突 / observation conflict | 读取期间工作项被并发改动；逐项捕获，本轮跳过、下轮重新观察，不使 tick 失败 | `errors.ObservationConflict`、`pipeline/observation_conflict.py` |
 | 观察 / Observation | 决策读取的冻结事实 | `pipeline/decide_effects.py::Observation` |
 | 计划 / Plan | 有序的 Effect 元组 + 结果名 | `decide_effects.py::Plan`、`validate_plan` |
 | 效果 / Effect | 一个端口调用或 manifest 写入的值对象 | `decide_effects.py`，执行于 `pipeline/apply.py::apply` |
@@ -302,6 +303,7 @@ Worker/Reviewer 交接检查点是守护协议：每次 `apply` 只带一个效�
   `SetNode(merge_request_state="intent")` 再 `SaveState`；`validate_plan` 拒绝不满足的计划。
 - **未知结果绝不重放**：崩溃或结果未知后，下一轮先观察，不重复写；仍不能确认就 blocked + exit 20。
 - **漂移即失败关闭**：平台事实与记录不符时停下并说明，不自动"修好"。
+  区别于漂移：同一工作项两次观察之间被并发写入是 `ObservationConflict`，该项本轮跳过、下轮重观察。
 - **成功只看观察到的事实**：合并成功只由观察到的 PR 判定，不看命令退出码。
 - **`apply` 不重试、不吞异常**；业务失败不自动重试，只有有界计数的回退（§2.2）。
 - **并发**：manifest 写锁是非阻塞 `flock`，被占用时立即报错（exit 5）；锁随进程释放，没有租约 / TTL。

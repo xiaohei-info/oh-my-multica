@@ -56,7 +56,8 @@ from ..core.workitem import (
 from ..engines.codehost import CodeHost
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
-from ..errors import AuthError, PlatformError, WorkItemNotFoundError
+from .observation_conflict import conflict_streaks
+from ..errors import AuthError, ObservationConflict, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from .decide_review import VerdictObservation, VerdictPath, decide_verdict_path
 from .decide_worker import (
@@ -193,7 +194,7 @@ def _resolve_handoff_review_convergence(
             )
         fresh = store.observe_work_item_control(item.id).work_item
         if any(getattr(fresh, name) != value for name, value in before.items()):
-            raise PlatformError(f"Worker handoff control facts changed while loading ledger for {item.id}; reobserve `omac work show {item.id} --output json` before continuing")
+            raise ObservationConflict(f"Worker handoff control facts changed while loading ledger for {item.id}; reobserve `omac work show {item.id} --output json` before continuing")
     return resolve_handoff_convergence(item, handoff_intent, node_id)
 
 
@@ -1307,7 +1308,7 @@ def _dispatch_prepared_reviewer(store, runtime, code_host, manifest, key, node, 
         or current.status != WorkItemStatus.IN_REVIEW
         or (current.reviewer, current.platform_assignee_id) != assignment
     ):
-        raise PlatformError("Reviewer source or Run baseline changed before dispatch")
+        raise ObservationConflict("Reviewer source or Run baseline changed before dispatch")
     if prior_run_active(runtime.list_runs(item_id), baseline.target_agent_id):
         if any(assignment):
             # The next tick's Run observation only re-dispatches a prepared review that nobody is assigned to.
@@ -1366,7 +1367,7 @@ class _HandoffRun:
             return _WorkerHandoffResult("needs-decision", self.intent, fresh,
                                         decision=fresh.work_item.decision_required)
         if fresh.work_item.worker_handoff != self.intent:
-            raise PlatformError(f"Worker handoff changed before dispatch for {self.item_id}")
+            raise ObservationConflict(f"Worker handoff changed before dispatch for {self.item_id}")
         return None
 
 
@@ -1532,7 +1533,7 @@ def _new_handoff_intent(run: _HandoffRun, review_bounce: int | None, gate: str |
             if preparation.projection is not None else None
         )
         if observed_intent is not None and observed_intent.generation != intent.generation:
-            raise PlatformError(f"Worker handoff intent conflicts for work item {item_id}")
+            raise ObservationConflict(f"Worker handoff intent conflicts for work item {item_id}")
         return _WorkerHandoffResult("pending-initialization", None)
     run.projection = preparation.projection
     return None
@@ -1858,7 +1859,7 @@ def _retry_worker_handoff(
             return _WorkerHandoffResult("needs-decision", current.worker_handoff,
                                        projection, decision=current.decision_required)
         if current.worker_handoff != item.worker_handoff or current.phase != item.phase:
-            raise PlatformError(f"Worker retry control changed for {item.id}; re-read before retrying")
+            raise ObservationConflict(f"Worker retry control changed for {item.id}; re-read before retrying")
         retry_intent = _next_worker_handoff_attempt(
             store, runtime, current, consume_business_bounce=consume_business_bounce)
         fresh = store.observe_work_item_control(item.id)
@@ -1866,7 +1867,7 @@ def _retry_worker_handoff(
             return _WorkerHandoffResult("needs-decision", fresh.work_item.worker_handoff,
                                        fresh, decision=fresh.work_item.decision_required)
         if fresh.work_item.worker_handoff != current.worker_handoff:
-            raise PlatformError(f"Worker retry generation changed for {item.id}")
+            raise ObservationConflict(f"Worker retry generation changed for {item.id}")
         if consume_business_bounce:
             apply([
                 ClearAssignment(item.id),
@@ -2153,7 +2154,7 @@ def _commit_worker_handoff_delivery(
             raise _WorkerHandoffCandidateChanged(
                 f"Worker handoff delivery candidate changed before commit for "
                 f"work item {item_id}")
-        raise PlatformError(
+        raise ObservationConflict(
             f"Worker handoff delivery candidate changed before commit for "
             f"work item {item_id}")
     if existing is not None and existing.as_dict() != identity.as_dict():
@@ -2979,7 +2980,7 @@ def _collect_worker_handoff(c: _Collect, n: _Node) -> bool:
                 attempt=n.handoff.intent.transient_retries + 1,
             )
             if failure is None:
-                raise PlatformError(
+                raise ObservationConflict(
                     f"Failed Worker Run facts changed for work item "
                     f"{node.work_item_id}")
             if failure.classification == "nonretryable" or failure.exhausted:
@@ -3210,6 +3211,8 @@ def _worker_finished_without_submit(c: _Collect, n: _Node) -> bool:
                          n.item, "worker", manifest=c.manifest, node_id=key,
                          absolute_count=cur_bounce + 1,
                          limit=worker_limit))
+        except ObservationConflict:
+            raise  # skipped by collect_results, observed again next tick
         except PlatformError as exc:
             _apply_plan(Ports(store=c.store), c.manifest, plan_return_to_worker_failed(
                 key, node.work_item_id, node.worker, cur_bounce, str(exc)))
@@ -3501,6 +3504,8 @@ def _review_without_verdict(c: _Collect, n: _Node) -> None:
                     "reviewer 派发被已有 decision 或平台 blocked 状态阻塞。",
                 )
                 return None
+        except ObservationConflict:
+            raise  # skipped by collect_results, observed again next tick
         except PlatformError as exc:
             _apply_plan(Ports(store=c.store), c.manifest, plan_block(
                 key, node.work_item_id, comment=ui(
@@ -3697,6 +3702,8 @@ def _dispatch_pending_reviews(c: _Collect) -> None:
             if dispatched:
                 log.info(logsetup.EVT_REVIEW_DISPATCH, kind=_DAG_KIND, node=key,
                          id=item_id, reviewer=reviewer)
+        except ObservationConflict as exc:
+            conflict_streaks(c.manifest).skip(key, item_id, "review-dispatch", exc)
         except _ReviewerDispatchUnresolved as exc:
             c.failures[key] = _block_reviewer(
                 c.store, c.manifest, c.manifest_path, key,
@@ -3807,7 +3814,10 @@ def collect_results(
         if node.status not in graph.RUNNING or not node.work_item_id:
             continue
         projection = running[key]
-        _collect_node(c, _Node(key, node, projection, projection.work_item))
+        try:
+            _collect_node(c, _Node(key, node, projection, projection.work_item))
+        except ObservationConflict as exc:
+            conflict_streaks(manifest).skip(key, node.work_item_id, "collect", exc)
     _dispatch_pending_reviews(c)
     if c.failures or c.pending_review:
         save_manifest(manifest, manifest_path)
@@ -3970,6 +3980,9 @@ def _dispatch(
                 review_bounce=item.bounces.review,
                 gate="explicit-dispatch",
             )
+        except ObservationConflict as exc:
+            conflict_streaks(manifest).skip(key, node.work_item_id, "dispatch", exc)
+            continue
         except PlatformError as exc:
             _apply_plan(Ports(store=store), manifest, plan_block(key, node.work_item_id, comment=ui(
                 f"Failed to wake worker {worker}: {exc}",
@@ -4121,6 +4134,15 @@ def _active_formal_run_nodes(
     return active
 
 
+def _resolve_or_defer(manifest, key, item, intent, store):
+    """Convergence resolution, or None when a concurrent write invalidated the read (node skipped this tick)."""
+    try:
+        return _resolve_handoff_review_convergence(item, intent, key, store=store)
+    except ObservationConflict as exc:
+        conflict_streaks(manifest).skip(key, item.id, "restore", exc)
+        return None
+
+
 def _restore_active_formal_run_stages(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -4146,8 +4168,9 @@ def _restore_active_formal_run_stages(
         hydrated = _hydrate_work_item_payloads(store, projection, plan)
         validate_structured_recovery_payloads(
             hydrated, plan & projection.deferred_payloads)
-        resolution = _resolve_handoff_review_convergence(
-            hydrated.work_item, intent, key, store=store)
+        resolution = _resolve_or_defer(manifest, key, hydrated.work_item, intent, store)
+        if resolution is None:
+            continue
         if resolution.state is ResolutionState.NEEDS_DECISION:
             blocked[key] = (hydrated, resolution)
             continue
@@ -4176,8 +4199,10 @@ def _restore_active_formal_run_stages(
             handoff_intent is not None
             and handoff_intent.gate in {"review", "review-nits"}
         ):
-            resolution = _resolve_handoff_review_convergence(
-                hydrated.work_item, handoff_intent, key, store=store)
+            resolution = _resolve_or_defer(
+                manifest, key, hydrated.work_item, handoff_intent, store)
+            if resolution is None:
+                continue
             if resolution.state is ResolutionState.NEEDS_DECISION:
                 blocked[key] = (hydrated, resolution)
                 continue
@@ -4312,6 +4337,8 @@ def tick(
 
     # 5. DISPATCH: 派发就绪节点(受 max_parallel 约束)
     dispatched = _dispatch(store, runtime, code_host, manifest, manifest_path, ready, max_parallel)
+
+    conflict_streaks(manifest).end_tick()
 
     # 6. 构建 TickResult
     done = [k for k, n in manifest.nodes.items() if n.status == "done"]

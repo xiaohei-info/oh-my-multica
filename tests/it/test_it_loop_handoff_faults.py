@@ -286,3 +286,57 @@ def test_body_read_failure_stays_pending_and_restarts(kit, prepared):
     kit.monkeypatch.setattr(kit.store, "update_work_item_metadata", original_update)
     assert restart(kit, path).state == "running"
     assert len(kit.runtime.list_runs(item.id)) == 1
+
+
+def test_concurrent_write_during_preparation_skips_the_node_and_the_next_tick_dispatches(kit, prepared):
+    """A write that lands between two reads of the issue is a conflict, not a platform failure: no block, no Run, retried."""
+    manifest, path, node, item, comments = prepared
+    kit.fast_observation()
+    original_observe = kit.store.observe_work_item_control
+    state = {"conflicts": 0, "writer_active": True}
+
+    def observe(item_id):
+        projection = original_observe(item_id)
+        if projection.work_item.worker_handoff is not None and state["writer_active"]:
+            state["conflicts"] += 1
+            foreign = replace(projection.work_item.worker_handoff, generation="written-by-someone-else")
+            return replace(projection, work_item=replace(projection.work_item, worker_handoff=foreign))
+        return projection
+
+    kit.monkeypatch.setattr(kit.store, "observe_work_item_control", observe)
+
+    assert dispatch(kit, manifest, path, node) == []
+
+    assert state["conflicts"] >= 1
+    current = kit.store.get_work_item(item.id)
+    assert manifest.nodes[node.id].status != "blocked" and current.status is not WorkItemStatus.BLOCKED
+    assert kit.runtime.list_runs(item.id) == []
+
+    state["writer_active"] = False
+    assert restart(kit, path).state == "running"
+    assert len(kit.runtime.list_runs(item.id)) == 1
+    assert kit.comments(item.id) == comments
+
+
+def test_tick_with_one_conflicted_node_still_dispatches_the_others(kit, prepared):
+    """The whole tick survives one conflicted node: the other ready node is dispatched and the tick keeps running."""
+    manifest, path, node, item, _ = prepared
+    other = kit.node("unaffected", contract=contract())
+    manifest.nodes[other.id] = other
+    path = kit.save(manifest)
+    original_observe = kit.store.observe_work_item_control
+
+    def observe(item_id):
+        projection = original_observe(item_id)
+        if item_id == item.id and projection.work_item.worker_handoff is not None:
+            foreign = replace(projection.work_item.worker_handoff, generation="written-by-someone-else")
+            return replace(projection, work_item=replace(projection.work_item, worker_handoff=foreign))
+        return projection
+
+    kit.monkeypatch.setattr(kit.store, "observe_work_item_control", observe)
+
+    result = kit.tick(manifest, path, max_parallel=2)
+
+    assert result.state == "running" and result.dispatched == [other.id]
+    assert manifest.nodes[node.id].status != "blocked"
+    assert len(kit.runtime.list_runs(manifest.nodes[other.id].work_item_id)) == 1

@@ -117,6 +117,10 @@ path; the two markers are not interchangeable.
   `merging`; they do not consume `retry.merge`, return to the worker, or send a
   second merge request. An OPEN PR whose `mergeStateStatus` is GitHub's not-yet-computed `UNKNOWN` is not such a case: it is
   requested once as usual and the merge command decides.
+- A Worker/Reviewer write that lands while the Loop is reading the same work item (`... control facts changed ...`) is an
+  observation conflict, not a failure: the Loop skips that node for the tick, logs `observation_conflict`, and observes it
+  again next tick; other nodes continue. Nothing needs to be run. Only if the warning repeats (5 consecutive ticks) inspect
+  `omac work show <issue> --output json` for a writer that never stops.
 - Authentication or authorization failure is not a transient observation. OMAC
   durably marks the node `blocked` while preserving the work item, PR, and merge
   marker; it never reissues the merge. Restore credentials/permission, verify
