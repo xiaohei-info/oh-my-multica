@@ -29,7 +29,9 @@ Resolve conflicts in this order:
 
 1. Run `omac init` to configure the engine, workspace, project, and role map.
 2. Run `omac plan create --name <feature> [--goal <request> | --doc <design-document>]`
-   to produce the design document, acceptance document, and manifest DAG.
+   to produce the design document, acceptance document, and manifest DAG. Pass a directory to `--doc` when
+   the design has appendices. After any interruption, continue with `omac plan resume --plan-id <id>`; no shape
+   argument is needed.
 3. Run `omac dag run .omac/<feature>.yaml` in the foreground until it
    converges or returns exit 20.
 4. After exit 20, inspect with `omac dag status` and `omac node show`, make an
@@ -103,10 +105,12 @@ For a dispatched task, do not pre-read every guide. Read `guide_refs` from
   `owner` on every open blocker, and at least two distinct owners. A decision
   stops rework for the current node and requires an explicit DAG amendment
   instead of another bounce.
-- After plan, acceptance, or decompose review budget is exhausted, a Human can
-  authorize one round with `omac plan continue-review --dag-key <stage-key>`.
-  The `review_continuation` decision is persisted on the platform work item,
-  does not modify project `retry.review`, and survives a later process resume.
+- A plan, acceptance, or decompose review that ends in `pass-with-nits`, an exhausted budget, or
+  non-convergence returns exit 20 whose `next_action` is a command that runs exactly as printed:
+  `omac plan accept-nits` (accept the nits), `omac plan continue-review` (authorize one round or send the
+  nits back to the author), or `omac plan resume --plan-id <id>`. The `review_continuation` decision is
+  persisted on the platform work item, does not modify project `retry.review`, and survives a later process
+  resume. See the recovery guide.
 - State exists in both the manifest and the platform work item. Re-running
   `dag run` reuses completed nodes and continues from current state.
 

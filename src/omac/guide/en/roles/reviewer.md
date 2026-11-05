@@ -194,6 +194,12 @@ environments; unusable setup or commands without a replacement; conflicting
 contract/design/acceptance facts; or missing coverage, metrics, or artifacts.
 Report missing evidence and commands attempted. Do not submit pass while blocked.
 
+Plan, acceptance, and decompose stages have no structured block entry (`omac work block` is for develop only). When an
+upstream input (an appendix or a referenced document) is not visible or cannot be located, the author cannot fix it, so
+do not reject to force pointless rework: list in nits each missing input, where it was expected, and how you tried to
+read it, and submit pass-with-nits. That verdict stops the stage with exit 20 for the caller's explicit decision
+instead of releasing it silently.
+
 ## Prohibitions
 
 - Do not trust summaries without inspecting real artifacts.

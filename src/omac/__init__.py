@@ -8,4 +8,4 @@
     guide/     知识分发 topic 文本
 """
 
-__version__ = "2.0.4"
+__version__ = "2.1.0"

@@ -8,6 +8,40 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-11-05
+
+- Behavior change: a plan, acceptance, or decompose review that returns `pass-with-nits` now stops with exit 20
+  (`review-nits-acceptance-required`) instead of automatically sending the delivery back to its author. The verdict, the
+  report and the reviewed delivery are kept. Release it with `omac plan accept-nits --dag-key <stage-key>` (accept the nits;
+  `plan resume` then finishes the stage on the reviewed version) or `omac plan continue-review --dag-key <stage-key>` (send
+  the nits back to the author as a counted round). This is how `node accept-nits` and `dag amend accept-nits` already work.
+  An unattended caller that used to rely on the automatic rework must now run one of these commands.
+- New: `omac plan accept-nits`, sharing the marker and its verified write with `omac node accept-nits`.
+- Fix: `omac plan resume --plan-id <id>` works for every pipeline shape. The shape (`--doc` or `--goal`, review, acceptance,
+  human gate) is recorded on the source issue as `plan_profile`, so a resume no longer needs `--doc`, `--no-review`,
+  `--no-acceptance` or `--no-confirm`; the design text comes from the source issue. A flag that contradicts the record is
+  refused with the command to run. Pipelines created before 2.1 keep taking the shape from the command line.
+- Fix: every stop of the plan pipeline names one release command that runs as printed (`reason_code` and `next_action`), and
+  that command is accepted for that stop. Stops that had no `next_action`, or an unrunnable one (`dag amend propose` before a
+  manifest exists, `node retry <manifest> <node>` for a plan issue), now have one. The exit-20 report of plan commands is
+  printed on stdout.
+- Fix: a machine-gate retry returned the issue to review instead of authoring and left it blocked, so a later `plan resume`
+  could not recover; an author Run that ended without submitting had no release at all. `plan resume --restart-active`
+  releases both and now acts on the first unfinished stage (plan, acceptance or decompose), not always acceptance; it no
+  longer redoes an acceptance document the human gate already approved.
+- Fix: `plan resume` never rewrites a manifest that already belongs to the plan or its node runtime state (a node that had
+  been dispatched or finished was reset to `todo`); a manifest of another plan whose nodes have started is refused.
+- Fix: `plan resume --no-review` no longer releases an issue that stands on a review decision.
+- Fix: a review-convergence stop in a plan stage names `plan continue-review` (not `dag amend propose`), and that command
+  releases it: the authorized round is not vetoed by the same convergence check.
+- Fix: `omac dag` reports keep `--stage review` in the retry command a decision recorded; a Worker blocker names the node id.
+- Change: a `--doc` source is a set: a directory is its inventory at one revision; a single file adds its path, the revision
+  and the inventory of its directory. Links are not parsed. The source must be committed and its revision pushed. A resume
+  republishes the source only when `--doc` is given and its content (ignoring the revision line) differs, and then redoes the
+  first unfinished stage. Pass a directory when the design has appendices.
+- Release path for issues stopped by 2.0.x on nits (`review-nits-budget-exhausted`): `omac plan continue-review`, then
+  `omac plan resume --plan-id <id>`; if the new verdict is still nits, `omac plan accept-nits`.
+
 ## [2.0.4] — 2026-11-05
 
 - Fix: `omac plan continue-review` now accepts the stop it is named in. When a resumed `plan resume` reached the review
