@@ -8,6 +8,21 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [2.0.3] — 2026-11-05
+
+- Fix: a running `omac plan resume` no longer idles forever after a review returns the issue to its author. After a
+  `pass-with-nits` or `reject` verdict the process kept treating the return as a resumed authoring attempt and waited for
+  a submit that nobody was going to make, because the Reviewer's ending Run looked like that attempt. It now redispatches
+  the author, exactly as a fresh `plan resume` would.
+- Fix: a resume that waits for an active Run stops waiting when that Run ends. If it ended without a submit, an
+  in-progress issue blocks with `completed-without-submit` and no second Run starts.
+- Fix: `omac plan create` / `plan resume` hand an issue back to its author only after every direct Run on it has ended,
+  and log one `rework_handoff_wait` event while waiting. A machine-gate retry no longer stops with
+  `dispatch-run-not-observed` because the author's own Run was still ending.
+- Fix: `omac dag run` / `dag tick` hand a rejected delivery back to the Worker only after the Reviewer's Run has ended,
+  retrying on a later tick without spending a budget. A Worker that redelivered before that Run ended left the node in
+  `in_review` indefinitely, because the next review started no new Run.
+
 ## [2.0.2] — 2026-11-04
 
 - Fix: a Reviewer handoff no longer fails while the author's Run is still ending. A submit lands before its Run ends, so

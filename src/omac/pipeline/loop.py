@@ -1749,6 +1749,11 @@ def _dispatch_worker_handoff_locked(
         early = step(run)
         if early is not None:
             return early
+    if prior_run_active(runtime.list_runs(item_id), run.intent.target_agent_id):
+        # A Reviewer submits before its Run ends; if the Worker redelivered first, the next review would find that Run
+        # active, start nothing and wait for a verdict that never comes. The next tick observes again.
+        log.info(logsetup.EVT_REWORK_HANDOFF_WAIT, kind=_DAG_KIND, node=key, id=item_id, worker=run.intent.target_worker)
+        return _WorkerHandoffResult("pending-preparation", run.intent)
     return _assign_and_wake(run)
 
 

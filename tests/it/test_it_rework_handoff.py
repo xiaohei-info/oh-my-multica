@@ -260,6 +260,15 @@ def test_the_second_rejection_exhausts_a_review_budget_of_one(kit):
     assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked" and blocked.bounces.review == 1
 
 
+def test_a_rejection_reaches_the_worker_while_the_reviewers_run_is_still_ending(kit):
+    manifest, path, item = kit.in_review([kit.stack.review("reject"), {"hang": 5}], [kit.stack.review("pass")])
+    kit.wait_for(lambda: kit.store.get_work_item(item.id).review_verdict == "reject", what="the rejection")
+
+    result = kit.settle(manifest, path, timeout=120, retry_limits={"review": 3})
+
+    assert result.state == "converged" and kit.store.get_work_item(item.id).bounces.review == 1
+
+
 def test_a_rejection_then_a_pass_converges_with_the_whole_review_history(kit):
     manifest, path, item = rejected(kit, reviews=([{"hang": 3}, kit.stack.review("reject")], [kit.stack.review("pass")]))
 

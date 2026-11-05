@@ -195,6 +195,12 @@ active nothing is assigned, the plan pipeline waits at its poll interval and the
 is neither an error nor a budget, and it lasts as long as the Run does. The adapter's own check in `wake` remains for a Run
 that appears after this observation.
 
+A Reviewer also submits before its Run ends. The plan pipeline returns the issue to its author on the same terms: it
+dispatches once no direct Run on the issue is active, whether that Run is the Reviewer's or, on a machine-gate retry, the
+author's own. A process treats an issue as a resumed attempt only on its first produce; every later produce follows a
+return it made itself. The Loop's Worker handoff makes the same observation for another agent's direct Run and retries on
+a later tick; otherwise a Worker that redelivers first gets a review that starts no new Run.
+
 ### 7.5 Dependencies and abandonment
 
 A node is ready when every blocker is `done` or `abandoned`. `node abandon` turns a blocked node into `abandoned` and

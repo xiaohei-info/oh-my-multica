@@ -24,6 +24,7 @@ LOG_FORMATS = (TEXT, JSON)
 EVT_DISPATCH = "dispatch"                # 节点/任务派单给 worker
 EVT_REVIEW_DISPATCH = "review_dispatch"  # 同一 issue 转派 reviewer
 EVT_REVIEW_HANDOFF_WAIT = "review_handoff_wait"  # reviewer 交接等前一个 Run 结束(否则看着像卡死)
+EVT_REWORK_HANDOFF_WAIT = "rework_handoff_wait"  # 退回作者前等上一个 Run 结束(否则看着像卡死)
 EVT_VERDICT = "verdict"                  # 评审判决(pass/reject)
 EVT_REVISION = "revision"                # 回退重做(gate: worker/ci/review/guard)
 EVT_NODE_DONE = "node_done"              # 节点/任务完成

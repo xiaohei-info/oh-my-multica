@@ -95,6 +95,8 @@ blocked / in_review ── omac node accept ──► done        上游修复�
    Run、验证附件、PR head 三者对齐才算一次交付；reject 后必须移动 PR head。
    作者提交后其 Run 还要过一会儿才结束：Reviewer 派发先观察（`decide_reviewer.prior_run_active`），其他 agent 的 direct Run 未结束就等待，
    plan 流水线按 poll 节奏等，Loop 留给后续 tick；此时不指派、不算错误、不耗预算。
+   Reviewer 提交后同理：plan 流水线把工作项退回作者前，等该工作项上所有 direct Run 结束（`tasks._wait_for_runs_to_end`）；
+   Loop 的 Worker 交接在其他 agent 的 direct Run 未结束时留给后续 tick（`loop._dispatch_worker_handoff_locked`）。
 6. **验收与修订**：DAG 收敛且需要验收时，acceptor 按验收文档跑外层循环（`acceptance.max_rounds`，与 `retry` 无关）；
    失败流产生增量拆解并入 manifest。运行中改 DAG 用 `omac dag amend propose|accept`。
 
