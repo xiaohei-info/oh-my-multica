@@ -493,6 +493,37 @@ def test_a_persisted_reviewer_pass_on_an_amendment_enters_confirmation_without_r
     assert (resumed.phase, resumed.review_verdict) == (TaskPhase.CONFIRMATION, "pass")
 
 
+def test_a_resume_that_meets_the_reviewers_ending_run_dispatches_the_author_once_it_has_ended(world):
+    kit = world.kit
+    item = world.issue(TaskKind.PLAN, "plan-resume-reviewer-ending")
+    world.author(world.plan())
+    kit.stack.set_scenario("bob", [[{"hang": 3}]])
+    kit.assign(item.id, "bob")
+    kit.wait_for(lambda: kit.runtime.is_active(item.id), what="the Reviewer Run to be active")
+    assigns = kit.record(kit.store, "assign_work_item")
+
+    result = world.run(TaskKind.PLAN, payload(), "alice", resume_item_id=item.id, timeout=45)
+
+    assert result["delivery"]["plan"] == "计划正文" and [a[1][1:] for a in assigns] == [("alice", "worker")]
+
+
+def test_a_resume_whose_awaited_author_run_ends_without_submit_blocks_and_starts_no_second_run(world):
+    kit = world.kit
+    item = world.issue(TaskKind.PLAN, "plan-resume-author-silent")
+    kit.stack.set_scenario("alice", [[{"hang": 2}]])
+    kit.assign(item.id, "alice")
+    kit.wait_for(lambda: kit.runtime.is_active(item.id), what="the Run to be active")
+
+    def the_run_is_recorded_as_in_progress():
+        kit.store.update_status(item.id, WorkItemStatus.IN_PROGRESS)
+        time.sleep(0.2)
+
+    with pytest.raises(NeedsDecision, match="ended without submitting") as raised:
+        world.run(TaskKind.PLAN, payload(), "alice", poll=the_run_is_recorded_as_in_progress, resume_item_id=item.id)
+
+    assert raised.value.report["reason_code"] == "completed-without-submit" and len(runs_of(world, item)) == 1
+
+
 def test_a_resumed_authoring_issue_whose_last_run_ended_without_submit_blocks_with_the_run_named(world):
     kit = world.kit
     item = amendment_issue(world, "amend-resume-terminal-authoring")

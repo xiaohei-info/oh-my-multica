@@ -92,6 +92,32 @@ def test_the_reviewer_is_woken_after_the_authors_run_has_ended_not_while_it_is_e
     assert [e["event"] for e in events].count(logsetup.EVT_REVIEW_HANDOFF_WAIT) == 1
 
 
+@pytest.mark.parametrize("verdict", ["pass-with-nits", "reject"])
+def test_a_running_resumed_task_redispatches_the_author_once_the_reviewers_run_has_ended(world, verdict):
+    # A real Reviewer submits and its Run goes on: the same resumed process must hand the issue back to the author.
+    item = world.issue(TaskKind.PLAN, f"plan-returned-{verdict}")
+    world.author(world.plan("计划正文-v1"), world.plan("计划正文-v2"))
+    world.kit.stack.set_scenario("bob", [[world.kit.stack.review(verdict), {"hang": 3}], [world.kit.stack.review("pass")]])
+
+    with capture_logs() as events:
+        res = world.run(TaskKind.PLAN, payload(), "alice", reviewers=["bob"], resume_item_id=item.id, timeout=45)
+
+    names = [e["event"] for e in events]
+    assert res["verdict"] == "pass" and res["delivery"]["plan"] == "计划正文-v2"
+    assert names.count(logsetup.EVT_DISPATCH) == 2 and names.count(logsetup.EVT_REWORK_HANDOFF_WAIT) == 1
+
+
+def test_a_machine_gate_retry_reruns_the_author_once_its_own_run_has_ended(world):
+    world.kit.stack.set_scenario("alice", [[world.plan("计划正文-v1"), {"hang": 3}], [world.plan("计划正文-v2")]])
+    gate = iter((["still wrong"], []))
+
+    with capture_logs() as events:
+        res = world.run(TaskKind.PLAN, payload(), "alice", guard=lambda _item: next(gate), timeout=45)
+
+    assert res["delivery"]["plan"] == "计划正文-v2"
+    assert [e["event"] for e in events].count(logsetup.EVT_REWORK_HANDOFF_WAIT) == 1
+
+
 def test_a_changed_worker_follow_up_after_pass_with_nits_is_reviewed_again(world):
     world.author(world.plan("计划正文-v1"), world.plan("计划正文-v2"))
     world.review("pass-with-nits", "pass")

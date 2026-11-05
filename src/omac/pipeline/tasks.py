@@ -1439,10 +1439,22 @@ class _TaskRun:
             )
         self.pristine_dispatch_required = False
 
+    def _wait_for_runs_to_end(self) -> None:
+        """A Reviewer's Run, or the author's own on a machine-gate retry, ends some time after its submit."""
+        waiting = False
+        while any(run.kind == "direct" and run.active for run in self.runtime.list_runs(self.item_id)):
+            if not waiting:
+                log.info(logsetup.EVT_REWORK_HANDOFF_WAIT, kind=self.kind.value, id=self.item_id,
+                         worker=self.assignee)
+                waiting = True
+            self.poll()
+            self._raise_if_authoring_stopped(self.store.get_work_item(self.item_id))
+
     def _dispatch_authoring_and_wait(self) -> WorkItem:
         self._verify_pristine_attempt_before_dispatch()
         baseline = None
         if self.runtime.capabilities.stable_direct_run_identity:
+            self._wait_for_runs_to_end()
             baseline = {
                 run.id for run in self.runtime.list_runs(self.item_id)
                 if run.kind == "direct"
@@ -1483,13 +1495,13 @@ class _TaskRun:
     def _produce(self, hint: Optional[List[str]] = None) -> WorkItem:
 
         current = self.store.get_work_item(self.item_id)
-        if (
-            hint is None
-            and self.resume_authoring_attempt_available
-            and current.phase == TaskPhase.AUTHORING
-        ):
+        # Only the first produce after opening can meet an attempt from before this process; every later
+        # one follows a return this process made itself, and nobody is working on the issue.
+        resuming = self.resume_authoring_attempt_available
+        self.resume_authoring_attempt_available = False
+        if hint is None and resuming and current.phase == TaskPhase.AUTHORING:
             if self.runtime.is_active(self.item_id):
-                current = _poll_until(
+                _poll_until(
                     self.store,
                     self.item_id,
                     lambda candidate: (
@@ -1500,19 +1512,21 @@ class _TaskRun:
                             WorkItemStatus.BLOCKED,
                         )
                         or candidate.agent_run_finished_without_submit
+                        or not self.runtime.is_active(self.item_id)
                     ),
                     self.poll,
                 )
+                # A submit can land just before the Run ends, after the read above: decide on a fresh read.
+                current = _guard_resume_authoring_terminal_run(
+                    self.engine, self.store.get_work_item(self.item_id), self.kind)
                 if current.phase != TaskPhase.AUTHORING or (
                     current.status == WorkItemStatus.DONE
                 ):
-                    self.resume_authoring_attempt_available = False
                     return current
             if (
                 current.status == WorkItemStatus.FAILED
                 or current.agent_run_finished_without_submit
             ):
-                self.resume_authoring_attempt_available = False
                 return self._dispatch_authoring_and_wait()
         self._raise_if_authoring_stopped(current)
         if hint is None and _produced(current):
