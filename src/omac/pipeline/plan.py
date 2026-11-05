@@ -37,16 +37,15 @@ from ..core.lint import lint
 from ..core.manifest import load_manifest, loads_manifest, manifest_files, save_manifest
 from ..core.project_rules import read_agents_snapshot, write_project_rules
 from ..core.review_preflight import plan_manifest_preflight
-from ..core.review_continuation import (
-    authorized_review_limit, build_review_continuation, review_continuation_mode,
-)
 from ..core.taskmeta import (
     TaskKind, TaskPhase, build_plan_profile, make_dag_key, make_plan_id, plan_id_of,
 )
 from ..core.workitem import WorkItem, WorkItemStatus
 from ..errors import ValidationError
 from ..i18n import CN, ui
+from .decide_stop import Release, render_release
 from .plan_source import build_design_source, source_identity
+from .stage_release import accept_nits, release_stage
 from .tasks import run_task
 from .apply import Ports, apply, apply_one
 from .decide_transitions import rework_to_producer
@@ -188,6 +187,25 @@ def _continuation_selector(
     return kind, make_dag_key(kind, scope=plan_id_value), plan_id_value
 
 
+def _select_stage(engine, kind: TaskKind, stage_key: str, issue_id: Optional[str]) -> WorkItem:
+    store = engine.store
+    if issue_id:
+        item = store.get_work_item(issue_id)
+        if item.kind != kind or item.dag_key != stage_key:
+            raise ValidationError(ui(
+                f"Issue {issue_id} is {item.kind.value}/{item.dag_key}, expected "
+                f"{kind.value}/{stage_key}.",
+                f"Issue {issue_id} 是 {item.kind.value}/{item.dag_key}，期望 "
+                f"{kind.value}/{stage_key}。"))
+        return item
+    item = _find_stage_item(store, store.config.workspace_id, kind, stage_key)
+    if item is None:
+        raise ValidationError(ui(
+            f"No {kind.value} issue matches {stage_key}.",
+            f"未找到 {stage_key} 对应的 {kind.value} issue。"))
+    return item
+
+
 def plan_continue_review(
     engine,
     configured_limit: int,
@@ -201,45 +219,7 @@ def plan_continue_review(
     """Persist one operator-authorized review round without changing project config."""
     kind, stage_key, plan_id_value = _continuation_selector(
         dag_key=dag_key, plan_id=plan_id, stage=stage)
-    store = engine.store
-    if issue_id:
-        item = store.get_work_item(issue_id)
-        if item.kind != kind or item.dag_key != stage_key:
-            raise ValidationError(ui(
-                f"Issue {issue_id} is {item.kind.value}/{item.dag_key}, expected "
-                f"{kind.value}/{stage_key}.",
-                f"Issue {issue_id} 是 {item.kind.value}/{item.dag_key}，期望 "
-                f"{kind.value}/{stage_key}。"))
-    else:
-        item = _find_stage_item(
-            store, store.config.workspace_id, kind, stage_key)
-        if item is None:
-            raise ValidationError(ui(
-                f"No {kind.value} issue matches {stage_key}.",
-                f"未找到 {stage_key} 对应的 {kind.value} issue。"))
-
-    if engine.runtime.is_active(item.id):
-        raise ValidationError(ui(
-            f"Work item {item.id} still has an active Agent run. Wait for it to finish "
-            "before authorizing another review round; continue-review never cancels runs.",
-            f"Work item {item.id} 仍有活跃 Agent run。请等待其结束后再授权额外 review；"
-            "continue-review 永不取消运行。"))
-
-    current_limit = authorized_review_limit(item, configured_limit)
-    current_round = max(0, item.bounces.review)
-    if current_round < current_limit:
-        raise ValidationError(ui(
-            f"Review round {current_round + 1} is already authorized through round "
-            f"{current_limit}. Run plan resume instead of stacking another decision.",
-            f"当前已授权到 review round {current_limit}；请运行 plan resume，"
-            "不要重复叠加 decision。"))
-
-    mode = review_continuation_mode(item)
-    if mode is None:
-        raise ValidationError(ui(
-            f"Work item {item.id} is not in an exhausted reject or final-nits state.",
-            f"Work item {item.id} 不处于 review reject 耗尽或 final-nits 待复评状态。"))
-
+    item = _select_stage(engine, kind, stage_key, issue_id)
     decision_reason = (
         (reason or "operator approved one additional review round").strip()
         or "operator approved one additional review round"
@@ -248,28 +228,36 @@ def plan_continue_review(
         raise ValidationError(ui(
             "--reason must be at most 1024 UTF-8 bytes",
             "--reason 最多 1024 UTF-8 bytes"))
-    continuation = build_review_continuation(
-        item, configured_limit, mode=mode, reason=decision_reason)
-    apply([
-        UpdateMetadata(item.id, {'review_continuation': continuation}),
-    ], Ports(store=store))
-    if mode == "producer-rework":
-        apply(rework_to_producer(item.id), Ports(store=store))
-    elif item.status == WorkItemStatus.BLOCKED:
-        apply([
-            UpdateMetadata(item.id, {'decision_required': {}}),
-            UpdateStatus(item.id, WorkItemStatus.IN_REVIEW),
-        ], Ports(store=store))
-
+    released = release_stage(
+        engine, item, Release.CONTINUE_REVIEW, configured_limit=configured_limit, reason=decision_reason)
     return {
         "item_id": item.id,
         "dag_key": stage_key,
         "plan_id": plan_id_value,
         "stage": kind.value,
-        "mode": mode,
-        "authorized_through_round": continuation["authorized_through_round"],
-        "decision_count": continuation["decision_count"],
-        "next_action": f"omac plan resume --plan-id {plan_id_value}",
+        **released,
+        "next_action": render_release(Release.RESUME, stage_key),
+    }
+
+
+def plan_accept_nits(
+    engine,
+    configured_limit: int,
+    *,
+    dag_key: Optional[str] = None,
+    plan_id: Optional[str] = None,
+    stage: Optional[str] = None,
+    issue_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Accept the nits of the review a plan stage stands on; no Agent runs and nothing is merged."""
+    kind, stage_key, plan_id_value = _continuation_selector(dag_key=dag_key, plan_id=plan_id, stage=stage)
+    item = _select_stage(engine, kind, stage_key, issue_id)
+    accept_nits(engine, item, configured_limit=configured_limit,
+                retry_command=render_release(Release.ACCEPT_NITS, stage_key))
+    return {
+        "item_id": item.id, "dag_key": stage_key, "plan_id": plan_id_value, "stage": kind.value,
+        "review_subject_digest": engine.store.get_work_item(item.id).review_subject_digest,
+        "next_action": render_release(Release.RESUME, stage_key),
     }
 
 

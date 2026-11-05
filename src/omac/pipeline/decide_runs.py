@@ -373,3 +373,12 @@ def parse_platform_time(value: str | None) -> datetime | None:
     except ValueError:
         return None
 
+
+def active_direct_runs(runs: List[AgentRunObservation]) -> List[AgentRunObservation]:
+    """Direct Runs that are alive: the one definition of "someone is still working on this issue"."""
+    return [run for run in runs if run.kind == "direct" and run.active]
+
+
+def unknown_direct_runs(runs: List[AgentRunObservation]) -> List[AgentRunObservation]:
+    """Direct Runs that are neither active nor terminal: their outcome cannot be proven."""
+    return [run for run in runs if run.kind == "direct" and not run.active and not run.terminal]

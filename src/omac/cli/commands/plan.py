@@ -10,7 +10,7 @@ from ...i18n import resolve_language, ui
 from .. import exit_codes
 from ..output import hint
 from ...pipeline.plan import (
-    PlanContext, plan_continue_review, plan_create, plan_resume,
+    PlanContext, plan_accept_nits, plan_continue_review, plan_create, plan_resume,
 )
 from ...core.taskmeta import plan_id_of
 from ..output import print_json
@@ -42,6 +42,11 @@ DESCRIPTION = """设计方案与 DAG 拆解流水线。
            issue 的范围 = 一个完整阶段:产出 → 评审 → 回退修订都在同一条
            issue 上,评审 = 该 issue 转派 reviewer。
            开关:--no-review 跳过全部 review 阶段;--no-acceptance 跳过验收文档。
+
+  resume   按 --plan-id 续跑；流水线形态（--doc/--goal、是否评审/验收/确认）记录在来源 issue 上，无需再带参数。
+           --doc 只在要显式重发来源时给（内容变化才会替换）。
+  continue-review  人工授权某个已停止的 stage 再来一轮 review（也用于拒绝 pass-with-nits 并退回作者）。
+  accept-nits      接受某个 stage 的 pass-with-nits 建议项，之后 plan resume 完成该阶段。
 
 manifest 门禁与摘要属于 DAG 层:
   omac dag check <manifest>
@@ -78,7 +83,7 @@ def register(parser):
     resume.add_argument("--name", help="manifest 名;缺省从设计方案 issue 标题反推")
     resume.add_argument(
         "--doc",
-        help="原流水线由现有设计文档文件或目录创建时，用它恢复并复用承载文档的来源 issue")
+        help="显式重发设计来源（文件或目录；内容与已发布的不同才替换）。不给则沿用来源 issue 上已发布的设计文本")
     resume.add_argument(
         "--restart-active", action="store_true",
         help="显式取消当前阶段仍活跃的 Agent run，刷新同一 issue 后重新派发")
@@ -111,6 +116,20 @@ def register(parser):
         "--reason", help="记录本次人工授权原因；不写入项目文件")
     continue_review.add_argument("--engine", help="引擎类型,缺省按 config.yaml / 环境变量")
     continue_review.add_argument("--workspace", help="工作空间 id,缺省按 config.yaml / 环境变量")
+
+    accept_nits = sub.add_parser(
+        "accept-nits",
+        help="接受某个 plan stage 的 pass-with-nits 建议项（不重审、不返工），之后 plan resume 完成该阶段")
+    nits_selector = accept_nits.add_mutually_exclusive_group(required=True)
+    nits_selector.add_argument("--dag-key", help="精确 stage DAG key,如 acceptance-p-xxxx")
+    nits_selector.add_argument("--plan-id", help="plan 流水线唯一 ID,如 p-xxxx")
+    accept_nits._help_key = "plan-accept-nits"
+    accept_nits.add_argument(
+        "--stage", choices=("plan", "acceptance", "decompose"),
+        help="使用 --plan-id 时必填；指定要接受 nits 的 stage")
+    accept_nits.add_argument("--issue-id", help="精确指定 stage issue，绕过项目级列表查询")
+    accept_nits.add_argument("--engine", help="引擎类型,缺省按 config.yaml / 环境变量")
+    accept_nits.add_argument("--workspace", help="工作空间 id,缺省按 config.yaml / 环境变量")
 
 
 def _resolve_engine(args):
@@ -304,6 +323,20 @@ def _continue_review(args) -> int:
     return exit_codes.OK
 
 
+def _accept_nits(args) -> int:
+    cfg = config_mod.load_config()
+    engine = _resolve_engine(args)
+    result = plan_accept_nits(
+        engine, resolve_review_rounds(cfg), dag_key=args.dag_key, plan_id=args.plan_id, stage=args.stage,
+        issue_id=args.issue_id)
+    print_json({"ok": True, **result})
+    hint(ui(
+        f"Accepted the pass-with-nits review of {result['dag_key']}; no Agent was dispatched. "
+        f"Run `{result['next_action']}` to finish the stage.",
+        f"已接受 {result['dag_key']} 的 pass-with-nits；未派发 Agent。运行 `{result['next_action']}` 完成该阶段。"))
+    return exit_codes.OK
+
+
 def run(args) -> int:
     if args.action == "create":
         return _create(args)
@@ -313,6 +346,8 @@ def run(args) -> int:
         return _resume(args)
     if args.action == "continue-review":
         return _continue_review(args)
+    if args.action == "accept-nits":
+        return _accept_nits(args)
     raise ValidationError(ui(
         f"Unknown plan subcommand: {args.action}",
         f"未知 plan 子命令:{args.action}"))
