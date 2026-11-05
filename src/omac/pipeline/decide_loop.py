@@ -129,8 +129,16 @@ def plan_done_non_develop(item_id: str, item_status: WorkItemStatus, verdict: st
     return Plan(tuple(effects), "unchanged")
 
 
-def decide_tick_state(*, running: bool, failed: bool, full_scan: bool, audit_complete: bool) -> str:
-    """Running work wins; an unfinished full audit is neither a failure nor convergence, so the runner keeps advancing."""
+def decide_tick_state(
+    *, running: bool, failed: bool, full_scan: bool, audit_complete: bool, held: bool = False,
+) -> str:
+    """Running work wins; an unfinished full audit is neither a failure nor convergence, so the runner keeps advancing.
+
+    With nothing running or failed, a held node (and the nodes behind it) is waiting for `omac node release`: the DAG is
+    neither converged nor advancing, so the tick reports ``held`` and the caller stops with the release commands.
+    """
     if running or (full_scan and not audit_complete):
         return "running"
-    return "needs_decision" if failed else "converged"
+    if failed:
+        return "needs_decision"
+    return "held" if held else "converged"

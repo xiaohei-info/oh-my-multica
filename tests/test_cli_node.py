@@ -12,7 +12,7 @@ from _support.state import save_literal
 from omac.cli import exit_codes
 from omac.cli.main import main
 from omac.core.graph import ready_nodes
-from omac.core.manifest import load_manifest
+from omac.core.manifest import load_manifest, manifest_write_lock
 
 
 @pytest.fixture(autouse=True)
@@ -161,3 +161,88 @@ def test_abandon_reports_affected_downstream(tmp_path, capsys):
     # a 的传递下游:b、c
     assert "b" in payload["affected_downstream"]
     assert "c" in payload["affected_downstream"]
+
+
+# ---------------- hold / release ----------------
+
+def _hold_nodes():
+    return [
+        {"id": "root", "worker": "alice", "status": "done", "work_item_id": "1"},
+        {"id": "held", "worker": "bob", "blocked_by": ["root"], "status": "todo"},
+        {"id": "after", "worker": "bob", "blocked_by": ["held"], "status": "todo"},
+        {"id": "other", "worker": "bob", "blocked_by": ["root"], "status": "todo"},
+    ]
+
+
+def _ready(path):
+    manifest = load_manifest(path)
+    return ready_nodes({k: {"status": n.status, "blocked_by": n.blocked_by, "held": n.held}
+                        for k, n in manifest.nodes.items()})
+
+
+def test_hold_persists_in_the_node_state_and_leaves_the_downstream_and_other_branches_to_the_graph(tmp_path, capsys):
+    path = _write_manifest(tmp_path, _hold_nodes())
+
+    assert main(["node", "hold", path, "held", "--reason", "needs the test account"]) == exit_codes.OK
+
+    payload = json.loads(capsys.readouterr().out)
+    assert (payload["held"], payload["hold_reason"]) == (True, "needs the test account")
+    held = load_manifest(path).nodes["held"]
+    assert (held.held, held.hold_reason, held.status) == (True, "needs the test account", "todo")
+    assert _ready(path) == ["other"]
+
+
+def test_release_makes_the_held_node_ready_again(tmp_path):
+    path = _write_manifest(tmp_path, _hold_nodes())
+    main(["node", "hold", path, "held", "--reason", "x"])
+
+    assert main(["node", "release", path, "held"]) == exit_codes.OK
+
+    node = load_manifest(path).nodes["held"]
+    assert (node.held, node.hold_reason) == (False, None)
+    assert _ready(path) == ["held", "other"]
+
+
+@pytest.mark.parametrize("status", ["in_progress", "in_review", "blocked", "done"])
+def test_hold_refuses_a_node_that_is_not_todo_and_changes_nothing(tmp_path, status, capsys):
+    nodes = _hold_nodes()
+    nodes[1]["status"] = status
+    path = _write_manifest(tmp_path, nodes)
+
+    assert main(["node", "hold", path, "held"]) == exit_codes.VALIDATION
+
+    assert load_manifest(path).nodes["held"].held is False
+    assert status in capsys.readouterr().err
+
+
+def test_release_refuses_a_node_that_is_not_held(tmp_path):
+    path = _write_manifest(tmp_path, _hold_nodes())
+
+    assert main(["node", "release", path, "held"]) == exit_codes.VALIDATION
+
+
+def test_hold_refuses_an_unknown_node(tmp_path):
+    path = _write_manifest(tmp_path, _hold_nodes())
+
+    assert main(["node", "hold", path, "nope"]) == exit_codes.VALIDATION
+
+
+def test_hold_and_release_wait_for_no_running_dag_run(tmp_path):
+    """The Loop is the single writer of node state: with a `dag run` active the hold is refused, not lost."""
+    path = _write_manifest(tmp_path, _hold_nodes())
+
+    with manifest_write_lock(path):
+        assert main(["node", "hold", path, "held"]) == exit_codes.VALIDATION
+
+    assert load_manifest(path).nodes["held"].held is False
+
+
+def test_show_reports_the_hold(tmp_path, capsys):
+    path = _write_manifest(tmp_path, _hold_nodes())
+    main(["node", "hold", path, "held", "--reason", "needs the test account"])
+    capsys.readouterr()
+
+    main(["node", "show", path, "held"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert (payload["held"], payload["hold_reason"]) == (True, "needs the test account")

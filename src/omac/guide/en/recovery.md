@@ -22,6 +22,16 @@ structured stdout report is the current recovery fact.
    - `omac node accept <manifest> <key>`: accept a known risk and mark done.
    - `omac node abandon <manifest> <key>`: abandon the node and unlock downstream
      work that does not hard-depend on its deliverable.
+   - `omac node hold <manifest> <key> [--reason <text>]`: park a node that has not been dispatched
+     (`todo`), for example one that needs an external account to be prepared first. A held node is
+     not dispatched even when its blockers are done; its downstream stays unsatisfied (not blocked,
+     not failed) and independent branches keep advancing. Only a `todo` node can be held: an
+     in-progress node is refused (let it finish or `abandon` it), a `blocked`/`failed` node must be
+     `retry`-ed first. Unlike `abandon`, a held node does not satisfy its downstream, so a closing
+     node behind it is not released early.
+   - `omac node release <manifest> <key>`: lift the hold; the node is dispatched like any ready node.
+     Both commands take the manifest write lock, so stop a running `omac dag run` first; the hold is
+     stored in the node's state file and survives the Loop's manifest sync and restarts.
    - Before execution starts, change the manifest and run `omac dag check`.
    - After execution starts, use controlled `omac dag amend propose` for contract,
      acceptance-mapping, or topology defects. Do not overwrite the live manifest.

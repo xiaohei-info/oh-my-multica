@@ -36,7 +36,8 @@ Resolve conflicts in this order:
    converges or returns exit 20.
 4. After exit 20, inspect with `omac dag status` and `omac node show`, make an
    explicit choice with `omac node retry|accept|abandon`, then run
-   `omac dag run` again.
+   `omac dag run` again. When only held nodes (`omac node hold`) and the nodes behind them are left,
+   `dag run`/`dag tick` also exit 20; the report lists them (`held_nodes`) with `omac node release` commands.
 
 ## From plan to dag run
 

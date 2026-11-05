@@ -34,6 +34,7 @@ EVT_CASCADE_BLOCKED = "cascade_blocked"  # 失败连坐:下游被标 blocked
 EVT_UNBLOCK = "unblock"                  # 上游修复:blocked 下游解封回 todo
 EVT_CONVERGED = "converged"              # loop 出口:全部 done
 EVT_NEEDS_DECISION = "needs_decision"    # loop 出口:有失败/受阻,需决策
+EVT_HELD = "held"                        # loop 出口:只剩被 hold 的节点及其下游,等 release
 EVT_CONFIG_SYNCED = "config_synced"      # 派单前 config 自动同步到 main
 EVT_OBSERVATION_CONFLICT = "observation_conflict"  # 并发写使该项乐观读失效:本轮跳过,下轮重新观察
 

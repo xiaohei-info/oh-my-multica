@@ -74,7 +74,7 @@ A DAG is two things on disk, both plain text, both committed to git:
   platform attachments). The definition holds no run history; the amendment ledger in `meta` is replaced per amendment.
   Large payloads (captured sources, transcripts) are attachments on the platform, referenced by digest.
 * **No journal to archive.** Effect intents (worker handoff, review cycle, merge request) live on the platform issue; a node file
-  keeps six runtime facts, and the only DAG-level record is the amendment ledger above. Nothing accumulates, so nothing is
+  keeps its runtime facts (six, plus the `held` / `hold_reason` of a held node), and the only DAG-level record is the amendment ledger above. Nothing accumulates, so nothing is
   archived: `tests/test_manifest_state.py` (500 nodes with every fact set average well under 4 KiB) and
   `tests/test_amendment_budget_retention.py` (120 amendments leave the manifest the size of the first few) pin it.
 * **No 1.x compatibility.** A single-file 1.x manifest (inline `work_item_id`, or the old compressed envelope) is not read
@@ -101,7 +101,10 @@ The contract is stable and safe for scripts to branch on. Business-layer `OmacEr
 
 Commands take `--output json|table`; agents and the web use JSON. `dag run --output json` prints
 `{state, done, running, failed, dispatched, report}`; on exit 20 `report` is
-`{failed_nodes, blocked_downstream, next_actions}`, and `next_actions` are copyable commands.
+`{failed_nodes, blocked_downstream, next_actions}`, and `next_actions` are copyable commands. When only held nodes
+(7.5) and the nodes behind them are left, `state` is `held`, the exit code is also 20, and `report` is
+`{held_nodes: [{key, reason}], blocked_downstream, next_actions}` with one `omac node release` command per held node.
+`dag status` node rows carry `held` and `hold_reason`.
 
 ## 6. Configuration
 
@@ -234,6 +237,17 @@ a later tick; otherwise a Worker that redelivers first gets a review that starts
 A node is ready when every blocker is `done` or `abandoned`. `node abandon` turns a blocked node into `abandoned` and
 unlocks its downstream. `node accept-nits|accept|retry` are the other explicit decisions (`accept-nits` is needed only under `review.node_nits: decide`).
 
+`omac node hold|release` park and resume a node without changing the graph. Holding sets `held` (and an optional
+`hold_reason`) on a `todo` node; `graph.ready_nodes` is the single place that skips it, and because it stays `todo` its
+downstream never sees a satisfied blocker, so nothing is dispatched behind it and nothing cascades to `blocked`
+(unlike `abandon`, which satisfies the downstream). Independent branches advance normally. The decision table is
+`pipeline/decide_hold.py`: only a `todo` node can be held. A node in progress is refused rather than stopped, because
+its work item, Run and PR live on the platform and a manifest flag would not stop them; a `blocked`/`failed` node is
+sent to `node retry` first. Both commands apply `SetNode` + `SaveState` under the manifest write lock (a running
+`dag run` makes them exit 5 instead of racing the Loop). `held`/`hold_reason` are runtime facts in the node state file,
+so the Loop's manifest sync only commits them. With nothing running, nothing failed and a held `todo` node left, the
+tick state is `held` (`decide_loop.decide_tick_state`): `dag run`/`dag tick` exit 20 with the report of 5.2.
+
 ### 7.6 Acceptance and amendments
 
 When the DAG converges and the manifest requires acceptance, an outer loop runs the acceptor against the acceptance
@@ -266,7 +280,9 @@ Use *result collection* (`collect_results`, 结果收集), *running nodes* (`run
 
 Node status classes are defined once, in `core/graph.py`: `RUNNING` (`in_progress`, `ci_check`, `in_review`, `merging`),
 `NEEDS_DECISION` (`blocked`, `failed`; `blocked` returns to `todo` on `omac node retry`, so it is not terminal) and
-`SATISFIED` (`done`, `abandoned`). The DAG converges when no node is `RUNNING` or `NEEDS_DECISION`.
+`SATISFIED` (`done`, `abandoned`). The DAG converges when no node is `RUNNING` or `NEEDS_DECISION`. A held node is a
+`todo` node with a flag, not a status: it is not ready and satisfies nothing; a DAG with only held work left is not
+converged (7.5).
 
 ## 11. Testing architecture
 

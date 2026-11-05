@@ -1,7 +1,7 @@
 """core.graph:就绪节点、失败下游、终态判定。"""
 from types import SimpleNamespace
 
-from omac.core.graph import downstream_of, node_waves, ready_nodes, running_nodes
+from omac.core.graph import downstream_of, held_nodes, node_waves, ready_nodes, running_nodes
 
 
 def _issues(**kw):
@@ -53,3 +53,25 @@ def test_node_waves_roots_are_zero():
 def test_node_waves_chain():
     nodes = {"a": _N([]), "b": _N(["a"]), "c": _N(["b"])}
     assert node_waves(nodes) == {"a": 0, "b": 1, "c": 2}
+
+
+def test_a_held_node_is_not_ready_its_downstream_stays_unsatisfied_and_an_unrelated_branch_is_ready():
+    issues = _issues(a=("done", []), held=("todo", ["a"]), after=("todo", ["held"]), other=("todo", ["a"]))
+    issues["held"]["held"] = True
+
+    assert ready_nodes(issues) == ["other"]
+    assert held_nodes(issues) == ["held"]
+
+
+def test_releasing_a_held_node_makes_it_ready_again():
+    issues = _issues(a=("done", []), held=("todo", ["a"]))
+    issues["held"]["held"] = False
+
+    assert ready_nodes(issues) == ["held"] and held_nodes(issues) == []
+
+
+def test_only_a_todo_node_counts_as_held():
+    issues = _issues(a=("done", []), b=("abandoned", []))
+    issues["a"]["held"] = issues["b"]["held"] = True
+
+    assert held_nodes(issues) == []
