@@ -61,10 +61,12 @@ class GitHubCodeHost(CodeHost):
             merge_state = str(payload.get("mergeStateStatus") or "").upper()
             if payload.get("autoMergeRequest") or merge_state == "QUEUED":
                 return PullRequestObservation(PullRequestState.PENDING)
-            if merge_state == "UNKNOWN" or not merge_state:
+            if not merge_state:
+                # The field is absent: the read is incomplete, not a statement about the PR.
                 return PullRequestObservation(
-                    PullRequestState.UNKNOWN,
-                    detail="missing or unknown mergeStateStatus")
+                    PullRequestState.UNKNOWN, detail="missing mergeStateStatus")
+            # An explicit UNKNOWN is GitHub's lazy mergeability computation, not a failed read: the PR is
+            # known to be OPEN, and the merge command itself decides whether it can be merged.
             return PullRequestObservation(PullRequestState.OPEN)
         if state == "CLOSED":
             return PullRequestObservation(PullRequestState.CLOSED_UNMERGED)

@@ -24,6 +24,14 @@ from omac.engines.github import PR_VIEW_FIELDS, GitHubCodeHost
         ({"state": "OPEN", "mergedAt": None,
           "autoMergeRequest": None, "mergeStateStatus": "QUEUED"},
          getattr(PullRequestState, "PENDING", "pending"), None),
+        # GitHub computes mergeability lazily: an OPEN PR with mergeStateStatus UNKNOWN is still OPEN.
+        ({"state": "OPEN", "mergedAt": None, "autoMergeRequest": None, "mergeStateStatus": "UNKNOWN"},
+         PullRequestState.OPEN, None),
+        ({"state": "OPEN", "mergedAt": None, "autoMergeRequest": None, "mergeStateStatus": "unknown"},
+         PullRequestState.OPEN, None),
+        ({"state": "OPEN", "mergedAt": None,
+          "autoMergeRequest": {"enabledAt": "2026-07-26T08:40:00Z"}, "mergeStateStatus": "UNKNOWN"},
+         PullRequestState.PENDING, None),
         ({"state": "CLOSED", "mergedAt": None},
          PullRequestState.CLOSED_UNMERGED, None),
     ],
@@ -62,6 +70,16 @@ def test_github_pr_view_fields_are_supported_by_local_gh():
     fields = PR_VIEW_FIELDS
     for field in fields.split(","):
         assert field in result.stdout
+
+
+def test_github_observe_pull_request_without_merge_state_field_stays_unknown(monkeypatch):
+    payload = {"state": "OPEN", "mergedAt": None, "autoMergeRequest": None}
+    monkeypatch.setattr("omac.engines.github.subprocess.run", lambda *a, **k: SimpleNamespace(
+        returncode=0, stdout=json.dumps(payload), stderr=""))
+
+    observation = GitHubCodeHost().observe_pull_request("https://example.com/pr/1")
+
+    assert observation.state is PullRequestState.UNKNOWN and "mergeStateStatus" in observation.detail
 
 
 @pytest.mark.parametrize(

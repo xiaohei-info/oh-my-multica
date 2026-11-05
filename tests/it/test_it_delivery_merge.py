@@ -23,6 +23,22 @@ def test_the_default_merge_command_is_gh_pr_merge_squash_and_the_remote_confirms
     assert reviewed.comments() == []                              # the loop closes the node; the gate writes nothing
 
 
+def test_an_open_pull_request_whose_mergeability_github_has_not_computed_is_still_requested(kit, reviewed):
+    kit.pr(reviewed.pr, merge_state="UNKNOWN")
+
+    assert reviewed.merge({}) == "pass"
+
+    assert len(reviewed.merges()) == 1 and reviewed.node.merged is True
+
+
+def test_an_unreadable_pull_request_sends_no_merge_request(kit, reviewed):
+    kit.stack.gh_behavior(view="fail")
+
+    assert reviewed.merge({}) == "pending"
+
+    assert not reviewed.merges() and reviewed.node.merge_request_state is None
+
+
 def test_a_merge_command_without_a_command_uses_the_default(kit, reviewed):
     assert reviewed.merge({"merge": {"timeout_minutes": 30}}) == "pass"
 

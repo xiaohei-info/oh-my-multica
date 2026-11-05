@@ -112,10 +112,11 @@ path; the two markers are not interchangeable.
   If a reviewer run fails or finishes without submitting a verdict, OMAC keeps
   the same issue, worker PR/verification, and review subject, then redispatches
   the reviewer in `review`; it must not incorrectly return to the worker.
-- `merging` only observes a persisted merge intent/request. GitHub/platform
-  `UNKNOWN` results and temporary observation failures keep the node in
+- `merging` only observes a persisted merge intent/request. A failed PR read
+  (`UNKNOWN`: command error, timeout, malformed output, missing `mergeStateStatus`) and temporary observation failures keep the node in
   `merging`; they do not consume `retry.merge`, return to the worker, or send a
-  second merge request.
+  second merge request. An OPEN PR whose `mergeStateStatus` is GitHub's not-yet-computed `UNKNOWN` is not such a case: it is
+  requested once as usual and the merge command decides.
 - Authentication or authorization failure is not a transient observation. OMAC
   durably marks the node `blocked` while preserving the work item, PR, and merge
   marker; it never reissues the merge. Restore credentials/permission, verify
