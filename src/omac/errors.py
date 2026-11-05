@@ -15,6 +15,14 @@ class PlatformError(OmacError):
     exit_code = 2
 
 
+class ObservationConflict(PlatformError):
+    """并发写使乐观读失效(读取期间工作项被改动)。
+
+    不是平台故障:Loop 在逐项处理处捕获,该项本轮跳过、下轮重新观察。
+    未被捕获(CLI 单项命令)时仍按平台错误 exit 2。
+    """
+
+
 class WorkItemNotFoundError(PlatformError, RuntimeError):
     """适配器已明确证明目标工作单元不存在。"""
 

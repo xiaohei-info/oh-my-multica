@@ -8,6 +8,20 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [2.3.2] — 2026-11-06
+
+- Fix: one work item that a Worker or Reviewer writes while the Loop is reading it no longer fails the whole `dag tick` /
+  `dag run` (`Worker handoff control facts changed while loading ledger ...`, exit 2, every branch stopped until a manual
+  restart). Optimistic-read conflicts are now one exception type, `ObservationConflict` (a `PlatformError` subclass), raised
+  at the eight places that compare two observations of the same work item (ledger load, handoff dispatch, retry control,
+  retry generation, reviewer dispatch baseline, delivery candidate commit, failed-Run facts, handoff intent). The Loop
+  catches it per node (collect, reviewer dispatch, formal-Run restore, worker dispatch), logs `observation_conflict`
+  with the node and item id, skips that node for the tick, and observes it again on the next. The tick's state and exit
+  code come from the remaining nodes (`running` / exit 10 while work continues). A node whose conflict does not clear logs
+  one `warning` at the 5th consecutive tick of a `dag run`; there is no stop state for it. Real platform errors (network,
+  permission, corrupt data) and drift checks that compare a persisted record with the platform still fail or block as before.
+  No new configuration.
+
 ## [2.3.1] — 2026-11-05
 
 - Fix: a node no longer waits in `merging` indefinitely when GitHub reports `mergeStateStatus: UNKNOWN` for an OPEN PR.
