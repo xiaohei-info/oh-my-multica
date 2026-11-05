@@ -200,6 +200,9 @@ do not reject to force pointless rework: list in nits each missing input, where 
 read it, and submit pass-with-nits. That verdict stops the stage with exit 20 for the caller's explicit decision
 instead of releasing it silently.
 
+For a develop node, `pass-with-nits` merges by default (`review.node_nits: accept`): the nits are kept in the report but
+nobody gates them, so anything that must be fixed before merge is a blocker and the verdict is `reject`.
+
 ## Prohibitions
 
 - Do not trust summaries without inspecting real artifacts.

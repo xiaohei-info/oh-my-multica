@@ -144,6 +144,9 @@ artifact、`source_of_truth` 和 `delivery_goal`。reject 中标记 `pass` 的 g
   不可见或无法定位时，作者无法修复，不要用 reject 制造无效返工；在 nits 中逐条写明缺失的输入、预期位置和已尝试的读取方式，
   并提交 pass-with-nits——该 verdict 会让阶段 exit 20 交给调用者显式决定，而不是被静默放行。
 
+develop 节点的 `pass-with-nits` 默认（`review.node_nits: accept`）直接合并：nits 只留在报告里，没有人再把关。
+所以任何合并前必须修复的问题都是 blocker，verdict 用 `reject`。
+
 ## 禁止事项
 
 - 禁止只读产出者自述；必须看真实 diff 或交付物。

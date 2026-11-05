@@ -13,7 +13,7 @@ from .decide_effects import Observation
 
 class VerdictPath(Enum):
     REJECT_CHECKS = "reject-checks"  # clean reject: boundary and convergence checks, then rework
-    NITS_CHECK = "nits-check"        # clean pass-with-nits: operator acceptance check, then merge
+    NITS_CHECK = "nits-check"        # clean pass-with-nits under review.node_nits=decide: operator acceptance check, then merge
     MERGE = "merge"                  # clean pass
     REWORK = "rework"                # reject with invalid evidence, or any verdict with evidence errors
 
@@ -22,6 +22,7 @@ class VerdictPath(Enum):
 class VerdictObservation(Observation):
     verdict: str
     has_evidence_errors: bool
+    nits_accepted: bool  # review.node_nits=accept: a clean pass-with-nits is a pass; its nits stay in the review report
 
 
 def decide_verdict_path(obs: VerdictObservation) -> VerdictPath:
@@ -29,4 +30,6 @@ def decide_verdict_path(obs: VerdictObservation) -> VerdictPath:
         return VerdictPath.REWORK
     if obs.verdict == "reject":
         return VerdictPath.REJECT_CHECKS
-    return VerdictPath.NITS_CHECK if obs.verdict == "pass-with-nits" else VerdictPath.MERGE
+    if obs.verdict == "pass-with-nits" and not obs.nits_accepted:
+        return VerdictPath.NITS_CHECK
+    return VerdictPath.MERGE

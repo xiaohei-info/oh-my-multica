@@ -28,6 +28,10 @@ docs/design/README.md §6:配置与状态一律 YAML 进 git,不用 SQLite。
       merge: 3                                 # 合并冲突 → worker 重解
       no_submit_runs: 2                        # reviewer 连续结束 Run 未提交裁决的续跑预算(须 ≥ 1;
                                                # 不含基础设施瞬时失败预算,后者固定为 2)
+    review:
+      node_nits: accept                        # DAG develop 节点 pass-with-nits:accept(默认)= 视为通过并合并,
+                                               # nits 留在评审报告;decide = 停在 exit 20 等 `omac node accept-nits`。
+                                               # 不影响 plan 各阶段与 amendment(它们始终等人)
     reconcile:                                 # P3 低频全量审计调度
       full_scan_interval_ticks: 20             # 成功 active tick 数达到此值后，下轮全量读取
       full_scan_max_age_seconds: 1800          # 距上次成功全量读取的最长秒数
@@ -76,6 +80,10 @@ DEFAULT_MAX_ROUNDS = 3
 # 0 会取消续跑宽限,与「续跑是正常分段评审工作模式」的语义冲突。
 # 基础设施瞬时失败(连续 transient-failure Run)预算不用此值,仍固定为 2。
 DEFAULT_NO_SUBMIT_RUNS = 2
+
+# DAG develop 节点的 pass-with-nits:accept = 视为通过(nits 原文留在评审报告);decide = 停下等 `omac node accept-nits`。
+DEFAULT_REVIEW = {"node_nits": "accept"}
+NODE_NITS_MODES = ("accept", "decide")
 
 # P3: successful active ticks allowed between persisted full reconcile audits.
 DEFAULT_RECONCILE = {
@@ -205,6 +213,28 @@ def resolve_no_submit_runs(config: dict) -> int:
             "no-submit Run 直接 blocked;需要多段评审的 reviewer 请调大"
             "(如 6)。"))
     return val
+
+
+def resolve_node_nits(config: dict) -> str:
+    """解析 review.node_nits(accept|decide);非法值 fail-closed,不静默回退缺省。"""
+    raw = get_value(config, "review")
+    if raw is None:
+        return DEFAULT_REVIEW["node_nits"]
+    if not isinstance(raw, dict):
+        raise ValidationError(ui(
+            f"review must be a YAML mapping; got {type(raw).__name__}",
+            f"review 配置应为 YAML 映射,got {type(raw).__name__}"))
+    return validate_node_nits(raw.get("node_nits", DEFAULT_REVIEW["node_nits"]))
+
+
+def validate_node_nits(value) -> str:
+    if value not in NODE_NITS_MODES:
+        raise ValidationError(ui(
+            f"review.node_nits must be one of {', '.join(NODE_NITS_MODES)}; got {value!r}. "
+            "`accept` merges a develop node that passed with nits; `decide` stops for `omac node accept-nits`.",
+            f"review.node_nits 必须是 {' / '.join(NODE_NITS_MODES)} 之一(非法值 {value!r})。"
+            "accept 让带 nits 通过的 develop 节点直接合并;decide 则停下等 `omac node accept-nits`。"))
+    return value
 
 
 def resolve_reconcile(config: dict) -> dict:

@@ -31,13 +31,17 @@ def test_after_ci(ci, passed, reviewer, expected):
     assert decide_after_ci(AfterCiObservation(ci, passed, reviewer)) is expected
 
 
-@pytest.mark.parametrize("verdict,errors,expected", [
-    ("reject", False, V.REJECT_CHECKS),
-    ("pass", False, V.MERGE),
-    ("pass-with-nits", False, V.NITS_CHECK),
-    ("reject", True, V.REWORK),
-    ("pass", True, V.REWORK),                # a pass without valid evidence is reworked, never merged
-    ("pass-with-nits", True, V.REWORK),
+@pytest.mark.parametrize("verdict,errors,nits_accepted,expected", [
+    ("reject", False, True, V.REJECT_CHECKS),
+    ("reject", False, False, V.REJECT_CHECKS),
+    ("pass", False, True, V.MERGE),
+    ("pass", False, False, V.MERGE),
+    ("pass-with-nits", False, True, V.MERGE),            # review.node_nits=accept: nits do not stop the node
+    ("pass-with-nits", False, False, V.NITS_CHECK),      # review.node_nits=decide: operator acceptance first
+    ("reject", True, True, V.REWORK),
+    ("pass", True, True, V.REWORK),                      # a pass without valid evidence is reworked, never merged
+    ("pass-with-nits", True, True, V.REWORK),
+    ("pass-with-nits", True, False, V.REWORK),
 ])
-def test_verdict_path(verdict, errors, expected):
-    assert decide_verdict_path(VerdictObservation(verdict, errors)) is expected
+def test_verdict_path(verdict, errors, nits_accepted, expected):
+    assert decide_verdict_path(VerdictObservation(verdict, errors, nits_accepted)) is expected

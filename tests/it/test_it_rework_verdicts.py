@@ -8,7 +8,7 @@ from dataclasses import replace
 import pytest
 
 from _support.loopkit import HANG, contract
-from _support.rework import CONTINUATION, causal_intent, nits_review, rejected, workers
+from _support.rework import CONTINUATION, NITS_DECIDE, causal_intent, nits_review, rejected, workers
 from omac.core.taskmeta import TaskPhase
 from omac.core.workitem import WorkItemStatus
 from omac.errors import PlatformError
@@ -100,12 +100,12 @@ def test_a_reviewer_already_running_on_the_same_subject_is_not_assigned_or_woken
     pytest.param(9, 9, None, id="at-the-review-limit"),
     pytest.param(9, 9, CONTINUATION, id="a-continuation-does-not-turn-nits-into-rework"),
 ])
-def test_pass_with_nits_waits_for_an_explicit_acceptance_and_never_bounces_the_worker(kit, bounces, limit, continuation):
+def test_pass_with_nits_waits_for_an_explicit_acceptance_when_configured_to_decide_and_never_bounces_the_worker(kit, bounces, limit, continuation):
     manifest, path, item = nits_review(kit, bounces=bounces, continuation=continuation)
     reviewed = kit.store.get_work_item(item.id)
     runs_before, assigns = kit.run_ids(item.id), kit.record(kit.store, "assign_work_item")
 
-    result = kit.tick(manifest, path, **({"retry_limits": {"review": limit}} if limit else {}))
+    result = kit.tick(manifest, path, config=NITS_DECIDE, **({"retry_limits": {"review": limit}} if limit else {}))
 
     blocked = kit.store.get_work_item(item.id)
     assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked" and blocked.status is WorkItemStatus.BLOCKED
@@ -117,9 +117,34 @@ def test_pass_with_nits_waits_for_an_explicit_acceptance_and_never_bounces_the_w
     assert decision["resume_issue_id"] == item.id and decision["node_id"] == "a" and decision["verdict"] == "pass-with-nits"
     assert decision["review_subject_digest"] == blocked.review_subject_digest and decision["review_report_ref"] == blocked.review_report_ref
     assert f"omac node accept-nits {path} a" in result.report["failed_nodes"][0]["reason"]
-    again = kit.tick(manifest, path, **({"retry_limits": {"review": limit}} if limit else {}))   # the decision is persisted by now
+    again = kit.tick(manifest, path, config=NITS_DECIDE, **({"retry_limits": {"review": limit}} if limit else {}))   # the decision is persisted by now
     assert f"omac node accept-nits {path} a" in again.report["next_actions"]
     assert not workers(assigns) and kit.run_ids(item.id) == runs_before
+
+
+@pytest.mark.parametrize("config", [None, {"review": {"node_nits": "accept"}}], ids=["default", "accept"])
+def test_pass_with_nits_is_a_pass_that_merges_and_keeps_the_nits_in_the_review_report(kit, config):
+    manifest, path, item = nits_review(kit)
+    reviewed = kit.store.get_work_item(item.id)
+    assert reviewed.review_report["nits"]
+
+    result = kit.tick(manifest, path, config=config)
+
+    merged = kit.store.get_work_item(item.id)
+    assert result.state != "needs_decision" and manifest.nodes["a"].status in {"merging", "done"} and kit.merges()
+    assert not merged.decision_required and merged.status is not WorkItemStatus.BLOCKED and merged.review_nits_acceptance is None
+    assert merged.review_verdict == "pass-with-nits" and merged.review_report == reviewed.review_report
+
+
+def test_a_node_stopped_on_nits_blocks_only_its_downstream_and_the_other_branch_keeps_going(kit):
+    manifest, path, item = nits_review(kit, others=(
+        kit.node("downstream", blocked_by=["a"]), kit.node("independent")))
+
+    result = kit.tick(manifest, path, config=NITS_DECIDE)
+
+    assert manifest.nodes["a"].status == "blocked" and manifest.nodes["downstream"].status == "blocked"
+    assert manifest.nodes["independent"].status in {"in_progress", "ci_check", "in_review", "merging", "done"}
+    assert result.state == "running" and "independent" in result.dispatched
 
 
 def test_a_legacy_partial_nits_report_cannot_skip_the_obligation_evidence_gate(kit):

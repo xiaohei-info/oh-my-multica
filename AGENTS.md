@@ -64,6 +64,10 @@ blocked / in_review ── omac node accept ──► done        上游修复�
 
 - **状态分类只在 `core/graph.py` 定义**：`RUNNING`（`in_progress`、`ci_check`、`in_review`、`merging`）、
   `NEEDS_DECISION`（`blocked`、`failed`）、`SATISFIED`（`done`、`abandoned`）；其余是 `todo`。不要在别处另建状态集合。
+- develop 节点的 `pass-with-nits` 默认视为 `pass`（`review.node_nits: accept`，nits 留在评审报告）；配置为 `decide` 才停在
+  `blocked` 等 `omac node accept-nits`。判定只在 `pipeline/decide_review.py::decide_verdict_path`；plan 阶段与 amendment 恒传
+  `nits_accepted=False`（§2.3）。节点停在待决策时，只有其传递下游被标 `blocked`（`loop._mark_downstream_blocked`），其余分支继续派发，
+  无进行中节点时才 exit 20。
 - **就绪节点**：`status == todo` 且每个 `blocked_by` 都属于 `SATISFIED`（`graph.ready_nodes`）。
 - **DAG 收敛**：没有 `RUNNING` 与 `NEEDS_DECISION` 节点。`blocked` 可经 `omac node retry` 回到 `todo`，不是终态。
 - 平台映射：`pipeline/delivery.py::MANIFEST_TO_PLATFORM_STATUS`（`ci_check→IN_PROGRESS`，`merging→IN_REVIEW`）；

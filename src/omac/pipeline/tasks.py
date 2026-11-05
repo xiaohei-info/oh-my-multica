@@ -1737,7 +1737,8 @@ class _TaskRun:
         verdict = reviewed.review_verdict
         log.info(logsetup.EVT_VERDICT, kind=self.kind.value, id=self.item_id,
                  verdict=verdict, round=round_index)
-        path = decide_verdict_path(VerdictObservation(verdict=verdict, has_evidence_errors=False))
+        path = decide_verdict_path(VerdictObservation(
+            verdict=verdict, has_evidence_errors=False, nits_accepted=False))  # plan stages and amendments: nits always wait for a person
         if path is VerdictPath.MERGE:
             self.finish_args = ("pass", round_index, True)
             return Fact.PASS, self._obs()

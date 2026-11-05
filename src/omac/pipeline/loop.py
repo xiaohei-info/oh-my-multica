@@ -21,7 +21,7 @@ import yaml
 
 from ..core import graph, logsetup
 from ..core.amendment import ensure_amendment_apply_complete
-from ..core.config import DEFAULT_RETRY, resolve_no_submit_runs
+from ..core.config import DEFAULT_RETRY, resolve_no_submit_runs, resolve_node_nits
 from ..core.contract_boundaries import (
     build_contract_boundary_decision,
     contract_boundary_conflicts,
@@ -2845,6 +2845,7 @@ class _Collect:
     limits: dict
     config: dict | None
     no_submit_runs: int
+    node_nits: str
     failures: Dict[str, str] = field(default_factory=dict)
     pending_review: List[Tuple[str, str, str]] = field(default_factory=list)  # (key, item_id, reviewer)
 
@@ -3560,7 +3561,8 @@ def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
         "review", DEFAULT_RETRY["review"])
     rework_budget = review_rework_budget(
         c.manifest, key, n.item, configured_review_limit)
-    path = decide_verdict_path(VerdictObservation(verdict=verdict, has_evidence_errors=bool(gate_errors)))
+    path = decide_verdict_path(VerdictObservation(
+        verdict=verdict, has_evidence_errors=bool(gate_errors), nits_accepted=c.node_nits == "accept"))
     if path is VerdictPath.REJECT_CHECKS:
         boundary_conflicts = contract_boundary_conflicts(
             c.manifest, node, n.item)
@@ -3603,6 +3605,8 @@ def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
             verdict=verdict,
             operator_acceptance=True,
         )
+    elif path is VerdictPath.MERGE and verdict == "pass-with-nits":
+        log.info(logsetup.EVT_VERDICT, kind=_DAG_KIND, node=key, id=node.work_item_id, verdict=verdict, nits_accepted="policy")
     if path in (VerdictPath.MERGE, VerdictPath.NITS_CHECK):
         # reviewer pass → P4.2 自动 merge 门。命令与远端观察均由引擎适配器执行。
         merge_action = _complete_merge_if_confirmed(
@@ -3798,7 +3802,7 @@ def collect_results(
         store, runtime, code_host, manifest, manifest_path, limits, config,
         # reviewer no-submit 续跑预算(config.retry.no_submit_runs,缺省 2)。
         # 与基础设施瞬时失败预算 TRANSIENT_RUNTIME_MAX_RUNS 语义不同,后者固定。
-        resolve_no_submit_runs(config or {}))
+        resolve_no_submit_runs(config or {}), resolve_node_nits(config or {}))
     for key, node in manifest.nodes.items():
         if node.status not in graph.RUNNING or not node.work_item_id:
             continue

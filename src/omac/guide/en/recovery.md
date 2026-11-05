@@ -30,9 +30,15 @@ structured stdout report is the current recovery fact.
 
 ### `pass-with-nits` acceptance
 
-A develop node with `pass-with-nits` is blocked for an explicit caller decision;
-OMAC does not dispatch the Worker for another unchanged verification. Inspect the
-sealed delivery and review report, then choose one path:
+A DAG develop node with `pass-with-nits` counts as a pass by default
+(`review.node_nits: accept`): it merges as usual, its nits stay verbatim in the review
+report and the node evidence (`omac node show <manifest> <node_key>`:
+`evidence.review_verdict` / `review_report.nits`), and downstream nodes are not held.
+Set `review.node_nits: decide` in `.omac/config.yaml` (or `omac config set review.node_nits decide`)
+for the earlier behavior: the node is blocked for an explicit caller decision, and
+OMAC does not dispatch the Worker for another unchanged verification. The setting does
+not touch plan, acceptance, or decompose stages or amendments (they always wait for a
+person). Under `decide`, inspect the sealed delivery and review report, then choose one path:
 
 ```bash
 omac node accept-nits <manifest> <node_key>
