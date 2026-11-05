@@ -10,9 +10,9 @@ from ...i18n import resolve_language, ui
 from .. import exit_codes
 from ..output import hint
 from ...pipeline.plan import (
-    PlanContext, plan_continue_review, plan_create, plan_dag_key_from_id,
-    plan_resume,
+    PlanContext, plan_continue_review, plan_create, plan_resume,
 )
+from ...core.taskmeta import plan_id_of
 from ..output import print_json
 from ...pipeline.apply import Ports, apply
 from ...pipeline.decide_effects import UpdateStatus
@@ -212,12 +212,8 @@ def _selector(args) -> tuple[str, set[str] | None]:
     if args.dag_key:
         return f"dag_key={args.dag_key}", {args.dag_key}
     if args.plan_id:
-        plan_key = plan_dag_key_from_id(args.plan_id)
-        plan_id = plan_key[len("plan-"):]
-        return (
-            f"plan_id={plan_id}",
-            {f"plan-{plan_id}", f"acceptance-{plan_id}"},
-        )
+        plan_id = plan_id_of(args.plan_id)
+        return f"plan_id={plan_id}", {f"plan-{plan_id}", f"acceptance-{plan_id}"}
     return f"name={args.name}", None
 
 
@@ -280,6 +276,8 @@ def _resume(args) -> int:
         name=args.name,
         doc_path=args.doc,
         restart_active=args.restart_active,
+        cli_flags={"no_review": args.no_review, "no_acceptance": args.no_acceptance,
+                   "no_confirm": args.no_confirm},
         acceptance_issue_id=args.acceptance_issue_id,
         decompose_issue_id=args.decompose_issue_id,
     )

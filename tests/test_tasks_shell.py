@@ -49,6 +49,7 @@ _PRISTINE_AMENDMENT_INITIALIZATION_FIELDS = {
 
 _AMENDMENT_ACTIVITY_FIELD_CASES = [
     ("reviewer", "bob", "reviewer"),
+    ("plan_profile", {"schema": "omac.plan-profile/v1"}, "plan_profile"),
     ("blocked_by", ["upstream"], "blocked_by"),
     ("wave", 1, "wave"),
     ("artifacts", {"pr_url": "https://example.test/pr/1"}, "artifacts"),

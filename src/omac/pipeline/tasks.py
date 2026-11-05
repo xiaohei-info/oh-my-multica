@@ -80,6 +80,7 @@ class AuthoringTaskSpec:
     source_refs: List[Any] = field(default_factory=list)
     source_of_truth: Dict[str, str] = field(default_factory=dict)
     amendment_attempt: Optional[Dict[str, Any]] = None
+    plan_profile: Optional[Dict[str, Any]] = None
 
 
 def _markdown_fence_for(text: str) -> str:
@@ -886,6 +887,7 @@ def refresh_authoring_task(
         'description': body,
         'source_refs': refs,
         'amendment_attempt': spec.amendment_attempt,
+        'plan_profile': spec.plan_profile,
     }), Ports(store=store))
 
 
@@ -1078,7 +1080,7 @@ class _TaskRun:
     def __init__(
         self, engine, kind, payload, assignee, *, reviewers, max_revisions, poll, guard, confirm,
         pause_at_confirmation, source_refs, dag_key, resume_item_id, amendment_attempt,
-        reuse_dag_key, review_acceptance_doc, review_amendment_manifest, restart_active,
+        reuse_dag_key, review_acceptance_doc, review_amendment_manifest, restart_active, refresh_source,
     ):
         self.engine = engine
         self.store = engine.store
@@ -1093,6 +1095,7 @@ class _TaskRun:
         self.pause_at_confirmation = pause_at_confirmation
         self.resume_item_id = resume_item_id
         self.restart_active = restart_active
+        self.refresh_source = refresh_source
         self.amendment_attempt = amendment_attempt
         self.reuse_dag_key = reuse_dag_key
         self.review_acceptance_doc = review_acceptance_doc
@@ -1110,6 +1113,7 @@ class _TaskRun:
             source_refs=list(source_refs or []),
             source_of_truth=payload.get("source_of_truth") or {},
             amendment_attempt=amendment_attempt,
+            plan_profile=payload.get("plan_profile"),
         )
         self.reused_created_item = False
         self.created_after_ambiguous_failure = False
@@ -1136,13 +1140,21 @@ class _TaskRun:
         self.result: Dict[str, Any] = {}
         self.on_done: Optional[Callable[[], None]] = None
 
-    def _restart_in_place(self, item: WorkItem) -> WorkItem:
-        """--restart-active: cancel the Run; a delivery awaiting review goes back to its Reviewer, anything else to the author."""
+    def _reopen_in_place(self, item: WorkItem) -> WorkItem:
+        """--restart-active: cancel the Run; a delivery awaiting review goes back to its Reviewer, anything else to the
+        author. A replaced design source: the author redoes the stage against it, once its Run has ended."""
         ports = Ports(store=self.store, runtime=self.runtime)
-        apply([CancelRun(item.id), ClearAssignment(item.id)], ports)
-        if item.phase == TaskPhase.REVIEW and item.deliverable:
-            apply([UpdateStatus(item.id, WorkItemStatus.IN_REVIEW)], ports)
-            return self.store.get_work_item(item.id)
+        if self.restart_active:
+            apply([CancelRun(item.id), ClearAssignment(item.id)], ports)
+            if item.phase == TaskPhase.REVIEW and item.deliverable:
+                apply([UpdateStatus(item.id, WorkItemStatus.IN_REVIEW)], ports)
+                return self.store.get_work_item(item.id)
+        elif self.runtime.is_active(item.id):
+            raise ValidationError(ui(
+                f"The design source changed but {self.kind.value} issue {item.id} still has an active Agent run. "
+                "Wait for it to end, or run `omac plan resume --plan-id <id> --restart-active`.",
+                f"设计来源已变化,但 {self.kind.value} issue {item.id} 仍有活跃 Agent run。请等待其结束,"
+                "或运行 `omac plan resume --plan-id <id> --restart-active`。"))
         apply(rework_to_producer(item.id), ports)
         return refresh_authoring_task(self.engine, item.id, self.spec, item_snapshot=item)
 
@@ -1151,8 +1163,9 @@ class _TaskRun:
             # Store 当前事实是 resume 的唯一授权来源。调用方 snapshot 仅为兼容保留，
             # 绝不能在读取失败时授权 refresh 或其他副作用。
             item = self.store.get_work_item(self.resume_item_id)
-            if self.restart_active:
-                item = self._restart_in_place(item)
+            if self.restart_active or (
+                    self.refresh_source and item.status != WorkItemStatus.DONE and not _is_unstarted_authoring(item)):
+                item = self._reopen_in_place(item)
             if self.kind == TaskKind.AMENDMENT:
                 self.contract = _validate_amendment_resume_contract(item, self.contract)
                 self.spec.contract = self.contract
@@ -1943,6 +1956,7 @@ def run_task(
     review_acceptance_doc: Any = None,
     review_amendment_manifest: Any = None,
     restart_active: bool = False,
+    refresh_source: bool = False,
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -1958,5 +1972,5 @@ def run_task(
         source_refs=source_refs, dag_key=dag_key, resume_item_id=resume_item_id,
         amendment_attempt=amendment_attempt, reuse_dag_key=reuse_dag_key,
         review_acceptance_doc=review_acceptance_doc,
-        review_amendment_manifest=review_amendment_manifest, restart_active=restart_active,
+        review_amendment_manifest=review_amendment_manifest, restart_active=restart_active, refresh_source=refresh_source,
     ).run()

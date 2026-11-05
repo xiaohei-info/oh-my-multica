@@ -301,7 +301,9 @@ def test_a_design_document_replaces_the_plan_stage(world, repo):
     assert not (repo.work / "AGENTS.md").exists()
     source = doc_source(world, manifest["meta"]["plan_id"])
     assert source.id == manifest["meta"]["source_issues"][0]
-    assert main(["plan", "resume", "--plan-id", manifest["meta"]["plan_id"]]) == exit_codes.VALIDATION    # never reworked by a planner
+    plan_id = manifest["meta"]["plan_id"]
+    assert main(["plan", "resume", "--plan-id", plan_id]) == exit_codes.OK       # no --doc needed: the source issue is the design
+    assert [i for i in kinds(world, TaskKind.PLAN) if i.dag_key == f"plan-{plan_id}"] == []     # and a planner never reworks it
 
 
 def large_doc_file(repo):
@@ -370,7 +372,7 @@ def test_a_resume_completes_a_doc_source_issue_left_unfinished_without_creating_
     assert main(["plan", "resume", "--plan-id", "p-reuse01", "--name", "demo-doc-reuse", "--doc", "docs/design.md"]) == exit_codes.OK
 
     assert doc_source(world, "p-reuse01").id == unfinished.id
-    assert doc_source(world, "p-reuse01").deliverable == "# Current design"
+    assert "# Current design" in doc_source(world, "p-reuse01").deliverable
 
 
 @pytest.mark.parametrize(("how", "flags", "config"), [("flag", ("--no-acceptance",), None), ("config", (), "workflow.acceptance_doc")])

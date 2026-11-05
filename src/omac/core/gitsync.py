@@ -308,6 +308,35 @@ def ensure_files_clean(paths, repo_root: str = ".", engine_type=None) -> None:
         report={"paths": relative_paths, "reason": "user_changes_before_plan"})
 
 
+def repository_revision(repo_root: str = ".") -> str:
+    result = _run(repo_root, "rev-parse", "HEAD")
+    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else "unknown"
+
+
+def ensure_sources_published(paths, repo_root: str = ".", engine_type=None) -> None:
+    """Agents clone the remote, so a design source must be committed, unmodified, and on a pushed revision."""
+    if not sync_enabled(engine_type):
+        return
+    relative_paths = _repo_relative_paths(repo_root, paths)
+    joined = " ".join(relative_paths)
+    status = _run(repo_root, "status", "--porcelain", "--", *relative_paths)
+    if status.returncode != 0:
+        raise ValidationError(ui(
+            f"Could not inspect Git status for the design source: {joined}\n  {status.stderr.strip()}",
+            f"无法检查设计来源的 Git 状态:{joined}\n  {status.stderr.strip()}"))
+    if status.stdout.strip():
+        raise ValidationError(ui(
+            f"The design source has uncommitted changes: {joined}\n"
+            f"Agents read the pushed revision. Run `git add {joined} && git commit -m docs && git push`, then rerun.",
+            f"设计来源有未提交改动:{joined}\n"
+            f"Agent 读取的是已推送的版本。请执行 `git add {joined} && git commit -m docs && git push` 后重试。"))
+    if not _run(repo_root, "branch", "-r", "--contains", "HEAD").stdout.strip():
+        raise ValidationError(ui(
+            "The current revision is not on the remote, so agents cannot read the design source. "
+            "Run `git push` and rerun.",
+            "当前 revision 尚未推送到远端,Agent 读不到设计来源。请执行 `git push` 后重试。"))
+
+
 def commit_files(paths, message: str, repo_root: str = ".",
                  engine_type=None) -> bool:
     """把一组 OMAC 状态文件作为一个提交同步到远程。"""

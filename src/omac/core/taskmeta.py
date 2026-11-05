@@ -56,6 +56,41 @@ def slug(value: str) -> str:
     return text or "task"
 
 
+PLAN_STAGE_PREFIXES = ("plan-", "doc-", "acceptance-", "decompose-")
+
+
+def plan_id_of(value: str) -> str:
+    """The plan_id behind any stage dag_key (plan-/doc-/acceptance-/decompose-) or a bare ``p-xxxx`` id."""
+    text = (value or "").strip()
+    for prefix in PLAN_STAGE_PREFIXES:
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    if not text:
+        from ..errors import ValidationError
+        from ..i18n import ui
+        raise ValidationError(ui(
+            f"Could not parse a plan_id from {value!r}; expected p-xxxx or a stage DAG key such as plan-p-xxxx.",
+            f"无法从 {value!r} 解析 plan_id —— 期望 p-xxxx 或形如 plan-p-xxxx 的阶段 DAG key。"))
+    return text
+
+
+def build_plan_profile(*, plan_id: str, name: str, source: str, no_review: bool, no_acceptance: bool,
+                       confirm: bool) -> dict:
+    """The shape of one plan pipeline, recorded on its source issue so `plan resume` needs no flags."""
+    return {"schema": PLAN_PROFILE_SCHEMA, "plan_id": plan_id, "name": name, "source": source,
+            "no_review": bool(no_review), "no_acceptance": bool(no_acceptance), "confirm": bool(confirm)}
+
+
+def parse_plan_profile(value: Any) -> Optional[dict]:
+    if not isinstance(value, dict) or value.get("schema") != PLAN_PROFILE_SCHEMA:
+        return None
+    flags = ("no_review", "no_acceptance", "confirm")
+    ok = (isinstance(value.get("plan_id"), str) and isinstance(value.get("name"), str)
+          and value.get("source") in ("doc", "goal") and all(isinstance(value.get(f), bool) for f in flags))
+    return dict(value) if ok else None
+
+
 def develop_node_id(dag_key: str) -> str:
     """Node id of a develop issue: its dag_key is ``<meta.dag_key>/<node>`` when the manifest names an instance."""
     return (dag_key or "").rsplit("/", 1)[-1]
@@ -121,6 +156,8 @@ DECISION_REQUIRED_KEY = "decision_required"
 DECISION_REQUIRED_SCHEMA = "omac.decision-required/v1"
 AMENDMENT_ATTEMPT_KEY = "amendment_attempt"
 SOURCE_REFS_KEY = "source_refs"
+PLAN_PROFILE_KEY = "plan_profile"
+PLAN_PROFILE_SCHEMA = "omac.plan-profile/v1"
 
 # run_task 交付 dict 的 key(按 kind 承载交付正文)——单一来源,tasks/plan 共用。
 # decompose 正文是 manifest(≠ kind.value),故不能用 kind.value 直接推。

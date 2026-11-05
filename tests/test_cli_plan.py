@@ -389,7 +389,7 @@ def test_resolve_goal_precedence_and_exclusivity(tmp_path):
 
 def test_doc_directory_builds_generic_design_source_set(tmp_path, monkeypatch):
     """目录输入只提供完整文件清单和通用阅读要求，不内置项目目录约定。"""
-    from omac.pipeline.plan import _read_file
+    from omac.pipeline.plan_source import build_design_source
 
     monkeypatch.chdir(tmp_path)
     docs = tmp_path / "docs"
@@ -398,7 +398,7 @@ def test_doc_directory_builds_generic_design_source_set(tmp_path, monkeypatch):
     (docs / "overview.md").write_text("CURRENT DESIGN BODY", encoding="utf-8")
     (docs / "archive" / "old.md").write_text("OLD DESIGN BODY", encoding="utf-8")
 
-    source_set = _read_file("docs", language="cn")
+    source_set = build_design_source("docs", engine_type=None, language="cn")
 
     assert "docs/README.md" in source_set
     assert "docs/overview.md" in source_set
@@ -418,7 +418,7 @@ def test_doc_directory_builds_generic_design_source_set(tmp_path, monkeypatch):
 def test_doc_directory_uses_only_git_tracked_files_for_revision_source_set(
         tmp_path, monkeypatch):
     """Git revision 输入不得把本地未跟踪噪声纳入远端不可复现的文档集合。"""
-    from omac.pipeline.plan import _read_file
+    from omac.pipeline.plan_source import build_design_source
 
     monkeypatch.chdir(tmp_path)
     docs = tmp_path / "docs"
@@ -437,7 +437,7 @@ def test_doc_directory_uses_only_git_tracked_files_for_revision_source_set(
         ["git", "commit", "-qm", "authoritative docs"],
         cwd=tmp_path, check=True)
 
-    source_set = _read_file("docs", language="cn")
+    source_set = build_design_source("docs", engine_type=None, language="cn")
 
     assert "docs/design.md" in source_set
     assert ".DS_Store" not in source_set
@@ -446,7 +446,7 @@ def test_doc_directory_uses_only_git_tracked_files_for_revision_source_set(
 @pytest.mark.integration  # runs real git
 def test_doc_directory_rejects_tracked_symlink(tmp_path, monkeypatch):
     from omac.errors import ValidationError
-    from omac.pipeline.plan import _read_file
+    from omac.pipeline.plan_source import build_design_source
 
     monkeypatch.chdir(tmp_path)
     docs = tmp_path / "docs"
@@ -461,7 +461,7 @@ def test_doc_directory_rejects_tracked_symlink(tmp_path, monkeypatch):
         cwd=tmp_path, check=True)
 
     with pytest.raises(ValidationError, match="symlink"):
-        _read_file("docs", language="cn")
+        build_design_source("docs", engine_type=None, language="cn")
 
 
 
@@ -563,3 +563,99 @@ def test_a_new_plan_replaces_another_plans_manifest_that_has_not_started(tmp_pat
     _outputs(tmp_path, monkeypatch, plan_id="p-2")
 
     assert load_manifest(str(tmp_path / ".omac" / "demo.yaml")).meta["plan_id"] == "p-2"
+
+
+# ── single-file design sources ────────────────────────────────────────────
+
+def _git(path, *args):
+    subprocess.run(["git", "-c", "user.email=test@example.com", "-c", "user.name=Test", *args], cwd=path, check=True,
+                   capture_output=True)
+
+
+def _repo_with_docs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "design.md").write_text("MAIN BODY, see appendix A", encoding="utf-8")
+    (tmp_path / "docs" / "appendix-a.md").write_text("APPENDIX BODY", encoding="utf-8")
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "add", "docs")
+    _git(tmp_path, "commit", "-qm", "docs")
+
+
+@pytest.mark.integration  # runs real git
+def test_a_single_file_source_carries_its_body_path_revision_and_the_inventory_of_its_directory(tmp_path, monkeypatch):
+    from omac.pipeline.plan_source import build_design_source
+
+    _repo_with_docs(tmp_path, monkeypatch)
+
+    source = build_design_source("docs/design.md", engine_type=None, language="en")
+
+    assert "MAIN BODY, see appendix A" in source and "APPENDIX BODY" not in source
+    assert "primary: `docs/design.md`" in source and "repository_revision:" in source
+    assert "docs/appendix-a.md" in source and "docs/design.md" in source.split("File inventory")[1]
+
+
+@pytest.mark.integration  # runs real git
+def test_a_source_must_be_committed_and_pushed_before_agents_are_asked_to_read_it(tmp_path, monkeypatch):
+    from omac.pipeline.plan_source import build_design_source
+
+    _repo_with_docs(tmp_path, monkeypatch)
+    monkeypatch.setenv("OMAC_GIT_SYNC", "1")
+
+    with pytest.raises(ValidationError, match="not on the remote"):
+        build_design_source("docs/design.md", engine_type="multica", language="en")
+
+    remote = tmp_path.parent / (tmp_path.name + "-remote.git")
+    _git(tmp_path.parent, "init", "-q", "--bare", str(remote))
+    _git(tmp_path, "remote", "add", "origin", str(remote))
+    _git(tmp_path, "push", "-q", "origin", "HEAD")
+    assert "primary: `docs/design.md`" in build_design_source("docs/design.md", engine_type="multica", language="en")
+
+    (tmp_path / "docs" / "appendix-a.md").write_text("edited", encoding="utf-8")
+    with pytest.raises(ValidationError, match="uncommitted"):
+        build_design_source("docs", engine_type="multica", language="en")
+
+
+def test_an_unrelated_commit_does_not_make_a_source_new():
+    from omac.pipeline.plan_source import source_identity
+
+    assert source_identity("repository_revision: `a`\n\nbody\n") == source_identity("repository_revision: `b`\n\nbody\n")
+    assert source_identity("repository_revision: `a`\n\nbody\n") != source_identity("repository_revision: `a`\n\nother\n")
+
+
+def test_a_file_outside_the_repository_is_its_body_with_a_note_that_relative_references_are_lost(tmp_path, monkeypatch):
+    from omac.pipeline.plan_source import build_design_source
+
+    outside = tmp_path / "outside.md"
+    outside.write_text("OUTSIDE BODY", encoding="utf-8")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+
+    source = build_design_source(str(outside), engine_type=None, language="en")
+
+    assert "OUTSIDE BODY" in source and "outside the repository" in source and "--doc <directory>" in source
+
+
+# ── pipeline identity ─────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("value", ["p-1", "plan-p-1", "doc-p-1", "acceptance-p-1", "decompose-p-1"])
+def test_every_stage_key_and_the_bare_id_name_the_same_plan(value):
+    from omac.core.taskmeta import plan_id_of
+
+    assert plan_id_of(value) == "p-1"
+
+
+def test_a_resumed_pipeline_keeps_the_recorded_shape_and_refuses_a_flag_that_contradicts_it():
+    from omac.core.taskmeta import build_plan_profile
+    from omac.pipeline.plan import PlanContext, _adopt_profile
+
+    profile = build_plan_profile(plan_id="p-1", name="demo", source="doc", no_review=False, no_acceptance=True, confirm=False)
+    ctx = PlanContext(engine=None, workspace_id="w", planner="a", orchestrator="b", reviewers=["c"], max_revisions=3,
+                      no_review=True, no_acceptance=False, members=set(), confirm=True)
+
+    with pytest.raises(ValidationError, match=r"omac plan resume --plan-id p-1"):
+        _adopt_profile(ctx, "p-1", profile, {"no_review": True})
+    _adopt_profile(ctx, "p-1", profile, {})
+
+    assert (ctx.no_review, ctx.no_acceptance, ctx.confirm) == (False, True, False)

@@ -21,14 +21,11 @@ run_task 把它以 issue body「上游产物(只读上下文)」段落到 issue 
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import shlex
-import subprocess
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yaml
@@ -39,17 +36,17 @@ from ..core.gitsync import commit_files, ensure_config_synced, ensure_files_clea
 from ..core.lint import lint
 from ..core.manifest import load_manifest, loads_manifest, manifest_files, save_manifest
 from ..core.project_rules import read_agents_snapshot, write_project_rules
-from ..core.repository_files import revision_directory_files
 from ..core.review_preflight import plan_manifest_preflight
 from ..core.review_continuation import (
     authorized_review_limit, build_review_continuation, review_continuation_mode,
 )
 from ..core.taskmeta import (
-    TaskKind, TaskPhase, make_dag_key, make_plan_id,
+    TaskKind, TaskPhase, build_plan_profile, make_dag_key, make_plan_id, plan_id_of,
 )
 from ..core.workitem import WorkItem, WorkItemStatus
 from ..errors import ValidationError
 from ..i18n import CN, ui
+from .plan_source import build_design_source, source_identity
 from .tasks import run_task
 from .apply import Ports, apply, apply_one
 from .decide_transitions import rework_to_producer
@@ -102,30 +99,6 @@ def _emit_plan_next_steps(manifest_path: str, acceptance_path: Optional[str] = N
     ))
 
 
-def plan_id_from_dag_key(dag_key: str) -> str:
-    """从 plan 流水线任一阶段 dag_key 取出同一个 plan_id。"""
-    value = (dag_key or "").strip()
-    for prefix in ("plan-", "acceptance-", "decompose-"):
-        if value.startswith(prefix):
-            plan_id = value[len(prefix):]
-            if plan_id:
-                return plan_id
-    raise ValidationError(ui(
-        f"Could not parse plan_id from dag_key {dag_key}; expected plan-p-xxxx",
-        f"无法从 dag_key 解析 plan_id:{dag_key} —— 期望形如 plan-p-xxxx"))
-
-
-def plan_dag_key_from_id(plan_id: str) -> str:
-    value = (plan_id or "").strip()
-    if not value:
-        raise ValidationError(ui("--plan-id cannot be empty", "--plan-id 不能为空"))
-    if value.startswith("plan-"):
-        return value
-    if value.startswith(("acceptance-", "decompose-")):
-        value = plan_id_from_dag_key(value)
-    return make_dag_key(TaskKind.PLAN, scope=value)
-
-
 def _phase_text(delivery: Dict[str, Any], key: str) -> str:
     """从 run_task 返回的 delivery 取某 key 的文本交付。"""
     value = delivery.get(key)
@@ -134,76 +107,6 @@ def _phase_text(delivery: Dict[str, Any], key: str) -> str:
             f"Stage delivery is missing '{key}'. Check the delivery contract and submitted artifacts.",
             f"阶段交付缺少 '{key}' —— 产出者未在 artifacts 中交付;请检查交付契约。"))
     return str(value)
-
-
-def _read_file(path: str, *, language: str | None = None) -> str:
-    if not os.path.exists(path):
-        raise ValidationError(ui(
-            f"File not found: {path}. Check the --doc path.",
-            f"文件不存在: {path} —— 请确认 --doc 路径"))
-    if os.path.isdir(path):
-        return _describe_design_directory(path, language=language)
-    with open(path, encoding="utf-8") as fh:
-        return fh.read()
-
-
-def _describe_design_directory(path: str, *, language: str | None = None) -> str:
-    """把设计目录转换为可远程读取的确定性源集合，不复制文档正文。"""
-    repository_root = Path.cwd().resolve()
-    directory = Path(path).resolve()
-    try:
-        directory_name = directory.relative_to(repository_root).as_posix()
-    except ValueError as exc:
-        raise ValidationError(ui(
-            f"Design directory must be inside the current repository: {path}",
-            f"设计文档目录必须位于当前仓库内:{path}")) from exc
-
-    files = revision_directory_files(directory, repository_root=repository_root)
-    if not files:
-        raise ValidationError(ui(
-            f"Design directory contains no files: {path}",
-            f"设计文档目录中没有文件:{path}"))
-
-    entries = []
-    for source in files:
-        digest = hashlib.sha256(source.content).hexdigest()
-        entries.append(f"- `{source.logical_path}` sha256=`{digest}`")
-
-    revision = _repository_revision(repository_root)
-    instructions = ui(
-        "Recursively inspect this directory and read every design document and necessary linked material. "
-        "Determine authority, currentness, scope, and conflicts from repository governance and document "
-        "content. Do not assume that any filename or subdirectory has a built-in meaning. Complete only "
-        "the current stage delivery required by `work show`, and preserve precise file and section "
-        "references for downstream stages.",
-        "递归检查该目录,阅读其中全部设计文档及其引用的必要资料。根据仓库治理规则和文档内容判断"
-        "权威关系、当前有效性、适用范围与冲突,不得假设任何文件名或子目录具有内置语义。只完成 "
-        "work show 当前阶段要求的交付,并为下游阶段保留精确文件与章节引用。",
-        language=language,
-    )
-    return (
-        "# OMAC design directory source set\n\n"
-        f"repository_revision: `{revision}`\n\n"
-        f"design_directory: `{directory_name}`\n\n"
-        f"{instructions}\n\n"
-        "## File inventory\n\n"
-        + "\n".join(entries)
-        + "\n"
-    )
-
-
-def _repository_revision(repository_root: Path) -> str:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=repository_root,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return "unknown"
-    return result.stdout.strip() or "unknown"
 
 
 def _write_if_missing(dirpath: str) -> None:
@@ -242,10 +145,7 @@ def _find_stage_item(
     kind: TaskKind,
     dag_key: str,
 ) -> Optional[WorkItem]:
-    matches = [
-        item for item in store.list_work_items(workspace_id)
-        if item.kind == kind and item.dag_key == dag_key
-    ]
+    matches = [item for item in store.find_work_items_by_dag_key(workspace_id, dag_key) if item.kind == kind]
     if len(matches) > 1:
         raise ValidationError(ui(
             f"dag_key is not unique: {dag_key}. Resolve duplicate platform issues first.",
@@ -265,11 +165,7 @@ def _continuation_selector(
         TaskKind.DECOMPOSE.value: TaskKind.DECOMPOSE,
     }
     if dag_key:
-        plan_id_value = plan_id_from_dag_key(dag_key)
-        stage_value = next(
-            (prefix for prefix in allowed if dag_key.startswith(f"{prefix}-")),
-            None,
-        )
+        stage_value = next((prefix for prefix in allowed if dag_key.startswith(f"{prefix}-")), None)
         if stage_value is None:
             raise ValidationError(ui(
                 f"Unsupported plan stage DAG key: {dag_key}",
@@ -278,7 +174,7 @@ def _continuation_selector(
             raise ValidationError(ui(
                 f"--stage {stage} conflicts with --dag-key {dag_key}",
                 f"--stage {stage} 与 --dag-key {dag_key} 冲突"))
-        return allowed[stage_value], dag_key, plan_id_value
+        return allowed[stage_value], dag_key, plan_id_of(dag_key)
     if not plan_id or not stage:
         raise ValidationError(ui(
             "continue-review requires --dag-key, or --plan-id together with --stage",
@@ -287,11 +183,7 @@ def _continuation_selector(
         raise ValidationError(ui(
             f"Unsupported review stage: {stage}",
             f"不支持的 review stage:{stage}"))
-    plan_id_value = (
-        plan_id_from_dag_key(plan_id)
-        if plan_id.startswith(("plan-", "acceptance-", "decompose-"))
-        else plan_id
-    )
+    plan_id_value = plan_id_of(plan_id)
     kind = allowed[stage]
     return kind, make_dag_key(kind, scope=plan_id_value), plan_id_value
 
@@ -436,7 +328,7 @@ def _name_from_plan_issue(item: WorkItem) -> str:
         if title.endswith(suffix):
             title = title[:-len(suffix)].strip()
             break
-    return title or plan_id_from_dag_key(item.dag_key)
+    return title or plan_id_of(item.dag_key)
 
 
 def _compose_guard(
@@ -480,11 +372,17 @@ def _compose_guard(
     return guard
 
 
+def _profile_of(ctx: PlanContext, plan_id: str, name: str, source: str) -> Dict[str, Any]:
+    return build_plan_profile(plan_id=plan_id, name=name, source=source, no_review=ctx.no_review,
+                              no_acceptance=ctx.no_acceptance, confirm=ctx.confirm)
+
+
 def _plan_stage_payload(ctx: PlanContext, name: str, goal_text: Optional[str],
-                        agents_snapshot) -> Dict[str, Any]:
+                        agents_snapshot, profile: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "title": ui(f"{name} design", f"{name} 设计方案", language=ctx.language),
         "source_of_truth": {},
+        "plan_profile": profile,
     }
     if goal_text:
         # 需求经 source_of_truth 通道进 planner 的 issue body(与 phase 2/3 同源),
@@ -495,11 +393,13 @@ def _plan_stage_payload(ctx: PlanContext, name: str, goal_text: Optional[str],
     return payload
 
 
-def _publish_doc_source(ctx: PlanContext, name: str, plan_id: str, text: str) -> str:
+def _publish_doc_source(ctx: PlanContext, name: str, plan_id: str, text: str,
+                        profile: Optional[Dict[str, Any]] = None) -> str:
     """--doc 等价于 planner 阶段已完成：发布承载文档的来源 issue，返回其 id。
 
     dag_key 用 doc- 前缀：这条 issue 没有 Agent 产出，不能被无 --doc 的 plan resume
     当作缺项目规范的 plan issue 退回 planner。不指派 Agent，因此不产生 Run。
+    profile 只在新建时写入；老流水线没有 profile，resume 不补写。
     """
     store = ctx.engine.store
     dag_key = f"doc-{plan_id}"
@@ -514,8 +414,13 @@ def _publish_doc_source(ctx: PlanContext, name: str, plan_id: str, text: str) ->
         'kind': TaskKind.PLAN,
     }), Ports(store=store))
     # 文档变化时发布新版本；仍绑定旧摘要的下游 work read 会失败关闭。
+    fields: Dict[str, Any] = {}
     if item.deliverable != text:
-        apply([UpdateMetadata(item.id, {'deliverable': text})], Ports(store=store))
+        fields['deliverable'] = text
+    if profile is not None and item.plan_profile is None:
+        fields['plan_profile'] = profile
+    if fields:
+        apply([UpdateMetadata(item.id, fields)], Ports(store=store))
     if item.status != WorkItemStatus.DONE:
         apply([UpdateStatus(item.id, WorkItemStatus.DONE)], Ports(store=store))
     return item.id
@@ -533,12 +438,13 @@ def _stage_source_refs(plan_item_id: Optional[str],
 
 def _run_plan_stage(ctx: PlanContext, name: str, *, goal_text: Optional[str], agents_snapshot,
                     reviewers, poll_cb, dag_key: str, resume_item_id: Optional[str] = None,
-                    restart_active: bool = False) -> Tuple[str, str, str]:
+                    restart_active: bool = False, profile: Optional[Dict[str, Any]] = None,
+                    refresh_source: bool = False) -> Tuple[str, str, str]:
     """phase 1:设计方案。返回 (plan_item_id, plan_text, project_rules_text)。"""
     res = run_task(
         ctx.engine,
         TaskKind.PLAN,
-        _plan_stage_payload(ctx, name, goal_text, agents_snapshot),
+        _plan_stage_payload(ctx, name, goal_text, agents_snapshot, profile),
         ctx.planner,
         reviewers=reviewers,
         max_revisions=ctx.max_revisions,
@@ -547,6 +453,7 @@ def _run_plan_stage(ctx: PlanContext, name: str, *, goal_text: Optional[str], ag
         dag_key=dag_key,
         resume_item_id=resume_item_id,
         restart_active=restart_active,
+        refresh_source=refresh_source,
     )
     return (res["item_id"], _phase_text(res["delivery"], _PLAN_KEY),
             _phase_text(res["delivery"], "project_rules"))
@@ -555,7 +462,7 @@ def _run_plan_stage(ctx: PlanContext, name: str, *, goal_text: Optional[str], ag
 def _run_acceptance_stage(
     ctx: PlanContext, name: str, *, plan_text: str, plan_item_id: Optional[str], reviewers,
     poll_cb, dag_key: str, resume_item_id: Optional[str], restart_active: bool = False,
-    source_of_truth: Optional[Dict[str, str]] = None, title: Optional[str] = None,
+    refresh_source: bool = False, title: Optional[str] = None,
 ) -> Tuple[str, acceptance_mod.AcceptanceDoc, str]:
     """phase 2:验收文档。返回 (text, doc, item_id);落盘在 _write_plan_outputs。"""
     res = run_task(
@@ -563,7 +470,7 @@ def _run_acceptance_stage(
         TaskKind.ACCEPTANCE,
         {"title": title or ui(
             f"{name} acceptance document", f"{name} 验收文档", language=ctx.language),
-         "source_of_truth": source_of_truth or {"plan": plan_text}},
+         "source_of_truth": {"plan": plan_text}},
         ctx.planner,
         reviewers=reviewers,
         max_revisions=ctx.max_revisions,
@@ -574,6 +481,7 @@ def _run_acceptance_stage(
         dag_key=dag_key,
         resume_item_id=resume_item_id,
         restart_active=restart_active,
+        refresh_source=refresh_source,
     )
     text = _phase_text(res["delivery"], _ACCEPTANCE_KEY)
     return text, _validate_acceptance(text), res["item_id"]
@@ -583,6 +491,7 @@ def _run_decompose_stage(
     ctx: PlanContext, name: str, *, plan_text: str, acceptance_text: Optional[str],
     acceptance_doc, plan_item_id: Optional[str], acceptance_item_id: Optional[str],
     reviewers, poll_cb, dag_key: str, resume_item_id: Optional[str], restart_active: bool = False,
+    refresh_source: bool = False,
 ) -> Tuple[str, str]:
     """phase 3:拆解(经 lint 机器门 ≤ max_revisions 轮 + 内置 review)。返回 (manifest_text, item_id)。"""
     inputs = {"plan": plan_text}
@@ -603,6 +512,7 @@ def _run_decompose_stage(
         resume_item_id=resume_item_id,
         review_acceptance_doc=acceptance_doc,
         restart_active=restart_active,
+        refresh_source=refresh_source,
     )
     return _phase_text(res["delivery"], _MANIFEST_KEY), res["item_id"]
 
@@ -697,12 +607,14 @@ def plan_create(
     plan_item_id: Optional[str] = None
     project_rules_text: Optional[str] = None
     if doc_path is not None:
-        plan_text = _read_file(doc_path, language=ctx.language)
-        plan_item_id = _publish_doc_source(ctx, name, plan_id, plan_text)
+        plan_text = build_design_source(doc_path, engine_type=engine_type, language=ctx.language)
+        plan_item_id = _publish_doc_source(
+            ctx, name, plan_id, plan_text, _profile_of(ctx, plan_id, name, "doc"))
     else:
         plan_item_id, plan_text, project_rules_text = _run_plan_stage(
             ctx, name, goal_text=goal_text, agents_snapshot=agents_snapshot,
-            dag_key=make_dag_key(TaskKind.PLAN, scope=plan_id), **stage)
+            dag_key=make_dag_key(TaskKind.PLAN, scope=plan_id),
+            profile=_profile_of(ctx, plan_id, name, "goal"), **stage)
 
     # ── phase 2:验收文档(跳过如果 --no-acceptance) ──
     acceptance_text: Optional[str] = None
@@ -729,31 +641,70 @@ def plan_create(
 
 
 def _resume_plan_id(dag_key: Optional[str], plan_id: Optional[str]) -> str:
-    if dag_key:
-        return plan_id_from_dag_key(dag_key)
-    if plan_id:
-        return plan_id_from_dag_key(plan_id) if plan_id.startswith("plan-") else plan_id
+    if dag_key or plan_id:
+        return plan_id_of(dag_key or plan_id)
     raise ValidationError(ui(
         "plan resume requires --dag-key or --plan-id",
         "plan resume 需要 --dag-key 或 --plan-id"))
 
 
-def _resume_plan_stage(ctx: PlanContext, *, plan_key: str, name: Optional[str],
-                       doc_path: Optional[str], agents_snapshot, reviewers, poll_cb,
-                       restart_active: bool = False):
-    """续跑 phase 1。返回 (resolved_name, plan_item_id, plan_text, project_rules_text)。"""
+def _adopt_profile(ctx: PlanContext, plan_id: str, profile: Optional[Dict[str, Any]],
+                   cli_flags: Dict[str, bool]) -> None:
+    """The recorded shape wins; a flag that contradicts it is refused with the command that does not."""
+    if profile is None:
+        return
+    conflicts = [flag for flag, key, recorded in (
+        ("--no-review", "no_review", profile["no_review"]),
+        ("--no-acceptance", "no_acceptance", profile["no_acceptance"]),
+        ("--no-confirm", "no_confirm", not profile["confirm"]),
+    ) if cli_flags.get(key) and not recorded]
+    if conflicts:
+        raise ValidationError(ui(
+            f"{', '.join(conflicts)} contradicts how plan {plan_id} was created. A resumed pipeline keeps its shape: "
+            f"run `omac plan resume --plan-id {plan_id}` without it.",
+            f"{', '.join(conflicts)} 与 plan {plan_id} 创建时的形态冲突。续跑沿用原形态:"
+            f"请去掉该参数运行 `omac plan resume --plan-id {plan_id}`。"))
+    ctx.no_review, ctx.no_acceptance, ctx.confirm = profile["no_review"], profile["no_acceptance"], profile["confirm"]
+
+
+@dataclass
+class _Source:
+    """The source of a resumed pipeline: its stage-1 issue and the text later stages read."""
+    name: str
+    item_id: str
+    text: str
+    project_rules: Optional[str] = None
+    changed: bool = False       # an explicit --doc replaced the published source
+
+
+def _resume_doc_source(ctx: PlanContext, plan_id: str, doc: Optional[WorkItem], name: Optional[str],
+                       doc_path: Optional[str]) -> _Source:
+    """A --doc pipeline: the source issue is the text; --doc only republishes it when its content differs."""
+    profile = doc.plan_profile if doc else None
+    name = name or (profile or {}).get("name") or (_name_from_plan_issue(doc) if doc else None)
+    if not name:
+        raise ValidationError(ui(
+            f"plan resume --doc requires --name: no source issue doc-{plan_id} exists to take it from",
+            f"plan resume --doc 需要 --name:不存在可推断名字的来源 issue doc-{plan_id}"))
+    text = doc.deliverable if doc else None
+    changed = False
     if doc_path is not None:
-        plan_id = plan_id_from_dag_key(plan_key)
-        source = None if name else _find_by_dag_key(ctx, TaskKind.PLAN, f"doc-{plan_id}")
-        if source is not None:
-            name = _name_from_plan_issue(source)
-        if not name:
-            raise ValidationError(ui(
-                f"plan resume --doc requires --name: no source issue doc-{plan_id} exists to take it from",
-                f"plan resume --doc 需要 --name:不存在可推断名字的来源 issue doc-{plan_id}"))
-        plan_text = _read_file(doc_path, language=ctx.language)
-        source_id = _publish_doc_source(ctx, name, plan_id, plan_text)
-        return name, source_id, plan_text, None
+        fresh = build_design_source(
+            doc_path, engine_type=ctx.engine.store.config.engine_type, language=ctx.language)
+        changed = text is not None and source_identity(fresh) != source_identity(text)
+        if text is None or changed:
+            text = fresh
+    if not text:
+        raise ValidationError(ui(
+            f"The source issue doc-{plan_id} carries no design text. Run "
+            f"`omac plan resume --plan-id {plan_id} --doc <file-or-directory>` to publish it.",
+            f"来源 issue doc-{plan_id} 没有设计文本。请运行 "
+            f"`omac plan resume --plan-id {plan_id} --doc <文件或目录>` 发布。"))
+    return _Source(name, _publish_doc_source(ctx, name, plan_id, text), text, changed=changed)
+
+
+def _resume_goal_source(ctx: PlanContext, plan_key: str, name: Optional[str], agents_snapshot,
+                        reviewers, poll_cb, restart_active: bool) -> _Source:
     store = ctx.engine.store
     plan_item = _require_by_dag_key(ctx, TaskKind.PLAN, plan_key)
     if not plan_item.project_rules:
@@ -761,12 +712,11 @@ def _resume_plan_stage(ctx: PlanContext, *, plan_key: str, name: Optional[str],
         # 回到 authoring,由 planner 补交两份文件并重新走确认/review。
         apply(rework_to_producer(plan_item.id), Ports(store=store))
         plan_item = store.get_work_item(plan_item.id)
-    resolved_name = name or _name_from_plan_issue(plan_item)
+    resolved = name or (plan_item.plan_profile or {}).get("name") or _name_from_plan_issue(plan_item)
     item_id, plan_text, rules = _run_plan_stage(
-        ctx, resolved_name, goal_text=None, agents_snapshot=agents_snapshot,
-        reviewers=reviewers, poll_cb=poll_cb, dag_key=plan_key, resume_item_id=plan_item.id,
-        restart_active=restart_active)
-    return resolved_name, item_id, plan_text, rules
+        ctx, resolved, goal_text=None, agents_snapshot=agents_snapshot, reviewers=reviewers,
+        poll_cb=poll_cb, dag_key=plan_key, resume_item_id=plan_item.id, restart_active=restart_active)
+    return _Source(resolved, item_id, plan_text, rules)
 
 
 def _stage_item_for_resume(ctx: PlanContext, kind: TaskKind, plan_id: str, issue_id: Optional[str],
@@ -807,34 +757,41 @@ def plan_resume(
     restart_active: bool = False,
     acceptance_issue_id: Optional[str] = None,
     decompose_issue_id: Optional[str] = None,
+    cli_flags: Optional[Dict[str, bool]] = None,
     poll: Optional[Callable[[], None]] = None,
 ) -> int:
     """按唯一 plan_id/dag_key 恢复 plan create 流水线。
 
-    续跑锚点是机器生成的 plan_id,不是人类可重复的 name。任一阶段存在已建
-    issue 时复用原 issue,避免中断后创建第二条设计/验收/拆解 issue。
+    续跑锚点是机器生成的 plan_id,不是人类可重复的 name。来源 issue 记录了流水线形态
+    (doc / goal、是否评审、验收、确认),所以 `plan resume --plan-id` 不需要再带任何形态参数。
+    任一阶段存在已建 issue 时复用原 issue,避免中断后创建第二条设计/验收/拆解 issue。
     """
     plan_id_value = _resume_plan_id(dag_key, plan_id)
     engine_type = ctx.engine.store.config.engine_type
     ensure_config_synced(CONFIG_PATH, branch="main", engine_type=engine_type)
-    if doc_path is None:
+    doc = _find_by_dag_key(ctx, TaskKind.PLAN, f"doc-{plan_id_value}")
+    from_doc = doc is not None or doc_path is not None
+    plan_key = make_dag_key(TaskKind.PLAN, scope=plan_id_value)
+    goal_item = None if from_doc else _require_by_dag_key(ctx, TaskKind.PLAN, plan_key)
+    anchor = doc or goal_item
+    _adopt_profile(ctx, plan_id_value, anchor.plan_profile if anchor else None, cli_flags or {})
+    if not from_doc:
         ensure_files_clean(["AGENTS.md"], engine_type=engine_type)
-    base_dir = CONFIG_DIR
     reviewers = [] if ctx.no_review else ctx.reviewers
     poll_cb = poll if poll is not None else ctx.poll()
-    agents_snapshot = read_agents_snapshot() if doc_path is None else None
+    agents_snapshot = None if from_doc else read_agents_snapshot()
     restart = (
-        _restart_target(ctx, plan_id_value, doc=doc_path is not None, acceptance_issue_id=acceptance_issue_id,
+        _restart_target(ctx, plan_id_value, doc=from_doc, acceptance_issue_id=acceptance_issue_id,
                         decompose_issue_id=decompose_issue_id)
         if restart_active else None)
     stage = dict(reviewers=reviewers, poll_cb=poll_cb)
 
-    resolved_name, plan_item_id, plan_text, project_rules_text = _resume_plan_stage(
-        ctx, plan_key=make_dag_key(TaskKind.PLAN, scope=plan_id_value), name=name,
-        doc_path=doc_path, agents_snapshot=agents_snapshot,
-        restart_active=restart == TaskKind.PLAN, **stage)
-    manifest_path = os.path.join(base_dir, f"{resolved_name}.yaml")
-    acceptance_path = os.path.join(base_dir, f"{resolved_name}.acceptance.yaml")
+    source = (
+        _resume_doc_source(ctx, plan_id_value, doc, name, doc_path) if from_doc else
+        _resume_goal_source(ctx, plan_key, name, agents_snapshot, restart_active=restart == TaskKind.PLAN, **stage))
+    manifest_path = os.path.join(CONFIG_DIR, f"{source.name}.yaml")
+    acceptance_path = os.path.join(CONFIG_DIR, f"{source.name}.acceptance.yaml")
+    refresh = source.changed          # the first stage that is not finished reads the replaced source
 
     acceptance_text: Optional[str] = None
     acceptance_doc: Optional[acceptance_mod.AcceptanceDoc] = None
@@ -843,27 +800,28 @@ def plan_resume(
         acceptance_item = _stage_item_for_resume(
             ctx, TaskKind.ACCEPTANCE, plan_id_value, acceptance_issue_id, ctx.planner)
         acceptance_text, acceptance_doc, acceptance_item_id = _run_acceptance_stage(
-            ctx, resolved_name, plan_text=plan_text, plan_item_id=plan_item_id,
+            ctx, source.name, plan_text=source.text, plan_item_id=source.item_id,
             dag_key=make_dag_key(TaskKind.ACCEPTANCE, scope=plan_id_value),
             resume_item_id=acceptance_item.id if acceptance_item else None,
-            restart_active=restart == TaskKind.ACCEPTANCE,
-            title=ui(f"{resolved_name} acceptance document", f"{resolved_name} 验收文档", language=ctx.language),
+            restart_active=restart == TaskKind.ACCEPTANCE, refresh_source=refresh,
+            title=ui(f"{source.name} acceptance document", f"{source.name} 验收文档", language=ctx.language),
             **stage)
+        refresh = refresh and bool(acceptance_item) and acceptance_item.status == WorkItemStatus.DONE
 
     decompose_item = _stage_item_for_resume(
         ctx, TaskKind.DECOMPOSE, plan_id_value, decompose_issue_id, ctx.orchestrator)
     manifest_text, decompose_item_id = _run_decompose_stage(
-        ctx, resolved_name, plan_text=plan_text, acceptance_text=acceptance_text,
-        acceptance_doc=acceptance_doc, plan_item_id=plan_item_id,
+        ctx, source.name, plan_text=source.text, acceptance_text=acceptance_text,
+        acceptance_doc=acceptance_doc, plan_item_id=source.item_id,
         acceptance_item_id=acceptance_item_id,
         dag_key=make_dag_key(TaskKind.DECOMPOSE, scope=plan_id_value),
         resume_item_id=decompose_item.id if decompose_item else None,
-        restart_active=restart == TaskKind.DECOMPOSE, **stage)
+        restart_active=restart == TaskKind.DECOMPOSE, refresh_source=refresh, **stage)
 
     _write_plan_outputs(
-        ctx, plan_id=plan_id_value, name=resolved_name, manifest_text=manifest_text,
+        ctx, plan_id=plan_id_value, name=source.name, manifest_text=manifest_text,
         acceptance_text=acceptance_text,
-        source_issues=[r for r in [plan_item_id, acceptance_item_id, decompose_item_id] if r],
+        source_issues=[r for r in [source.item_id, acceptance_item_id, decompose_item_id] if r],
         manifest_path=manifest_path, acceptance_path=acceptance_path,
-        project_rules_text=project_rules_text, agents_snapshot=agents_snapshot)
+        project_rules_text=source.project_rules, agents_snapshot=agents_snapshot)
     return 0
