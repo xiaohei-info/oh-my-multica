@@ -103,6 +103,17 @@ def test_the_tick_state_never_reports_convergence_from_an_unfinished_audit(runni
     assert decide_tick_state(running=running, failed=failed, full_scan=full_scan, audit_complete=audit_complete) == state
 
 
+@pytest.mark.parametrize(("running", "failed", "full_scan", "audit_complete", "state"), [
+    pytest.param(True, False, False, True, "running", id="held-nodes-do-not-stop-the-other-branches"),
+    pytest.param(False, True, False, True, "needs_decision", id="a-failure-is-decided-before-the-held-nodes"),
+    pytest.param(False, False, False, True, "held", id="only-held-nodes-are-left"),
+    pytest.param(False, False, True, False, "running", id="an-unfinished-audit-is-not-a-hold"),
+])
+def test_only_held_nodes_left_is_its_own_tick_state_never_convergence(running, failed, full_scan, audit_complete, state):
+    assert decide_tick_state(
+        running=running, failed=failed, full_scan=full_scan, audit_complete=audit_complete, held=True) == state
+
+
 @pytest.mark.parametrize("remote", [PR.MERGED, PR.OPEN, PR.PENDING])
 def test_an_unknown_merge_marker_blocks_a_done_node_whatever_the_remote_says(remote):
     plan = decide_done_develop(done(request_state="invalid", request_state_valid=False, pr_state=remote,

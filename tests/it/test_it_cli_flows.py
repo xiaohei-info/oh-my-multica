@@ -93,3 +93,31 @@ def test_ci_check_and_merge_each_run_once_per_node(project, stack, tmp_path):
     assert len(log.read_text().splitlines()) == 1, "the CI check ran once"
     assert len(stack.gh_calls("merge")) - merges_before == 1, "the merge ran once"
     assert load_manifest(manifest).nodes["dlv"].merged is True
+
+
+def test_a_held_node_stops_nothing_else_the_run_ends_exit_20_listing_the_release_and_release_resumes(project, stack):
+    stack.set_scenario("alice", [[stack.tool("worker-submit")]])
+    manifest = project.manifest(
+        "hold-flow", _nodes("hold-a", "hold-b", "hold-c", "hold-d", blocked_by={"hold-b": ["hold-a"], "hold-d": ["hold-c"]}))
+    held = json.loads(project.omac("node", "hold", manifest, "hold-a", "--reason", "needs the test account").stdout)
+    assert (held["held"], held["hold_reason"]) == (True, "needs the test account")
+
+    stopped = project.omac("dag", "run", manifest, "--max-minutes", "3", "--output", "json")
+
+    assert stopped.returncode == 20, stopped.stdout + stopped.stderr
+    data = json.loads(stopped.stdout)
+    assert sorted(data["done"]) == ["hold-c", "hold-d"] and data["running"] == []          # the unrelated branch finished
+    assert data["report"] == {"held_nodes": [{"key": "hold-a", "reason": "needs the test account"}],
+                              "blocked_downstream": ["hold-b"],
+                              "next_actions": [f"omac node release {manifest} hold-a"]}
+    nodes = load_manifest(manifest).nodes                                                   # the tick's manifest sync left the hold alone
+    assert (nodes["hold-a"].held, nodes["hold-a"].status, nodes["hold-a"].work_item_id) == (True, "todo", None)
+    assert (nodes["hold-b"].status, nodes["hold-b"].work_item_id) == ("todo", None)
+    rows = {row["key"]: row for row in json.loads(project.omac("dag", "status", manifest, "--output", "json").stdout)["nodes"]}
+    assert (rows["hold-a"]["held"], rows["hold-a"]["hold_reason"], rows["hold-b"]["held"]) == (True, "needs the test account", False)
+
+    project.omac("node", "release", manifest, "hold-a")
+    resumed = project.omac("dag", "run", manifest, "--max-minutes", "3", "--output", "json")
+
+    assert resumed.returncode == 0, resumed.stdout + resumed.stderr
+    assert sorted(json.loads(resumed.stdout)["done"]) == ["hold-a", "hold-b", "hold-c", "hold-d"]

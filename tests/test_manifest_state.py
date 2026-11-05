@@ -40,6 +40,36 @@ def test_runtime_state_round_trips_through_state_files(tmp_path):
     assert (loaded.merge_request_state, loaded.recovery_marker) == ("requested", True)
 
 
+def test_a_hold_and_its_reason_round_trip_through_the_state_file_and_release_removes_them(tmp_path):
+    path = str(tmp_path / "dag.yaml")
+    manifest = _dag(2)
+    manifest.nodes["n1"].held, manifest.nodes["n1"].hold_reason = True, "needs the test account"
+    save_manifest(manifest, path)
+
+    loaded = load_manifest(path)
+    assert (loaded.nodes["n1"].held, loaded.nodes["n1"].hold_reason) == (True, "needs the test account")
+    assert (loaded.nodes["n0"].held, loaded.nodes["n0"].hold_reason) == (False, None)
+    assert "held" not in yaml.safe_load(open(path))["nodes"][1]          # runtime fact: never in the definition file
+
+    loaded.nodes["n1"].held, loaded.nodes["n1"].hold_reason = False, None
+    save_manifest(loaded, path)
+    assert load_manifest(path).nodes["n1"].held is False
+    assert "held" not in (tmp_path / "dag.state" / "n1.yaml").read_text()
+
+
+def test_a_save_of_the_definition_keeps_the_hold_a_reload_sees(tmp_path):
+    path = str(tmp_path / "dag.yaml")
+    manifest = _dag(2)
+    manifest.nodes["n1"].held = True
+    save_manifest(manifest, path)
+
+    reloaded = load_manifest(path)
+    reloaded.nodes["n0"].worker = "bob"                                  # a definition change rewrites the definition file
+    save_manifest(reloaded, path)
+
+    assert load_manifest(path).nodes["n1"].held is True
+
+
 def test_a_save_rewrites_only_the_files_that_changed(tmp_path):
     path = str(tmp_path / "dag.yaml")
     save_manifest(_dag(5), path)

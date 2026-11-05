@@ -10,7 +10,7 @@ from .. import exit_codes
 from ..output import add_output_flag, hint, print_json
 from ...core.config import load_config
 from ...core.manifest import (
-    MISSING_CONSUMES, clear_confirmed_merge, load_manifest, save_manifest,
+    MISSING_CONSUMES, clear_confirmed_merge, load_manifest, manifest_write_lock, save_manifest,
 )
 from ...core.graph import downstream_of
 from ...core.taskmeta import TaskKind, TaskPhase, exact_review_report_ref
@@ -20,7 +20,8 @@ from ...engines import engine_from_config
 from ...core.workitem import PullRequestState, WorkItemStatus
 from ...errors import NeedsDecision, OmacError, ValidationError, WorkItemNotFoundError
 from ...i18n import ui
-from ...pipeline.apply import Ports, apply
+from ...pipeline.apply import ManifestState, Ports, apply
+from ...pipeline.decide_hold import HoldRefused, plan_hold, plan_release
 from ...pipeline.decide_transitions import finish_clearing_decision
 from ...pipeline.nits_acceptance import nits_marker, persist_nits_acceptance
 from ...pipeline.decide_effects import UpdateMetadata, UpdateStatus
@@ -29,7 +30,7 @@ from ...pipeline.decide_retry import (
 )
 
 NAME = "node"
-SUMMARY = "exit 20 后的决策工具(show/retry/accept-nits/accept/abandon)"
+SUMMARY = "exit 20 后的决策工具(show/retry/accept-nits/accept/abandon)与挂起(hold/release)"
 DESCRIPTION = """异常处理闭环:dag run 以 exit 20 退出后,由调用者决策。
 
 子命令:
@@ -41,6 +42,9 @@ DESCRIPTION = """异常处理闭环:dag run 以 exit 20 退出后,由调用者�
            保留 Reviewer verdict/report；下一轮仍须观察真实 PR merge
   accept   人工接受已知风险,把节点标 done 后续跑
   abandon  放弃节点:标 abandoned,不硬依赖它的下游解锁
+  hold     挂起尚未派发(todo)的节点:依赖满足也不派发,下游保持未满足,无关分支照常推进;
+           只剩挂起节点时 dag run/tick 以 exit 20 结束并列出 release 命令
+  release  取消挂起,下次 dag run 起按普通就绪节点派发
 
 决策后重跑 `omac dag run`:已 done 节点复用,从决策后的状态继续推进。
 
@@ -92,6 +96,17 @@ def register(parser):
     abandon = sub.add_parser("abandon", help="放弃节点,解锁非硬依赖下游")
     abandon.add_argument("manifest", help="manifest 文件路径")
     abandon.add_argument("node_key", help="节点 id")
+
+    hold = sub.add_parser("hold", help=ui(
+        "Hold a todo node: not dispatched, its downstream stays unsatisfied", "挂起 todo 节点:不派发,下游保持未满足"))
+    hold.add_argument("manifest", help="manifest 文件路径")
+    hold.add_argument("node_key", help="节点 id")
+    hold.add_argument("--reason", help=ui("Why it is held (shown in status and the exit 20 report)",
+                                          "挂起原因(显示在 status 与 exit 20 报告中)"))
+
+    release = sub.add_parser("release", help=ui("Release a held node", "取消节点挂起"))
+    release.add_argument("manifest", help="manifest 文件路径")
+    release.add_argument("node_key", help="节点 id")
 
 
 # ==================== helpers ====================
@@ -185,6 +200,8 @@ def _cmd_show(args) -> int:
         "worker": node.worker,
         "reviewer": node.reviewer,
         "blocked_by": list(node.blocked_by),
+        "held": node.held,
+        "hold_reason": node.hold_reason,
         "work_item_id": node.work_item_id,
         "contract": _contract_to_dict(node.contract),
         "evidence": evidence,
@@ -578,7 +595,36 @@ def _cmd_abandon(args) -> int:
     return exit_codes.OK
 
 
+# ==================== hold / release ====================
+
+def _cmd_hold_release(args) -> int:
+    """The write is a Plan applied through the manifest executor, under the manifest's single-writer lock."""
+    with manifest_write_lock(args.manifest):
+        manifest = _load_or_raise(args.manifest)
+        node = _require_node(manifest, args.node_key)
+        try:
+            plan = (plan_hold(node.id, node.status, args.reason) if args.action == "hold"
+                    else plan_release(node.id, node.held))
+        except HoldRefused as exc:
+            raise ValidationError(str(exc)) from exc
+        apply(plan, Ports(), ManifestState(manifest, args.manifest))
+    print_json({"node_key": node.id, "status": node.status, "held": node.held, "hold_reason": node.hold_reason})
+    if node.held:
+        hint(ui(
+            f"Node {node.id} is held: it is not dispatched and its downstream waits; other branches continue. "
+            f"Release it with `omac node release {args.manifest} {node.id}` (stop any running `omac dag run` first).",
+            f"节点 {node.id} 已挂起:不派发,下游等待,其他分支继续。"
+            f"准备好后 `omac node release {args.manifest} {node.id}`(先停掉正在运行的 `omac dag run`)。"))
+    else:
+        hint(ui(
+            f"Node {node.id} released. Run `omac dag run {args.manifest}` to continue.",
+            f"节点 {node.id} 已 release。运行 `omac dag run {args.manifest}` 续跑生效。"))
+    return exit_codes.OK
+
+
 def run(args) -> int:
+    if args.action in ("hold", "release"):
+        return _cmd_hold_release(args)
     if args.action == "show":
         return _cmd_show(args)
     if args.action == "retry":

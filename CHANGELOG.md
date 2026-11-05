@@ -8,6 +8,24 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-11-06
+
+- New: `omac node hold <manifest> <node> [--reason <text>]` and `omac node release <manifest> <node>` park and resume a node
+  that has not been dispatched (for example an end-to-end node that needs a real external account to be prepared first).
+  A held node is not dispatched even when its blockers are `done`; its downstream keeps an unsatisfied dependency (it is
+  neither released nor cascaded to `blocked`; `node abandon` cannot do this, because it releases a closing node early),
+  and independent branches keep advancing. The hold is a runtime fact (`held`, `hold_reason`) in the node's state
+  file, so the Loop's manifest sync keeps it. The decision table is `pipeline/decide_hold.py`; `graph.ready_nodes` is the
+  one place that skips a held node. Only a `todo` node can be held: a node in progress is refused with an explanation
+  (let it finish, or `abandon` it) and a `blocked`/`failed` node must be `retry`-ed first. Both commands write through
+  `apply` (`SetNode` + `SaveState`) under the manifest write lock, so a running `dag run` makes them exit 5; stop it first.
+- New: when no node is running or waiting for a decision and only held nodes (and the nodes behind them) are left,
+  `dag run` / `dag tick` exit 20 (the existing "caller action required" code, no new exit code) with state `held` and a
+  report `{held_nodes: [{key, reason}], blocked_downstream, next_actions}`; `next_actions` are the
+  `omac node release` commands. The acceptance inner loop stops the same way.
+- `dag status` / `dag snapshot` node rows and `node show` carry `held` and `hold_reason`; the table marks `(held)`.
+  Existing JSON fields are unchanged; `NODE_KEYS` gains the two new keys.
+
 ## [2.3.2] — 2026-11-06
 
 - Fix: one work item that a Worker or Reviewer writes while the Loop is reading it no longer fails the whole `dag tick` /

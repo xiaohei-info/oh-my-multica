@@ -5,6 +5,7 @@
 - RUNNING:进行中节点(ci_check / merging 是 manifest 侧细分态,平台侧映射见 pipeline.delivery);
 - NEEDS_DECISION:等调用者显式决策(exit 20);blocked 可经 `omac node retry` 回到 todo,不是终态;
 - SATISFIED:满足下游依赖;abandoned 视同满足(§7.5)。DAG 收敛 = 没有 RUNNING 与 NEEDS_DECISION 节点。
+挂起(held)不是状态而是 todo 节点上的标记:不就绪、不满足下游;只剩挂起节点时 tick 不算收敛(decide_tick_state)。
 """
 
 RUNNING = frozenset({"in_progress", "ci_check", "in_review", "merging"})
@@ -22,14 +23,20 @@ def ready_nodes(issues: dict) -> list:
 
     依赖「已满足」= 上游 done 或 abandoned(§7.5:abandoned 上游视同依赖已满足,
     下游可继续推进;报告中会对经过 abandoned 上游的节点加注记)。
+    挂起节点(held,`omac node hold`)依赖满足也不就绪;它保持 todo,所以下游的依赖始终未满足。
     """
     out = []
     for key, it in issues.items():
-        if it["status"] != "todo":
+        if it["status"] != "todo" or it.get("held"):
             continue
         if all(issues.get(b, {}).get("status") in SATISFIED for b in it["blocked_by"]):
             out.append(key)
     return out
+
+
+def held_nodes(issues: dict) -> list:
+    """挂起节点:被 `omac node hold` 挂起且仍是 todo 的节点 key(它们和下游是 DAG 在等人工 release)。"""
+    return [key for key, it in issues.items() if it["status"] == "todo" and it.get("held")]
 
 
 def node_waves(nodes: dict) -> dict:

@@ -14,7 +14,8 @@ from omac.cli.main import main
 from omac.core.manifest import load_manifest
 from omac.core.workitem import WorkItem, WorkItemControlProjection, WorkItemPayload, WorkItemStatus
 from omac.pipeline.report import (
-    NEEDS_DECISION_KEYS, NODE_KEYS, PROGRESS_KEYS, STATUS_REPORT_KEYS, _next_actions, build_needs_decision, render_table,
+    HELD_KEYS, NEEDS_DECISION_KEYS, NODE_KEYS, PROGRESS_KEYS, STATUS_REPORT_KEYS, _next_actions, build_held_report,
+    build_manifest_status_report, build_needs_decision, render_table,
 )
 
 
@@ -71,21 +72,50 @@ def test_the_report_keeps_the_stage_a_recorded_retry_names():
 def test_the_report_schema_is_locked():
     assert STATUS_REPORT_KEYS == ("manifest", "progress", "nodes", "needs_decision")
     assert PROGRESS_KEYS == ("total", "done", "running", "todo", "blocked", "failed", "abandoned", "converged")
-    assert NODE_KEYS == ("key", "status", "worker", "reviewer", "work_item_id", "pr_url", "blocked_by")
+    assert NODE_KEYS == ("key", "status", "worker", "reviewer", "work_item_id", "pr_url", "blocked_by", "held", "hold_reason")
     assert NEEDS_DECISION_KEYS == ("failed_nodes", "blocked_downstream", "next_actions")
+    assert HELD_KEYS == ("held_nodes", "blocked_downstream", "next_actions")
 
 
 def test_the_table_lists_the_nodes_and_the_progress():
     report = {"manifest": "m.yaml", "progress": {"total": 2, "done": 1, "running": 0, "todo": 1, "blocked": 0, "failed": 0, "abandoned": 0,
                                                    "converged": False},
               "nodes": [{"key": "a", "status": "done", "worker": "alice", "reviewer": None, "work_item_id": "1", "pr_url": "https://pr/1",
-                         "blocked_by": []},
-                        {"key": "b", "status": "todo", "worker": "bob", "reviewer": None, "work_item_id": None, "pr_url": None, "blocked_by": ["a"]}],
+                         "blocked_by": [], "held": False, "hold_reason": None},
+                        {"key": "b", "status": "todo", "worker": "bob", "reviewer": None, "work_item_id": None, "pr_url": None, "blocked_by": ["a"],
+                         "held": True, "hold_reason": "needs the test account"}],
               "needs_decision": None}
 
     table = render_table(report)
 
     assert all(header in table for header in ("KEY", "STATUS", "WORKER")) and "alice" in table and "bob" in table and "done" in table.lower()
+    assert "todo (held)" in table and "Held: b - needs the test account" in table
+
+
+def test_the_status_snapshot_shows_a_held_node_and_its_reason(tmp_path):
+    path = _manifest_yaml(tmp_path, [
+        {"id": "a", "worker": "alice", "status": "todo", "held": True, "hold_reason": "needs the test account"},
+        {"id": "b", "worker": "bob", "status": "todo", "blocked_by": ["a"]}])
+
+    rows = {row["key"]: row for row in build_manifest_status_report(load_manifest(path), path)["nodes"]}
+
+    assert (rows["a"]["held"], rows["a"]["hold_reason"]) == (True, "needs the test account")
+    assert (rows["b"]["held"], rows["b"]["hold_reason"]) == (False, None)
+
+
+def test_the_held_report_lists_held_nodes_their_downstream_and_the_release_commands(tmp_path):
+    path = _manifest_yaml(tmp_path, [
+        {"id": "a", "worker": "alice", "status": "todo", "held": True, "hold_reason": "needs the test account"},
+        {"id": "b", "worker": "bob", "status": "todo", "blocked_by": ["a"]},
+        {"id": "c", "worker": "bob", "status": "todo", "blocked_by": ["b"]},
+        {"id": "d", "worker": "bob", "status": "done"}])
+
+    report = build_held_report(load_manifest(path), path, ["a"])
+
+    assert tuple(report) == HELD_KEYS
+    assert report["held_nodes"] == [{"key": "a", "reason": "needs the test account"}]
+    assert report["blocked_downstream"] == ["b", "c"]
+    assert report["next_actions"] == [f"omac node release {path} a"]
 
 
 def test_a_missing_manifest_is_a_validation_error(tmp_path, monkeypatch):

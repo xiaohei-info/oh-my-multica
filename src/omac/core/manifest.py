@@ -261,6 +261,9 @@ class Node:
     # reconcile 按需读取据此把 blocked/failed 节点留在活跃集;标记在事实被
     # 消费/清除时移除,观察不到标记的存量事实由全量审计轮兜底。
     recovery_marker: bool = False
+    # 挂起(omac node hold):todo 节点依赖满足也不派发,下游保持未满足;只经 `omac node hold|release` 改变。
+    held: bool = False
+    hold_reason: str | None = None
 
     def __post_init__(self):
         if isinstance(self.contract, dict):
@@ -313,11 +316,14 @@ def _build_nodes(raw) -> dict:
             merged_at=n.get("merged_at"),
             merge_request_state=n.get("merge_request_state"),
             recovery_marker=bool(n.get("recovery_marker", False)),
+            held=bool(n.get("held", False)),
+            hold_reason=n.get("hold_reason"),
         )
     return nodes
 
 
-_RUNTIME_KEYS = ("work_item_id", "status", "merged", "merged_at", "merge_request_state", "recovery_marker")
+_RUNTIME_KEYS = (
+    "work_item_id", "status", "merged", "merged_at", "merge_request_state", "recovery_marker", "held", "hold_reason")
 _NODE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _STATE_HEAD = re.compile(rb"# sha256: ([0-9a-f]{64})")
 _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
@@ -353,6 +359,10 @@ def _runtime_of(n: Node) -> dict:
         state["merge_request_state"] = n.merge_request_state
     if n.recovery_marker:
         state["recovery_marker"] = True
+    if n.held:
+        state["held"] = True
+        if n.hold_reason:
+            state["hold_reason"] = n.hold_reason
     return state
 
 
@@ -363,6 +373,8 @@ def _apply_runtime(n: Node, state: dict) -> None:
     n.merged_at = state.get("merged_at")
     n.merge_request_state = state.get("merge_request_state")
     n.recovery_marker = bool(state.get("recovery_marker", False))
+    n.held = bool(state.get("held", False))
+    n.hold_reason = state.get("hold_reason")
 
 
 def _read_state_file(path: str) -> dict:

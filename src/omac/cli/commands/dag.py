@@ -805,6 +805,19 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
                 report=last_result.report,
             )
 
+        if last_result.state == "held":
+            _emit(last_result, manifest, args)
+            raise NeedsDecision(
+                ui(
+                    f"Nothing can advance: nodes {last_result.held} are held (and the nodes behind them wait). "
+                    "Prepare what they need, then release each: "
+                    f"{'; '.join(last_result.report['next_actions'])}; then rerun `omac dag run {args.manifest}`.",
+                    f"没有可推进的节点:节点 {last_result.held} 已挂起(其下游随之等待)。"
+                    f"准备好后逐个 release: {'; '.join(last_result.report['next_actions'])};"
+                    f"然后重新运行 `omac dag run {args.manifest}`。"),
+                report=last_result.report,
+            )
+
         if single_round:
             _emit(last_result, manifest, args)
             return exit_codes.IN_PROGRESS

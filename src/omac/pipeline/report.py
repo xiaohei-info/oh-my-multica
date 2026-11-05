@@ -25,9 +25,10 @@ PROGRESS_KEYS = (
 )
 NODE_KEYS = (
     "key", "status", "worker", "reviewer", "work_item_id",
-    "pr_url", "blocked_by",
+    "pr_url", "blocked_by", "held", "hold_reason",
 )
 NEEDS_DECISION_KEYS = ("failed_nodes", "blocked_downstream", "next_actions")
+HELD_KEYS = ("held_nodes", "blocked_downstream", "next_actions")
 
 
 
@@ -53,7 +54,7 @@ def _classify(status: str) -> str:
 def _graph_snapshot(manifest: Manifest) -> dict:
     """graph 算法消费的快照(仅 status + blocked_by)。"""
     return {
-        key: {"status": node.status, "blocked_by": list(node.blocked_by)}
+        key: {"status": node.status, "blocked_by": list(node.blocked_by), "held": node.held}
         for key, node in manifest.nodes.items()
     }
 
@@ -90,6 +91,8 @@ def _node_row(node, item) -> dict:
         "work_item_id": node.work_item_id,
         "pr_url": pr_url,
         "blocked_by": list(node.blocked_by),
+        "held": node.held,
+        "hold_reason": node.hold_reason,
     }
 
 
@@ -235,6 +238,17 @@ def _build_needs_decision_from_items(
     }
 
 
+def build_held_report(manifest: Manifest, manifest_path: str, held_keys: list[str]) -> dict:
+    """held 段(锁定 HELD_KEYS):被挂起的节点、其传递下游、可复制的 release 命令。exit 20 与 needs_decision 同码。"""
+    downstream = graph.downstream_of(_graph_snapshot(manifest), set(held_keys))
+    return {
+        "held_nodes": [
+            {"key": key, "reason": manifest.nodes[key].hold_reason} for key in sorted(held_keys)],
+        "blocked_downstream": sorted(downstream),
+        "next_actions": [f"omac node release {manifest_path} {key}" for key in sorted(held_keys)],
+    }
+
+
 def _build_report_from_items(
     manifest: Manifest,
     manifest_path: str,
@@ -337,7 +351,7 @@ def render_table(report: dict) -> str:
     rows = []
     for n in report["nodes"]:
         rows.append((
-            n["key"], n["status"], n["worker"] or "-",
+            n["key"], f"{n['status']} (held)" if n["held"] else n["status"], n["worker"] or "-",
             n["reviewer"] or "-", n["work_item_id"] or "-",
             n["pr_url"] or "-",
         ))
@@ -350,6 +364,10 @@ def render_table(report: dict) -> str:
     lines.append(fmt.format(*headers).rstrip())
     for row in rows:
         lines.append(fmt.format(*row).rstrip())
+
+    for n in report["nodes"]:
+        if n["held"]:
+            lines.append(f"Held: {n['key']}" + (f" - {n['hold_reason']}" if n["hold_reason"] else ""))
 
     nd = report["needs_decision"]
     if nd:

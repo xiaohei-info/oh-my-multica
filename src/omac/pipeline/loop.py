@@ -304,8 +304,9 @@ class TickResult:
     """单轮 tick 的结果。
 
     state: converged(全部 done) | running(有进行中节点或正式活跃 Run) |
-           needs_decision(有失败且无正式活跃 Run)
-    report: 仅 needs_decision 时有内容——失败节点 + 证据摘要 + 受阻下游
+           needs_decision(有失败且无正式活跃 Run) |
+           held(无进行中、无失败,只剩被 `omac node hold` 挂起的节点及其下游)
+    report: needs_decision 时是失败节点 + 证据摘要 + 受阻下游;held 时是挂起节点 + release 命令
     """
     state: str
     done: List[str] = field(default_factory=list)
@@ -314,6 +315,7 @@ class TickResult:
     dispatched: List[str] = field(default_factory=list)
     report: Dict[str, Any] = field(default_factory=dict)
     audit_complete: bool = True
+    held: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -343,7 +345,7 @@ class ReconcileResult:
 def _build_snapshot(manifest: Manifest) -> dict:
     """从 manifest 构建 graph 模块所需的 snapshot dict。"""
     return {
-        key: {"status": node.status, "blocked_by": list(node.blocked_by)}
+        key: {"status": node.status, "blocked_by": list(node.blocked_by), "held": node.held}
         for key, node in manifest.nodes.items()
     }
 
@@ -4344,12 +4346,13 @@ def tick(
     done = [k for k, n in manifest.nodes.items() if n.status == "done"]
     running = graph.running_nodes(manifest.nodes)
     failed_keys = [k for k, n in manifest.nodes.items() if n.status in graph.NEEDS_DECISION]
+    held_keys = graph.held_nodes(_build_snapshot(manifest))
 
     # 状态判定:running 优先(有正式运行继续协调),其次 needs_decision(有失败),
-    # 最后 converged(全部 done)
+    # 再次 held(只剩挂起节点),最后 converged(全部 done)
     state = decide_tick_state(
         running=bool(running), failed=bool(failed_keys),
-        full_scan=full_scan, audit_complete=reconcile_result.audit_complete)
+        full_scan=full_scan, audit_complete=reconcile_result.audit_complete, held=bool(held_keys))
     if state == "needs_decision":
         log.info(logsetup.EVT_NEEDS_DECISION, kind=_DAG_KIND,
                  failed=sorted(failed_keys), done=len(done),
@@ -4371,6 +4374,10 @@ def tick(
             evidence=new_failures)
         # 锁定 schema:P5 web / agent 消费方只依赖 NEEDS_DECISION_KEYS
         assert set(report.keys()) == set(NEEDS_DECISION_KEYS)
+    elif state == "held":
+        from ..pipeline.report import build_held_report  # 延迟导入,避免循环依赖
+        report = build_held_report(manifest, manifest_path, held_keys)
+        log.info(logsetup.EVT_HELD, kind=_DAG_KIND, held=sorted(held_keys), done=len(done), total=len(manifest.nodes))
 
     result = TickResult(
         state=state,
@@ -4380,6 +4387,7 @@ def tick(
         dispatched=dispatched,
         report=report,
         audit_complete=reconcile_result.audit_complete,
+        held=held_keys,
     )
 
     # The CLI audit scheduler records its state only after every tick phase,

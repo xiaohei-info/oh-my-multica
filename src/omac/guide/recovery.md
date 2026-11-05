@@ -20,6 +20,12 @@
    - `omac node retry <manifest> <key> [--worker 换人]`：重置为 todo。
    - `omac node accept <manifest> <key>`：人工接受已知风险并标记 done。
    - `omac node abandon <manifest> <key>`：放弃该节点，解锁非硬依赖下游。
+   - `omac node hold <manifest> <key> [--reason 文本]`：挂起尚未派发（`todo`）的节点，例如需要先人工准备外部账号。
+     挂起节点即使依赖已满足也不派发；它的下游保持未满足（不是 blocked，也不是 failed），无关分支照常推进。
+     只有 `todo` 节点能挂起：进行中的节点会被拒绝（等它结束或 `abandon`），`blocked`/`failed` 节点须先 `retry`。
+     与 `abandon` 不同，挂起节点不会让下游视同依赖已满足，所以它后面的收尾节点不会被提前放行。
+   - `omac node release <manifest> <key>`：取消挂起，节点按普通就绪节点派发。
+     两条命令都持 manifest 写锁，须先停掉正在运行的 `omac dag run`；挂起写在节点状态文件里，Loop 的 manifest 同步与重启都不会抹掉。
    - 若 DAG 尚未开始执行，可修改 manifest 后运行 `omac dag check`。
    - 若 DAG 已开始执行且问题属于 contract、验收映射或拓扑定义，使用受控
      `omac dag amend propose`，禁止直接覆盖运行中 manifest。

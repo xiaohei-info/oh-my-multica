@@ -29,6 +29,8 @@
 3. `omac dag run .omac/<feature>.yaml` 前台运行确定性 loop，直到收敛或 exit 20。
 4. exit 20 后运行 `omac dag status`、`omac node show`、
    `omac node retry|accept|abandon` 做显式决策，再重跑 `omac dag run`。
+   只剩被 `omac node hold` 挂起的节点及其下游时，`dag run`/`dag tick` 同样以 exit 20 结束，
+   报告的 `held_nodes` 列出它们，`next_actions` 给出 `omac node release` 命令。
 
 ## plan 到 dag run 的衔接
 

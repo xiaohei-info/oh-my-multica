@@ -461,6 +461,13 @@ def _run_inner_loop(
                     f"The inner loop requires a decision: nodes {result.failed} failed or are blocked.",
                     f"内层 loop 需决策:节点 {result.failed} 失败/受阻,无法继续推进"),
                 report=result.report)
+        if result.state == "held":
+            raise NeedsDecision(
+                ui(
+                    f"The inner loop cannot advance: nodes {result.held} are held. "
+                    f"Release them with {'; '.join(result.report['next_actions'])}.",
+                    f"内层 loop 无法推进:节点 {result.held} 已挂起。用 {'; '.join(result.report['next_actions'])} 释放。"),
+                report=result.report)
         poll()
 
     # 安全上限耗尽仍不收敛 → 需决策而非静默放行

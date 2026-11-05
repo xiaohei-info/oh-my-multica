@@ -34,7 +34,7 @@
 | 配置 Config | 引擎、workspace、project、角色、重试预算等 | `.omac/config.yaml`，`core/config.py` | 人（`omac init`、`omac config set`）；优先级 文件 < `OMAC_*` 环境变量 < 命令行参数 |
 | Manifest（DAG） | `meta` + 节点定义 | `.omac/<name>.yaml`，`core/manifest.py::Manifest` | 只在 plan / amendment 时由 omac 改写 |
 | 节点 Node | 定义（`id`、`worker`、`blocked_by`、`reviewer`、`gate`、`contract`…）+ 运行时状态 | `core/manifest.py::Node` | 定义见上；运行时状态**只由 omac Loop 写**（单写者锁） |
-| 节点状态文件 | 每节点 6 个运行时事实：`work_item_id`、`status`、`merged`、`merged_at`、`merge_request_state`、`recovery_marker` | `.omac/<name>.state/<node>.yaml`（`_RUNTIME_KEYS`） | omac Loop |
+| 节点状态文件 | 每节点的运行时事实：`work_item_id`、`status`、`merged`、`merged_at`、`merge_request_state`、`recovery_marker`，以及挂起节点的 `held`、`hold_reason` | `.omac/<name>.state/<node>.yaml`（`_RUNTIME_KEYS`） | omac Loop |
 | 契约 Contract | 目标、验收、非目标、验证命令、集成门、`pr_base`、覆盖率门 | `core/manifest.py::Contract`，派单时下发到工作项 | orchestrator 产出，经评审与 lint |
 | 工作项 Work item | 平台上的一个 issue，承载一个完整阶段（产出、评审、回退往返都在同一条上） | `core/workitem.py::WorkItem` | omac 只经 `apply` 写；Agent 只经 `omac work submit|block` 提交 |
 | 任务类型 TaskKind | `plan`、`acceptance`、`decompose`、`amendment`、`develop`、`final-acceptance` | `core/taskmeta.py` | — |
@@ -68,7 +68,10 @@ blocked / in_review ── omac node accept ──► done        上游修复�
   `blocked` 等 `omac node accept-nits`。判定只在 `pipeline/decide_review.py::decide_verdict_path`；plan 阶段与 amendment 恒传
   `nits_accepted=False`（§2.3）。节点停在待决策时，只有其传递下游被标 `blocked`（`loop._mark_downstream_blocked`），其余分支继续派发，
   无进行中节点时才 exit 20。
-- **就绪节点**：`status == todo` 且每个 `blocked_by` 都属于 `SATISFIED`（`graph.ready_nodes`）。
+- **就绪节点**：`status == todo`、未被挂起且每个 `blocked_by` 都属于 `SATISFIED`（`graph.ready_nodes`）。
+  挂起（`omac node hold|release`）是 `todo` 节点上的 `held` 标记，不是状态：只有 `todo` 能挂起（判定表 `pipeline/decide_hold.py`），
+  不派发、不满足下游（不 cascade）、无关分支照常推进；无进行中、无待决策、仍有挂起节点时 tick 状态为 `held`，`dag run|tick` exit 20，
+  报告 `held_nodes` + `omac node release` 命令。与 `abandon` 不同，挂起不会放行下游。
 - **DAG 收敛**：没有 `RUNNING` 与 `NEEDS_DECISION` 节点。`blocked` 可经 `omac node retry` 回到 `todo`，不是终态。
 - 平台映射：`pipeline/delivery.py::MANIFEST_TO_PLATFORM_STATUS`（`ci_check→IN_PROGRESS`，`merging→IN_REVIEW`）；
   平台侧 `WorkItemStatus` 为 `TODO/IN_PROGRESS/IN_REVIEW/DONE/FAILED/BLOCKED`。`abandoned` 只存在于 manifest
@@ -217,7 +220,8 @@ Worker/Reviewer 交接检查点是守护协议：每次 `apply` 只带一个效�
 | 结果收集 / result collection | 逐个推进进行中节点、收回其结果 | `loop.py::collect_results`（禁用 harvest） |
 | 进行中节点 / running nodes | 状态属于 `RUNNING`（`in_progress`、`ci_check`、`in_review`、`merging`）的节点 | `core/graph.py::RUNNING`、`running_nodes()`（禁用 in-flight、在飞） |
 | 待决策节点 / needs-decision nodes | 状态属于 `NEEDS_DECISION`（`blocked`、`failed`）的节点；不是终态 | `core/graph.py::NEEDS_DECISION` |
-| 就绪节点 / ready nodes | `todo` 且所有上游属于 `SATISFIED`（`done`、`abandoned`） | `core/graph.py::ready_nodes`（禁用 frontier） |
+| 就绪节点 / ready nodes | `todo`、未挂起且所有上游属于 `SATISFIED`（`done`、`abandoned`） | `core/graph.py::ready_nodes`（禁用 frontier） |
+| 挂起 / hold | 人对 `todo` 节点的显式暂停：不派发、下游保持未满足；`omac node release` 取消 | `Node.held`、`pipeline/decide_hold.py`、`core/graph.py::held_nodes` |
 | DAG 收敛 / DAG converged | 没有进行中节点与待决策节点 | 退出码 0；`decide_loop.decide_tick_state`、`EVT_CONVERGED` |
 | 评审收敛 / review convergence | Reviewer 处置有限的义务集合，由代码判断评审往返是否停止；与 DAG 收敛无关 | `core/review_convergence.py`、`decide_task.Fact.CONVERGENCE_STOP` |
 | 阶段终态 / stage terminal | 编写型任务阶段机的 `STOPPED`、`DONE` | `decide_task.TERMINAL` |
