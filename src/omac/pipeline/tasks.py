@@ -87,6 +87,8 @@ class AuthoringTaskSpec:
     source_of_truth: Dict[str, str] = field(default_factory=dict)
     amendment_attempt: Optional[Dict[str, Any]] = None
     plan_profile: Optional[Dict[str, Any]] = None
+    # A replaced design source: set only when a stage is reopened to be redone against it (``_reopen_in_place``).
+    source_change: Optional[Dict[str, Any]] = None
 
 
 def _markdown_fence_for(text: str) -> str:
@@ -176,7 +178,11 @@ def _confirmation_resume_errors(
     kind: TaskKind,
     contract: Any,
     item: WorkItem,
+    *,
+    reviewed: bool = True,
 ) -> list[str]:
+    if not reviewed:       # no Reviewer ran (--no-review): the person at the gate is the only judge of the delivery
+        return [] if item.deliverable else ["confirmation requires a delivery"]
     round_index = max(1, item.bounces.review + 1)
     expected_subject = _review_subject_digest(kind, item, round_index)
     errors = []
@@ -539,7 +545,46 @@ def _authoring_materialization(
     if spec.source_of_truth:
         body += "\n\n" + _render_source_of_truth(
             spec.source_of_truth, refs, item_id, env, current_language())
+    if spec.source_change:
+        body += "\n\n" + _render_source_change(spec.source_change, current_language())
+        refs = _mark_source_change(refs, spec.source_change)
     return body, refs
+
+
+def _render_source_change(change: Dict[str, Any], language: str | None = None) -> str:
+    """The issue-body section that tells the author what the replaced design source changed."""
+    previous, current = change.get("previous_revision"), change.get("revision")
+    revisions = ui(
+        f"Previous revision `{previous}`, current revision `{current}`; compare them with "
+        f"`git diff {previous}..{current}` for the content of the changed files.\n\n" if previous and current else "",
+        f"上一版 revision `{previous}`，当前 revision `{current}`；变更文件的内容用 "
+        f"`git diff {previous}..{current}` 对比。\n\n" if previous and current else "", language=language)
+    delivery = change.get("previous_delivery_sha256")
+    return ui(
+        "## Design source changed since your previous delivery (read first)\n\n"
+        "The design source above REPLACES the one your previous delivery on this issue was written against. "
+        + (f"That delivery has sha256 `{delivery}`. " if delivery else "")
+        + "Revise the delivery so it covers every change below; the Reviewer must check that coverage and is told "
+        "when the delivery is byte-identical to the previous one.\n\n"
+        + revisions + f"```diff\n{change.get('diff', '')}\n```",
+        "## 设计来源自你上次交付后已变化（请先读）\n\n"
+        "上方的设计来源**取代**了你在本 issue 上上一次交付所依据的来源。"
+        + (f"该次交付的 sha256 为 `{delivery}`。" if delivery else "")
+        + "请修订交付，使其覆盖下列每一处变更；Reviewer 必须核对这一覆盖，"
+        "且交付与上一版逐字节相同时会被明确告知。\n\n"
+        + revisions + f"```diff\n{change.get('diff', '')}\n```",
+        language=language)
+
+
+def _mark_source_change(refs: List[Dict[str, Any]], change: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Record the replaced source on the design ref, so the Reviewer's obligations can be built from the issue alone."""
+    marked = [dict(ref) for ref in refs]
+    design = next((ref for ref in marked if ref.get("kind") == TaskKind.PLAN.value), None)
+    if design is not None:
+        design.update({key: value for key, value in (
+            ("source_changed_from_sha256", change.get("previous_sha256")), ("source_sha256", change.get("sha256")),
+            ("previous_delivery_sha256", change.get("previous_delivery_sha256"))) if value})
+    return marked
 
 
 def _contract_payload(contract: Any) -> Any:
@@ -981,6 +1026,7 @@ class _TaskRun:
         self.review_acceptance_doc = review_acceptance_doc
         self.review_amendment_manifest = review_amendment_manifest
         title = payload.get("title") or f"{kind.value} task"
+        self.source_change = payload.get("source_change")
         self.task_key = dag_key or make_dag_key(kind, title=title, unique=True)
         self.contract = _payload_contract(payload.get("contract"))
         self.spec = AuthoringTaskSpec(
@@ -1024,6 +1070,10 @@ class _TaskRun:
         """--restart-active: cancel the Run; a delivery awaiting review goes back to its Reviewer, anything else to the
         author. A replaced design source: the author redoes the stage against it, once its Run has ended."""
         ports = Ports(store=self.store, runtime=self.runtime)
+        if self.refresh_source and self.source_change:
+            # The author and the Reviewer are told what changed, and which delivery they are redoing.
+            previous = hashlib.sha256((item.deliverable or "").encode("utf-8")).hexdigest() if item.deliverable else None
+            self.spec.source_change = {**self.source_change, "previous_delivery_sha256": previous}
         if self.restart_active:
             apply([CancelRun(item.id), ClearAssignment(item.id)], ports)
             if item.phase == TaskPhase.REVIEW and item.deliverable:
@@ -1127,7 +1177,8 @@ class _TaskRun:
             _refuse_review_bypass(item)
 
         if self.resume_item_id is not None and item.phase == TaskPhase.CONFIRMATION:
-            confirmation_errors = _confirmation_resume_errors(self.kind, self.contract, item)
+            confirmation_errors = _confirmation_resume_errors(
+                self.kind, self.contract, item, reviewed=bool(self.reviewers))
             if confirmation_errors:
                 next_action, recovery = _new_attempt_recovery(self.kind, item.id)
                 raise NeedsDecision(
@@ -1483,7 +1534,6 @@ class _TaskRun:
             Stage.REVIEW_DISPATCH: self._at_review_dispatch, Stage.REVIEW_VERDICT: self._at_review_verdict,
             Stage.PRODUCE_REJECT: self._at_produce_reject,
             Stage.BLOCK_BUDGET: self._at_block_budget, Stage.FINISH: self._at_finish,
-            Stage.FINISH_WAIT: self._at_finish_wait,
         }
         stage = Stage.OPEN
         while stage not in TERMINAL:
@@ -1778,6 +1828,15 @@ class _TaskRun:
                 report=stop.decision)
         action = stop.decision.get("next_action")
         report = {**stop.decision, "item_id": self.item_id, "last_opinion": stop.opinion}
+        if stop.reason is StopReason.CONFIRMATION_REQUIRED:
+            reject = stop.decision["alternatives"][0]
+            return NeedsDecision(
+                ui(f"{self.kind.value} passed review and waits for a person at the human gate; nothing is running. "
+                   f"Confirm it with `{action}`, or return it to the author with `{reject}`; then run "
+                   f"`{stop.decision['then']}`.",
+                   f"{self.kind.value} 已通过评审，等待人工确认；当前没有任何运行。"
+                   f"用 `{action}` 确认，或用 `{reject}` 退回作者返工；然后运行 `{stop.decision['then']}`。"),
+                report=report)
         if stop.reason is StopReason.REVIEW_NITS_ACCEPTANCE:
             decline = next(iter(stop.decision.get("alternatives", [])), None)
             return NeedsDecision(
@@ -1818,17 +1877,17 @@ class _TaskRun:
             self.on_done = lambda: log.info(
                 logsetup.EVT_HUMAN_GATE_WAIT, kind=self.kind.value, id=self.item_id)
             return Fact.CONFIRM_PAUSE, obs
-        return Fact.CONFIRM_WAIT, obs
-
-    def _at_finish_wait(self):
-        verdict, rounds, _prepare = self.finish_args
-        log.info(logsetup.EVT_HUMAN_GATE_WAIT, kind=self.kind.value, id=self.item_id)
-        confirmed = _poll_until(
-            self.store, self.item_id, lambda i: i.status == WorkItemStatus.DONE, self.poll)
-        log.info(logsetup.EVT_NODE_DONE, kind=self.kind.value, id=self.item_id)
-        self.result = {"item_id": self.item_id, "delivery": _delivery_of(self.kind, confirmed),
-                       "rounds": rounds, "verdict": verdict, "kind": self.kind.value}
-        return Fact.CONFIRMED, self._obs()
+        if current.status == WorkItemStatus.DONE:       # a person already confirmed: the gate is passed
+            self.result = {"item_id": self.item_id, "delivery": self.delivery,
+                           "rounds": rounds, "verdict": verdict, "kind": self.kind.value}
+            self.on_done = lambda: log.info(logsetup.EVT_NODE_DONE, kind=self.kind.value, id=self.item_id)
+            return Fact.CONFIRMED, obs
+        log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id, gate="confirmation", rounds=rounds)
+        decision = build_stop(
+            StopReason.CONFIRMATION_REQUIRED, kind=self.kind, item_id=self.item_id, dag_key=current.dag_key,
+            gate="confirmation", rounds=rounds, phase=TaskPhase.CONFIRMATION)
+        self.stop = _Stop(StopReason.CONFIRMATION_REQUIRED, "confirmation", rounds, None, logged=True, decision=decision)
+        return Fact.CONFIRM_STOP, obs
 
 
 def run_task(

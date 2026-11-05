@@ -170,7 +170,11 @@ omac plan resume --plan-id p-xxxx
   and the configuration.
 - On resume `--doc` only **republishes the source** explicitly. The design text is taken from the source issue; a given
   `--doc` replaces it only when its content (ignoring the revision line) differs, and the first unfinished stage is then
-  redone. An unrelated commit does not change a published source.
+  redone. An unrelated commit does not change a published source. The redone stage is told what changed: its issue body
+  has a source-change section (previous and current revision, and a bounded diff of the source set; for a directory, of
+  its file inventory, so compare the revisions with `git diff` for the content), and the Reviewer gets a
+  `source-change:plan` obligation to check the delivery covers it, marked `delivery_unchanged: true` when the delivery is
+  byte-identical to the previous one.
 - `--restart-active` acts on the **first unfinished stage** (plan, acceptance or decompose); a finished stage is never
   touched.
 - `plan resume` never rewrites a manifest that already belongs to this plan, nor its node runtime state; it only restores
@@ -182,6 +186,13 @@ omac plan resume --plan-id p-xxxx
   it writes the `omac.review-nits-acceptance/v1` marker, `plan resume` finishes the stage on **the version that was
   reviewed**. With the human gate on, `plan confirm` is still required. An unattended caller gets exit 20 on nits; to
   accept automatically, the calling layer runs `plan accept-nits`.
+- The human gate (`workflow.human_in_loop`) is a stop, not a wait. After a Reviewer pass a plan or acceptance stage ends
+  the process with exit 20 (`confirmation-required`); no `plan` command waits for a person. The report names
+  `next_action` (`omac plan confirm --dag-key <stage-key>`), `alternatives` (the same command with
+  `--reject --reason "<what to change>"`) and `then` (`omac plan resume --plan-id <id>`). Confirming moves the issue to
+  Done; `--reject` returns it to the author with the reason as `context.machine_feedback`, without counting a review round.
+  Neither command continues the pipeline: run `plan resume`, which finishes the confirmed stage or has the revised delivery
+  reviewed and stops at the gate again.
 - When a review or machine-guard budget is exhausted the same issue is projected as `status=blocked`, `phase=review`,
   with bounded `omac.decision-required/v1` metadata (gate, rounds, resume issue ID, evidence references). Complete
   findings stay in the review or machine-feedback attachments.

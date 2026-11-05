@@ -114,7 +114,10 @@ omac plan resume --plan-id p-xxxx
   与记录相冲突的参数（如已带评审创建的流水线再传 `--no-review`）会被拒绝并给出可复制的命令。`--no-review` 不会放行
   一个停在评审决策上的 issue。2.1 之前创建的流水线没有 `plan_profile`，形态沿用本次命令行与配置。
 - `--doc` 在 resume 上只用于**显式重发来源**：设计文本直接取自来源 issue；给了 `--doc` 且内容（不含 revision 行）
-  与已发布的不同才会替换，并让第一个未完成的阶段重做。无关的新 commit 不会改变已发布的来源。
+  与已发布的不同才会替换，并让第一个未完成的阶段重做。无关的新 commit 不会改变已发布的来源。重做的阶段会被告知变了什么：
+  issue 正文有来源变更段（上一版与当前 revision，以及来源集合的有界 diff；目录来源是其文件清单，文件内容请用
+  `git diff` 对比两个 revision），Reviewer 会多一条 `source-change:plan` 义务，核对交付是否覆盖；交付与上一版逐字节相同时
+  该义务标记 `delivery_unchanged: true`。
 - `--restart-active` 作用于**第一个未完成的阶段**（plan、acceptance、decompose 任一），已完成的阶段不会被触碰。
 - `plan resume` 不会重写已经属于本 plan 的 manifest 与节点运行时状态，只补缺失的验收文档；manifest 属于另一个 plan 且
   节点已开始时拒绝覆盖。
@@ -123,6 +126,12 @@ omac plan resume --plan-id p-xxxx
 - `accept-nits` 要求 verdict 仍绑定当前交付、report 已封存、没有 active direct Run；写入
   `omac.review-nits-acceptance/v1` marker 后 `plan resume` 在**被评审过的那一版**上完成该阶段。开启人机确认时仍需
   `plan confirm`。无人值守调用方遇到 nits 会 exit 20；要自动接受应由上层调用方执行 `plan accept-nits`。
+- 人机确认门（`workflow.human_in_loop`）是停止，不是等待。Reviewer 通过后，plan / acceptance 阶段以 exit 20
+  （`confirmation-required`）结束进程；没有任何 `plan` 命令会等人。报告里 `next_action` 是
+  `omac plan confirm --dag-key <stage-key>`，`alternatives` 是同一命令加 `--reject --reason "<要改什么>"`，`then` 是
+  `omac plan resume --plan-id <id>`。确认把 issue 流转到 Done；`--reject` 把它连同理由（`context.machine_feedback`）
+  退回作者，不计入 review 轮次。两条命令都不会自行继续：运行 `plan resume`，它会完成已确认的阶段，或让修订后的交付
+  重新评审并再次停在确认门。
 - review 或 machine guard 预算耗尽时，同一 issue 被投影为 `status=blocked`、`phase=review`，并写入有界的
   `omac.decision-required/v1`（gate、轮次、resume issue ID、证据引用）；完整问题仍在 review 或 machine-feedback 附件中。
 - 2.1 之前因 nits 用尽预算而停止的 issue（`review-nits-budget-exhausted`，verdict 已被清）仍可放行：

@@ -9,6 +9,7 @@ from ...errors import NeedsDecision, ValidationError
 from ...i18n import resolve_language, ui
 from .. import exit_codes
 from ..output import hint
+from ...pipeline.decide_stop import Release, render_release
 from ...pipeline.plan import (
     PlanContext, plan_accept_nits, plan_continue_review, plan_create, plan_resume,
 )
@@ -45,6 +46,8 @@ DESCRIPTION = """设计方案与 DAG 拆解流水线。
 
   resume   按 --plan-id 续跑；流水线形态（--doc/--goal、是否评审/验收/确认）记录在来源 issue 上，无需再带参数。
            --doc 只在要显式重发来源时给（内容变化才会替换）。
+  confirm   人机确认门（默认开启）：评审通过后阶段以 exit 20 停下，报告里的 next_action 就是确认命令。
+           plan confirm --dag-key <阶段> 放行；加 --reject --reason <文本> 把理由交给作者返工。之后运行 plan resume。
   continue-review  人工授权某个已停止的 stage 再来一轮 review（也用于拒绝 pass-with-nits 并退回作者）。
   accept-nits      接受某个 stage 的 pass-with-nits 建议项，之后 plan resume 完成该阶段。
 
@@ -67,13 +70,17 @@ def register(parser):
     create.add_argument("--no-acceptance", action="store_true", help="跳过验收文档环节")
     create.add_argument(
         "--no-confirm", action="store_true",
-        help="跳过设计/验收的人机确认门(无人值守入口用;默认开启,需人工把 issue 流转到 DONE 放行)")
+        help="跳过设计/验收的人机确认门(无人值守入口用;默认开启,门前以 exit 20 停止,由 plan confirm 放行或 --reject 退回)")
 
     confirm = sub.add_parser(
-        "confirm", help="人机门手动放行:把待确认的设计/验收 issue 流转到 DONE")
+        "confirm", help="人机门:确认待确认的设计/验收 issue(流转到 DONE),或用 --reject 附理由退回作者返工")
     confirm.add_argument("--name", help="方案名(plan create --name 用的同一名字;兼容入口,重名时请用唯一 ID)")
     confirm.add_argument("--dag-key", help="精确定位某个阶段 issue,如 plan-p-xxxx / acceptance-p-xxxx")
     confirm.add_argument("--plan-id", help="精确定位一条 plan 流水线,如 p-xxxx")
+    confirm.add_argument(
+        "--reject", action="store_true",
+        help="不确认,把该阶段退回作者返工;必须同时给 --reason(理由作为作者返工输入)")
+    confirm.add_argument("--reason", help="--reject 的理由(最多 1024 UTF-8 bytes);作者据此返工")
     confirm.add_argument("--engine", help="引擎类型,缺省按 config.yaml / 环境变量")
     confirm.add_argument("--workspace", help="工作空间 id,缺省按 config.yaml / 环境变量")
 
@@ -97,7 +104,7 @@ def register(parser):
     resume.add_argument("--no-acceptance", action="store_true", help="跳过验收文档环节")
     resume.add_argument(
         "--no-confirm", action="store_true",
-        help="跳过设计/验收的人机确认门(默认开启,需人工把 issue 流转到 DONE 放行)")
+        help="跳过设计/验收的人机确认门(默认开启,门前以 exit 20 停止,由 plan confirm 放行或 --reject 退回)")
     resume.add_argument("--engine", help="引擎类型,缺省按 config.yaml / 环境变量")
     resume.add_argument("--workspace", help="工作空间 id,缺省按 config.yaml / 环境变量")
 
@@ -237,17 +244,24 @@ def _selector(args) -> tuple[str, set[str] | None]:
 
 
 def _confirm(args) -> int:
-    """omac plan confirm:人机门手动放行(方案3,防自动识别失效)。
+    """omac plan confirm:人机门。确认 = 流转到 DONE;--reject --reason = 退回作者返工。
 
-    找 <name> 下停在人机门的产出 issue(IN_REVIEW + phase=REVIEW + 尚未指派
-    reviewer),流转到 DONE。omac 的编排轮询识别到 DONE 后翻回评审流程。
+    门上的 issue 是 Reviewer 已通过后进入 confirmation 阶段的那条(IN_REVIEW + phase=CONFIRMATION)。
+    两种放行都经 decide_stop.decide_release;之后运行 plan resume(plan create/resume 在门前以 exit 20 停下)。
     """
     from ...core.taskmeta import TaskKind, TaskPhase
     from ...core.workitem import WorkItemStatus
+    from ...pipeline.stage_release import release_stage
 
     engine = _resolve_engine(args)
     workspace_id = engine.store.config.workspace_id
     label, dag_keys = _selector(args)
+    if args.reason and not args.reject:
+        raise ValidationError(ui(
+            "--reason belongs to --reject; to confirm, run the command without it",
+            "--reason 只与 --reject 搭配；确认请不带它运行"))
+    if len((args.reason or "").encode("utf-8")) > 1024:
+        raise ValidationError(ui("--reason must be at most 1024 UTF-8 bytes", "--reason 最多 1024 UTF-8 bytes"))
 
     # 待确认 = Reviewer 已通过后进入的显式 confirmation 阶段。
     # 新入口按 dag_key 精确匹配;--name 仅保留兼容,重名时要求调用方换唯一 ID。
@@ -275,12 +289,20 @@ def _confirm(args) -> int:
             "请改用 --dag-key plan-p-xxxx / acceptance-p-xxxx 精确定位。"))
 
     it = waiting[0]
-    apply([
-        UpdateStatus(it.id, WorkItemStatus.DONE),
-    ], Ports(store=engine.store))
-    print(ui(
-        f"Confirmed: {it.title} (issue {it.id}) → DONE. OMAC will continue the review flow.",
-        f"已确认:{it.title}(issue {it.id})→ DONE,omac 将继续评审流程"))
+    release = Release.REJECT_CONFIRMATION if args.reject else Release.CONFIRM
+    released = release_stage(
+        engine, it, release, configured_limit=resolve_review_rounds(config_mod.load_config()),
+        reason=args.reason or "")
+    next_action = render_release(Release.RESUME, it.dag_key)
+    print_json({"ok": True, "item_id": it.id, "dag_key": it.dag_key, "stage": it.kind.value,
+                "mode": released["mode"], "next_action": next_action})
+    hint(ui(
+        (f"Returned {it.title} (issue {it.id}) to its author with your reason." if args.reject
+         else f"Confirmed: {it.title} (issue {it.id}) → DONE.")
+        + f" Nothing continues by itself: run `{next_action}`.",
+        (f"已把 {it.title}(issue {it.id})连同理由退回作者。" if args.reject
+         else f"已确认:{it.title}(issue {it.id})→ DONE。")
+        + f"不会自行继续：请运行 `{next_action}`。"))
     return exit_codes.OK
 
 

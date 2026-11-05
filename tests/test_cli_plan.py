@@ -414,6 +414,21 @@ def test_doc_directory_builds_generic_design_source_set(tmp_path, monkeypatch):
     assert "README.md 是权威" not in source_set
 
 
+def test_a_replaced_source_is_described_by_its_changed_inventory_lines_and_not_by_its_revision(tmp_path, monkeypatch):
+    from omac.pipeline.plan_source import source_change
+
+    old = "repository_revision: `aaa`\n\n- `docs/a.md` sha256=`1`\n"
+    new = "repository_revision: `bbb`\n\n- `docs/a.md` sha256=`1`\n- `docs/b.md` sha256=`2`\n"
+
+    change = source_change(old, new)
+
+    assert "+- `docs/b.md` sha256=`2`" in change["diff"] and "repository_revision" not in change["diff"]
+    assert (change["previous_revision"], change["revision"]) == ("aaa", "bbb")
+    assert change["previous_sha256"] != change["sha256"]
+    huge = source_change("x\n", "\n".join(f"line {n}" * 40 for n in range(2000)))
+    assert len(huge["diff"].encode()) < 17 * 1024 and huge["diff"].endswith("(diff truncated)")
+
+
 @pytest.mark.integration  # starts a Python subprocess / runs real git
 def test_doc_directory_uses_only_git_tracked_files_for_revision_source_set(
         tmp_path, monkeypatch):

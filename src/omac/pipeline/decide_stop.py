@@ -12,11 +12,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping
 
+from ..core.machine_feedback import build_machine_feedback
 from ..core.review_continuation import continuation_record
 from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase, plan_id_of
 from ..core.workitem import WorkItemStatus
 from ..i18n import ui
 from .decide_effects import Effect, Plan, UpdateMetadata, UpdateStatus
+from .decide_task import plan_machine_feedback
 from .decide_transitions import rework_to_producer
 
 PLAN_KINDS = frozenset({TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE})
@@ -33,6 +35,7 @@ class StopReason(str, Enum):
     COMPLETED_WITHOUT_SUBMIT = "completed-without-submit"
     UNSAFE_AUTHORING_RESUME = "unsafe-authoring-resume"
     REVIEWER_COMPLETED_WITHOUT_VERDICT = "reviewer-completed-without-verdict"
+    CONFIRMATION_REQUIRED = "confirmation-required"                 # the human gate: a passed delivery awaits a person
 
 
 class Release(str, Enum):
@@ -40,6 +43,8 @@ class Release(str, Enum):
     ACCEPT_NITS = "accept-nits"
     RESUME = "resume"
     RESTART_ACTIVE = "restart-active"
+    CONFIRM = "confirm"
+    REJECT_CONFIRMATION = "reject-confirmation"
 
 
 # The first release is the stop's next_action; the others are alternatives it lists.
@@ -52,7 +57,10 @@ STOP_RELEASES: dict[StopReason, tuple[Release, ...]] = {
     StopReason.COMPLETED_WITHOUT_SUBMIT: (Release.RESTART_ACTIVE,),
     StopReason.UNSAFE_AUTHORING_RESUME: (Release.RESTART_ACTIVE,),
     StopReason.REVIEWER_COMPLETED_WITHOUT_VERDICT: (Release.RESUME,),
+    StopReason.CONFIRMATION_REQUIRED: (Release.CONFIRM, Release.REJECT_CONFIRMATION),
 }
+# Releases that do not continue the pipeline themselves: the stop's report names `plan resume` as the step after them.
+_CONTINUES_BY_ITSELF = frozenset({Release.RESUME, Release.RESTART_ACTIVE})
 
 
 def render_release(release: Release, dag_key: str) -> str:
@@ -63,6 +71,8 @@ def render_release(release: Release, dag_key: str) -> str:
         Release.ACCEPT_NITS: f"omac plan accept-nits --dag-key {dag_key}",
         Release.RESUME: f"omac plan resume --plan-id {plan_id}",
         Release.RESTART_ACTIVE: f"omac plan resume --plan-id {plan_id} --restart-active",
+        Release.CONFIRM: f"omac plan confirm --dag-key {dag_key}",
+        Release.REJECT_CONFIRMATION: f'omac plan confirm --dag-key {dag_key} --reject --reason "<what to change>"',
     }[release]
 
 
@@ -97,6 +107,8 @@ def build_stop(
         decision["next_action"] = actions[0]
         if len(actions) > 1:
             decision["alternatives"] = actions[1:]
+        if STOP_RELEASES[reason][0] not in _CONTINUES_BY_ITSELF:
+            decision["then"] = render_release(Release.RESUME, dag_key)
     return decision
 
 
@@ -175,6 +187,29 @@ def _continue_review(facts: ReleaseFacts, stage: str, reason: str) -> Plan | Ref
         "（reject 耗尽、可拒绝的 nits 或 review-convergence 停止）。"))
 
 
+def _decide_confirmation(release: Release, facts: ReleaseFacts, reason: str) -> Plan | Refusal:
+    """The human gate: a delivery the Reviewer passed waits in the confirmation phase for a person."""
+    if facts.phase != TaskPhase.CONFIRMATION or facts.status != WorkItemStatus.IN_REVIEW:
+        return Refusal(ui(
+            f"Work item {facts.item_id} is not waiting at the human gate (it needs phase confirmation and status "
+            "in_review). It may already be confirmed, or not yet reviewed: run `omac plan resume --plan-id <id>`.",
+            f"Work item {facts.item_id} 没有停在人机确认门（需要 phase=confirmation 且 status=in_review）。"
+            "可能已确认或尚未评审通过：请运行 `omac plan resume --plan-id <id>`。"))
+    if release is Release.CONFIRM:
+        return Plan((UpdateStatus(facts.item_id, WorkItemStatus.DONE),), "confirm")
+    if not reason.strip():
+        return Refusal(ui(
+            "--reject needs --reason <what to change>: the reason is the author's input for the rework.",
+            "--reject 需要 --reason <要改什么>：该理由是作者返工的输入。"))
+    feedback = build_machine_feedback("human-confirmation", [reason])
+    summary = ui(
+        f"A person returned this stage at the human gate. Reason: {reason}",
+        f"人工在确认门退回了该阶段。理由：{reason}")
+    # The feedback goes after the reset, which clears it; nothing is counted against the Reviewer's budget.
+    return Plan((*rework_to_producer(facts.item_id), *plan_machine_feedback(facts.item_id, feedback, summary)),
+                "reject-confirmation")
+
+
 def decide_release(release: Release, facts: ReleaseFacts, *, stage: str = "", reason: str = "") -> Plan | Refusal:
     """Whether ``release`` may act on this stop, and the ordered effects it writes."""
     if facts.active_runs:
@@ -194,6 +229,8 @@ def decide_release(release: Release, facts: ReleaseFacts, *, stage: str = "", re
                 f"Work item {facts.item_id} 没有绑定当前交付且报告已封存的 pass-with-nits verdict，没有可接受的内容。"
                 "请运行 plan resume，或 plan continue-review 重新取得评审。"))
         return Plan((), "accept-nits")
+    if release in (Release.CONFIRM, Release.REJECT_CONFIRMATION):
+        return _decide_confirmation(release, facts, reason)
     return Plan((), release.value)      # resume / restart-active: the resume itself classifies and checks the issue
 
 

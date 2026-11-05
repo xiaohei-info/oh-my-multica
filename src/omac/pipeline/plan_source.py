@@ -6,6 +6,7 @@ Links are not parsed. Agents clone the remote, so a source inside the repository
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 from pathlib import Path
 
@@ -15,11 +16,37 @@ from ..errors import ValidationError
 from ..i18n import ui
 
 _REVISION_LINE = "repository_revision:"
+_MAX_DIFF_LINES = 200
+_MAX_DIFF_BYTES = 16 * 1024
 
 
 def source_identity(text: str) -> str:
     """The source without its revision line: an unrelated commit does not make a source new."""
     return "\n".join(line for line in text.splitlines() if not line.startswith(_REVISION_LINE))
+
+
+def _revision_of(text: str) -> str:
+    line = next((l for l in text.splitlines() if l.startswith(_REVISION_LINE)), "")
+    return line[len(_REVISION_LINE):].strip().strip("`")
+
+
+def source_change(previous: str, current: str) -> dict:
+    """What a replaced source set changed, as facts: both identities and a bounded line diff.
+
+    For a directory source the diff lists the files whose sha256 or presence changed (and the revisions to compare with
+    git); for a single file it is the diff of its body. Nothing here interprets the text.
+    """
+    before, after = source_identity(previous), source_identity(current)
+    lines = list(difflib.unified_diff(
+        before.splitlines(), after.splitlines(), "previous source", "current source", n=1, lineterm=""))
+    diff = "\n".join(lines[:_MAX_DIFF_LINES])
+    if len(lines) > _MAX_DIFF_LINES or len(diff.encode("utf-8")) > _MAX_DIFF_BYTES:
+        diff = diff.encode("utf-8")[:_MAX_DIFF_BYTES].decode("utf-8", "ignore") + "\n... (diff truncated)"
+    return {
+        "diff": diff, "previous_revision": _revision_of(previous), "revision": _revision_of(current),
+        "previous_sha256": hashlib.sha256(before.encode("utf-8")).hexdigest(),
+        "sha256": hashlib.sha256(after.encode("utf-8")).hexdigest(),
+    }
 
 
 def _instructions(language: str | None) -> str:

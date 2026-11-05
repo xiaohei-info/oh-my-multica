@@ -136,6 +136,18 @@ decides whether `plan continue-review` / `plan accept-nits` may act and what the
 for a person, as it does a develop node (§7.5): `accept-nits` finishes the stage on the reviewed delivery, `continue-review`
 sends the nits back as a counted round. A resumed issue is classified by `decide_stop.classify_resume`.
 
+The human gate is such a stop too (`confirmation-required`): after a Reviewer pass the stage ends with exit 20 and the
+report names `plan confirm --dag-key <stage-key>`, the alternative `--reject --reason "<what to change>"`, and `then`
+`plan resume`. Nothing in the stage machine waits for a person; the only waits left are for Agent Runs. `--reject`
+returns the stage to its author without counting a review round and hands the reason over as machine feedback.
+
+When `plan resume --doc` replaces a published source, the stage that is redone gets the change as facts: the issue body
+carries both revisions and a bounded diff of the source set (`plan_source.source_change`), and the design `source_refs`
+entry records the digests of the replaced source and of the previous delivery. The review obligations then include
+`source-change:<label>` (`core/review_convergence.source_change_obligations`), marked `delivery_unchanged` when the new
+delivery is byte-identical to the previous one. The review subject digest is unchanged on purpose (it would orphan
+verdicts of running pipelines); the obligation set is rebuilt for every reopened stage because the rework resets it.
+
 ### 7.3 dag run
 
 One tick:

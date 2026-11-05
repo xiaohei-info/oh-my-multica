@@ -22,7 +22,7 @@ PROG = "omac"
 
 _EN_SUBCOMMAND_HELP = {
     "create": "Start the design, acceptance, and DAG decomposition pipeline",
-    "confirm": "Approve a pending design or acceptance gate",
+    "confirm": "Confirm a pending design or acceptance gate, or return it to its author with --reject --reason",
     "resume": "Resume an existing plan pipeline by its stable ID",
     "continue-review": "Authorize exactly one additional plan-stage review round",
     "check": "Validate an existing artifact",
@@ -64,7 +64,8 @@ _EN_ARGUMENT_HELP = {
     "dag_key": "Exact stage DAG key",
     "plan_id": "Stable plan pipeline ID",
     "stage": "Plan pipeline stage",
-    "reason": "Operator decision reason",
+    "reason": "Operator decision reason; with --reject, the author's rework input",
+    "reject": "Return the stage to its author instead of confirming it; requires --reason",
     "max_parallel": "Maximum parallel tasks for this run",
     "max_rounds": "Stop after this many rounds",
     "max_minutes": "Stop after this many minutes",
