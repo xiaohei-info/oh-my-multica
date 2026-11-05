@@ -140,6 +140,9 @@ artifact、`source_of_truth` 和 `delivery_goal`。reject 中标记 `pass` 的 g
 - contract、设计和验收文档互相冲突，导致同一行为既应通过又应失败。
 - coverage 数据、关键 metrics 或 artifacts 缺失，无法形成诚实 verdict。
 - 遇到以上情况时报告缺失证据、已执行命令和需要的决策；在阻塞解除前不得提交 pass。
+- plan / acceptance / decompose 阶段没有结构化的 block 入口（`omac work block` 只用于 develop）。上游输入（附录、被引用的文档）
+  不可见或无法定位时，作者无法修复，不要用 reject 制造无效返工；在 nits 中逐条写明缺失的输入、预期位置和已尝试的读取方式，
+  并提交 pass-with-nits——该 verdict 会让阶段 exit 20 交给调用者显式决定，而不是被静默放行。
 
 ## 禁止事项
 

@@ -143,38 +143,55 @@ path; the two markers are not interchangeable.
   or decision remains; a failed or unavailable read stays fail-closed so a real
   recovery fact cannot be swallowed as terminal.
 
-## Continuing an exhausted plan-stage review
+## Stops and releases in the plan pipeline
 
-When `omac plan create/resume` returns exit 20 because plan, acceptance, or
-decompose review rounds are exhausted, read `item_id`, `rounds`, `last_opinion`,
-and `next_action`. A Human or authorized operator can then grant exactly one
-additional round:
+Every exit 20 of `omac plan create/resume` carries a `reason_code` and a `next_action`; `next_action` is a command that
+runs exactly as printed, and the stop reason alone decides which command releases it:
+
+| `reason_code` | Meaning | Release |
+|---|---|---|
+| `review-nits-acceptance-required` | the Reviewer returned `pass-with-nits`; a person decides | `omac plan accept-nits --dag-key <stage-key>` to accept the nits, or `omac plan continue-review --dag-key <stage-key>` to send them back to the author |
+| `review-budget-exhausted` | rejects used up the review budget | `omac plan continue-review --dag-key <stage-key>` |
+| `review-convergence-*` | the same root-cause blockers keep not converging | `omac plan continue-review --dag-key <stage-key>` (authorize one more round) or redraw the task boundary and run `plan create` again |
+| `guard-budget-exhausted` | the machine gate (lint/preflight) ran out of revisions | `omac plan resume --plan-id <id>` (an explicit new machine-gate budget) |
+| `completed-without-submit`, `unsafe-authoring-resume` | the author's Run ended without a usable delivery | `omac plan resume --plan-id <id> --restart-active` |
+| `reviewer-completed-without-verdict` | the Reviewer's Run ended without a verdict | `omac plan resume --plan-id <id>` |
 
 ```bash
-omac plan continue-review --dag-key decompose-p-xxxx \
-  --reason "Human approved one additional review round"
+omac plan accept-nits --dag-key acceptance-p-xxxx     # or: omac plan continue-review --dag-key acceptance-p-xxxx
 omac plan resume --plan-id p-xxxx
 ```
 
-- `continue-review` stores a small `review_continuation` decision on the same
-  work item. It increases the absolute limit by one, never resets
-  `review_bounce`, and refuses to stack another decision before the current one
-  is consumed.
-- When the review or machine-guard budget is exhausted, OMAC projects the same
-  issue as `status=blocked`, `phase=review`, with bounded
-  `omac.decision-required/v1` metadata containing the gate, round count, resume
-  issue ID, and available evidence references. Complete findings remain in the
-  review or machine-feedback attachments instead of being copied into metadata.
-- An exhausted reject is restored through OMAC `reset_review` and todo status so
-  the producer revises first. A final pass-with-nits delivery that was already
-  revised proceeds directly to its next Reviewer round.
-  That stop is recorded as `gate=review-nits`; an issue an older version recorded
-  as `gate=review` with no verdict is released the same way.
-- The command does not modify `.omac/config.yaml` or `retry.review`, so a
-  one-off operator decision cannot change the reviewed Git revision.
-  `retry.review` remains the default budget for new work and legacy automation.
-- The command performs a read-only active Agent check. If a run is active it
-  refuses the decision and never cancels that run automatically.
+- **`plan resume --plan-id` is valid for every pipeline shape.** A `--doc` directory or file, `--goal`, `--no-review`,
+  `--no-acceptance` and `--no-confirm` are recorded as `plan_profile` on the source issue (`doc-<id>` or `plan-<id>`),
+  so a resume needs no shape argument. A flag that contradicts the record (for example `--no-review` on a pipeline
+  created with review) is refused with the command to run instead, and `--no-review` never releases an issue that stands
+  on a review decision. Pipelines created before 2.1 have no `plan_profile`; their shape comes from this command line
+  and the configuration.
+- On resume `--doc` only **republishes the source** explicitly. The design text is taken from the source issue; a given
+  `--doc` replaces it only when its content (ignoring the revision line) differs, and the first unfinished stage is then
+  redone. An unrelated commit does not change a published source.
+- `--restart-active` acts on the **first unfinished stage** (plan, acceptance or decompose); a finished stage is never
+  touched.
+- `plan resume` never rewrites a manifest that already belongs to this plan, nor its node runtime state; it only restores
+  a missing acceptance document. A manifest of another plan whose nodes have started is refused, not overwritten.
+- `continue-review` stores a small `review_continuation` decision on the same work item (one more round; it never resets
+  `review_bounce` and never changes project `retry.review`); declining `pass-with-nits` counts the current round. It
+  only reads whether an active Agent direct Run exists and never cancels one.
+- `accept-nits` needs the verdict to be bound to the current delivery, its report sealed, and no active direct Run. After
+  it writes the `omac.review-nits-acceptance/v1` marker, `plan resume` finishes the stage on **the version that was
+  reviewed**. With the human gate on, `plan confirm` is still required. An unattended caller gets exit 20 on nits; to
+  accept automatically, the calling layer runs `plan accept-nits`.
+- When a review or machine-guard budget is exhausted the same issue is projected as `status=blocked`, `phase=review`,
+  with bounded `omac.decision-required/v1` metadata (gate, rounds, resume issue ID, evidence references). Complete
+  findings stay in the review or machine-feedback attachments.
+- An issue stopped before 2.1 because nits used up the budget (`review-nits-budget-exhausted`, its verdict already
+  cleared) is still released: `omac plan continue-review`, then `omac plan resume`; the Reviewer reviews again, and if
+  that verdict is still nits, use `plan accept-nits`.
+- The machine-gate budget is counted in-process: each `plan resume` is an explicit new authorization.
+- If a `--doc` source has appendices, **pass the directory**. A single-file source carries the primary body, its path,
+  the revision and the inventory of its directory, but links are not parsed; the source must be committed and its revision
+  pushed (agents read the remote).
 
 ## Choosing an action
 

@@ -38,7 +38,6 @@ class Stage(Enum):
     REVIEW_CHECK = "review-check"          # is there a verdict, is its evidence valid
     REVIEW_DISPATCH = "review-dispatch"    # assign + wake the Reviewer, wait for a verdict
     REVIEW_VERDICT = "review-verdict"      # branch on the verdict
-    PRODUCE_NITS = "produce-nits"          # producer redelivers after pass-with-nits
     PRODUCE_REJECT = "produce-reject"      # producer redelivers after a reject
     BLOCK_BUDGET = "block-budget"          # read the item, then project the exhausted budget decision
     FINISH = "finish"                      # settle the issue after a pass
@@ -52,7 +51,6 @@ class Fact(Enum):
     CONFIRMATION_RESUMED = "confirmation-resumed"
     FRESH = "fresh"
     PRODUCED = "produced"
-    PRODUCED_AT_LIMIT = "produced-at-limit"
     ALREADY_PASSED = "already-passed"
     COUNTED_REJECT_RETRY = "counted-reject-retry"
     PROCEED = "proceed"
@@ -76,7 +74,8 @@ class Fact(Enum):
     PASS = "pass"
     CONVERGENCE_STOP = "convergence-stop"
     AMENDMENT_NITS = "amendment-nits"
-    NITS_RETRY = "nits-retry"
+    NITS_ACCEPTED = "nits-accepted"
+    NITS_NEED_DECISION = "nits-need-decision"
     REJECT_EXHAUSTED = "reject-exhausted"
     REJECT_RETRY = "reject-retry"
     OBSERVED = "observed"
@@ -119,10 +118,6 @@ def _rework_to_authoring(obs: TaskObs) -> tuple[Effect, ...]:
     return (ResetReview(obs.item_id), UpdateStatus(obs.item_id, WorkItemStatus.TODO))
 
 
-def _reset_review(obs: TaskObs) -> tuple[Effect, ...]:
-    return (ResetReview(obs.item_id),)
-
-
 def _persist_feedback(obs: TaskObs) -> tuple[Effect, ...]:
     return plan_machine_feedback(obs.item_id, obs.feedback, obs.feedback_summary)
 
@@ -149,12 +144,6 @@ def _review_in_review(obs: TaskObs) -> tuple[Effect, ...]:
     return (UpdateStatus(obs.item_id, WorkItemStatus.IN_REVIEW),)
 
 
-def _nits_back_to_authoring(obs: TaskObs) -> tuple[Effect, ...]:
-    return (UpdateMetadata(obs.item_id, {
-        "phase": TaskPhase.AUTHORING, "review_comment": "", "machine_feedback": {},
-        "review_bounce": obs.round_index}), UpdateStatus(obs.item_id, WorkItemStatus.TODO))
-
-
 def _count_reject(obs: TaskObs) -> tuple[Effect, ...]:
     return (UpdateMetadata(obs.item_id, {"review_bounce": obs.round_index}),)
 
@@ -179,7 +168,7 @@ def plan_machine_feedback(item_id: str, feedback: Mapping[str, Any], summary: st
     return (UpdateMetadata(item_id, {"machine_feedback": feedback, "review_comment": summary}),)
 
 
-def _convergence_stop(obs: TaskObs) -> tuple[Effect, ...]:
+def _stop_with_decision(obs: TaskObs) -> tuple[Effect, ...]:
     return plan_persist_decision(
         obs.item_id, obs.decision, decision_current=obs.decision_current, already_blocked=obs.already_blocked)
 
@@ -220,7 +209,7 @@ TRANSITIONS: dict[tuple[Stage, Fact], tuple[Stage, Builder]] = {
     (S.RESOLVE_INITIAL, F.PROCEED): _row(S.MACHINE_GATE),
     (S.PRODUCE_REWORK, F.PRODUCED): _row(S.MACHINE_GATE),
     (S.MACHINE_GATE, F.GATE_CLEAR): _row(S.RESUME_REVIEW),
-    (S.MACHINE_GATE, F.GATE_RETRY): _row(S.PRODUCE_HINTED, _reset_review),
+    (S.MACHINE_GATE, F.GATE_RETRY): _row(S.PRODUCE_HINTED, _rework_to_authoring),
     (S.MACHINE_GATE, F.GATE_EXHAUSTED): _row(S.BLOCK_BUDGET, _persist_feedback),
     (S.PRODUCE_HINTED, F.PRODUCED): _row(S.MACHINE_GATE),
     (S.RESUME_REVIEW, F.FINISH_PASS): _row(S.FINISH),
@@ -238,13 +227,12 @@ TRANSITIONS: dict[tuple[Stage, Fact], tuple[Stage, Builder]] = {
     (S.REVIEW_CHECK, F.NEEDS_DISPATCH): _row(S.REVIEW_DISPATCH, _review_in_review),
     (S.REVIEW_DISPATCH, F.REVIEWED): _row(S.REVIEW_CHECK),
     (S.REVIEW_VERDICT, F.PASS): _row(S.FINISH),
-    (S.REVIEW_VERDICT, F.CONVERGENCE_STOP): _row(S.STOPPED, _convergence_stop),
+    (S.REVIEW_VERDICT, F.CONVERGENCE_STOP): _row(S.STOPPED, _stop_with_decision),
     (S.REVIEW_VERDICT, F.AMENDMENT_NITS): _row(S.FINISH),
-    (S.REVIEW_VERDICT, F.NITS_RETRY): _row(S.PRODUCE_NITS, _nits_back_to_authoring),
+    (S.REVIEW_VERDICT, F.NITS_ACCEPTED): _row(S.FINISH),
+    (S.REVIEW_VERDICT, F.NITS_NEED_DECISION): _row(S.STOPPED, _stop_with_decision),
     (S.REVIEW_VERDICT, F.REJECT_EXHAUSTED): _row(S.BLOCK_BUDGET, _count_reject),
     (S.REVIEW_VERDICT, F.REJECT_RETRY): _row(S.PRODUCE_REJECT, _count_reject_and_rework),
-    (S.PRODUCE_NITS, F.PRODUCED_AT_LIMIT): _row(S.BLOCK_BUDGET),
-    (S.PRODUCE_NITS, F.PRODUCED): _row(S.REVIEW_ROUND),
     (S.PRODUCE_REJECT, F.PRODUCED): _row(S.REVIEW_ROUND),
     (S.BLOCK_BUDGET, F.OBSERVED): _row(S.STOPPED, _project_exhausted_budget),
     (S.FINISH, F.UNCONFIRMED): _row(S.DONE, _finish_unconfirmed),

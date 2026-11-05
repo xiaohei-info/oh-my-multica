@@ -152,6 +152,7 @@ def _next_actions(failed_nodes: list, manifest_path: str) -> list:
         decision = fn.get("decision_required")
         if isinstance(decision, dict):
             reason_code = decision.get("reason_code")
+            recorded = decision.get("next_action")
             if reason_code == "review-nits-acceptance-required":
                 actions.append(f"omac node accept-nits {manifest_path} {key}")
             elif reason_code == "amendment_apply_incomplete":
@@ -173,7 +174,11 @@ def _next_actions(failed_nodes: list, manifest_path: str) -> list:
                     )
                 )
                 continue
-        actions.append(f"omac node retry {manifest_path} {key}")
+        # The retry a decision recorded keeps its routing (for example `--stage review`).
+        retry = (recorded if isinstance(decision, dict) and isinstance(recorded, str)
+                 and recorded.startswith("omac node retry ") and "\n" not in recorded
+                 else f"omac node retry {manifest_path} {key}")
+        actions.append(retry)
         actions.append(f"omac node abandon {manifest_path} {key}")
     return actions
 

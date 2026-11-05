@@ -3,37 +3,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from .taskmeta import DECISION_REQUIRED_SCHEMA, TaskPhase
-from .workitem import WorkItemStatus
-
 
 REVIEW_CONTINUATION_SCHEMA = "omac.review-continuation/v1"
 REVIEW_CONTINUATION_MODES = {"producer-rework", "review-only"}
-# Before 2.0.4 a stop at review entry wrote "review" even for a delivery awaiting re-review, so both gates can name one.
-REVIEW_BUDGET_GATES = frozenset({"review", "review-nits"})
-
-
-def review_budget_gate(item: Any) -> str:
-    """Gate of a review-budget stop: a reject awaits rework, any other stop leaves a delivery awaiting review."""
-    return "review" if item.review_verdict == "reject" else "review-nits"
-
-
-def review_continuation_mode(item: Any) -> str | None:
-    """What `plan continue-review` can authorize for an item at its review limit; None if it stopped for another reason."""
-    if item.review_verdict == "reject":
-        return "producer-rework"
-    if item.review_verdict or item.phase != TaskPhase.REVIEW or not item.deliverable:
-        return None
-    if item.status == WorkItemStatus.IN_REVIEW:
-        return "review-only"
-    decision = item.decision_required if isinstance(item.decision_required, dict) else {}
-    stopped_on_review_budget = (
-        item.status == WorkItemStatus.BLOCKED
-        and decision.get("schema") == DECISION_REQUIRED_SCHEMA
-        and decision.get("gate") in REVIEW_BUDGET_GATES
-        and decision.get("rounds") == max(0, item.bounces.review)
-    )
-    return "review-only" if stopped_on_review_budget else None
 
 
 def valid_review_continuation(value: Any, *, stage: str | None = None) -> bool:
@@ -67,29 +39,16 @@ def authorized_review_limit(item: Any, configured_limit: int) -> int:
     return max(configured, int(continuation["authorized_through_round"]))
 
 
-def build_review_continuation(
-    item: Any,
-    configured_limit: int,
-    *,
-    mode: str,
-    reason: str,
-) -> dict[str, Any]:
+def continuation_record(*, stage: str, existing: Any, mode: str, through: int, reason: str) -> dict[str, Any]:
+    """The marker of one explicit authorization: the absolute round the stage may now review through."""
     if mode not in REVIEW_CONTINUATION_MODES:
         raise ValueError(f"unsupported review continuation mode: {mode}")
-    existing = getattr(item, "review_continuation", None)
-    stage = getattr(getattr(item, "kind", None), "value", "")
-    existing_count = (
-        int(existing["decision_count"])
-        if valid_review_continuation(existing, stage=stage)
-        else 0
-    )
-    current_round = max(0, int(getattr(item.bounces, "review", 0)))
-    current_limit = authorized_review_limit(item, configured_limit)
+    count = int(existing["decision_count"]) if valid_review_continuation(existing, stage=stage) else 0
     return {
         "schema": REVIEW_CONTINUATION_SCHEMA,
         "stage": stage,
         "mode": mode,
-        "authorized_through_round": max(current_round, current_limit) + 1,
-        "decision_count": existing_count + 1,
+        "authorized_through_round": through,
+        "decision_count": count + 1,
         "reason": reason.strip(),
     }

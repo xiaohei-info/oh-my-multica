@@ -345,6 +345,7 @@ class WorkItemStore(ABC):
         decision_required: Optional[Dict[str, Any]] = None,
         review_nits_acceptance: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
+        plan_profile: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
@@ -368,6 +369,7 @@ class WorkItemStore(ABC):
         - worker_handoff:有界的内部 review→worker 交接意图；空 dict 清除。
         - review_nits_acceptance:绑定当前 pass-with-nits 事实的有界 operator marker；
           空 dict 清除，不改写 reviewer verdict/report。
+        - plan_profile:plan 流水线的形态(来源、是否评审/验收/确认),只写在来源 issue 上。
         - deliverable:按 kind 承载 plan/acceptance/manifest 等交付正文。
         - project_rules:plan 的项目级开发规范交付正文。
         - description:回填 Human-first issue 正文(顶部单一 bootstrap 嵌入真实 id)。
@@ -409,6 +411,12 @@ class WorkItemStore(ABC):
         status: Optional[WorkItemStatus] = None,
     ) -> List[WorkItem]:
         """列出工作单元(进度查看/调试用,非主查询路径)。status 过滤可选。"""
+
+    def find_work_items_by_dag_key(self, workspace_id: str, dag_key: str) -> List[WorkItem]:
+        """Every issue of one stable identity (callers check uniqueness); adapters hydrate only the matches."""
+        title_prefix = f"[DAG:{dag_key}]"
+        return [item for item in self.list_work_items(workspace_id)
+                if item.dag_key == dag_key or item.title.startswith(title_prefix)]
 
     def find_work_item_by_dag_key(
         self, workspace_id: str, dag_key: str,

@@ -22,7 +22,7 @@ from omac.cli.main import main
 from dataclasses import asdict
 
 from omac.core.manifest import _load_contract, load_manifest, loads_manifest
-from omac.core.taskmeta import TaskKind, TaskPhase
+from omac.core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
 from omac.core.workitem import WorkItemStatus
 from omac.errors import NeedsDecision, ValidationError
 from omac.pipeline import plan as plan_module
@@ -301,7 +301,9 @@ def test_a_design_document_replaces_the_plan_stage(world, repo):
     assert not (repo.work / "AGENTS.md").exists()
     source = doc_source(world, manifest["meta"]["plan_id"])
     assert source.id == manifest["meta"]["source_issues"][0]
-    assert main(["plan", "resume", "--plan-id", manifest["meta"]["plan_id"]]) == exit_codes.VALIDATION    # never reworked by a planner
+    plan_id = manifest["meta"]["plan_id"]
+    assert main(["plan", "resume", "--plan-id", plan_id]) == exit_codes.OK       # no --doc needed: the source issue is the design
+    assert [i for i in kinds(world, TaskKind.PLAN) if i.dag_key == f"plan-{plan_id}"] == []     # and a planner never reworks it
 
 
 def large_doc_file(repo):
@@ -370,7 +372,7 @@ def test_a_resume_completes_a_doc_source_issue_left_unfinished_without_creating_
     assert main(["plan", "resume", "--plan-id", "p-reuse01", "--name", "demo-doc-reuse", "--doc", "docs/design.md"]) == exit_codes.OK
 
     assert doc_source(world, "p-reuse01").id == unfinished.id
-    assert doc_source(world, "p-reuse01").deliverable == "# Current design"
+    assert "# Current design" in doc_source(world, "p-reuse01").deliverable
 
 
 @pytest.mark.parametrize(("how", "flags", "config"), [("flag", ("--no-acceptance",), None), ("config", (), "workflow.acceptance_doc")])
@@ -526,6 +528,42 @@ def test_a_resume_with_a_stalled_review_restarts_only_the_reviewer(world, repo):
     agents = [run.agent_id for run in world.kit.runtime.list_runs(item.id)]
     assert sorted(agents) == sorted([world.store.resolve_agent_id("alice"), world.store.resolve_agent_id("carol")])
     assert world.store.get_work_item(item.id).deliverable == ACCEPTANCE_YAML
+
+
+def test_restart_active_restarts_the_first_unfinished_stage_and_leaves_a_finished_one_alone(world, repo):
+    docs_in_repo(repo)
+    stack = world.kit.stack
+    acceptance = world.issue(TaskKind.ACCEPTANCE, "acceptance-p-restart1", title="demo-restart 验收文档")
+    world.stage(acceptance, phase=TaskPhase.REVIEW, deliverable=ACCEPTANCE_YAML, verdict="pass", status=WorkItemStatus.DONE)
+    decompose = world.issue(TaskKind.DECOMPOSE, "decompose-p-restart1", assignee="bob", title="demo-restart 拆解")
+    world.stage(decompose, phase=TaskPhase.AUTHORING, status=WorkItemStatus.IN_PROGRESS, bound=False)
+    stack.set_scenario("bob", [[{"hang": 120}], [world.manifest(GOOD_MANIFEST)]])
+    world.kit.assign(decompose.id, "bob")
+    world.kit.wait_for(lambda: any(run.active for run in world.kit.runtime.list_runs(decompose.id)), what="the stuck Run")
+    stack.set_scenario("carol", [[stack.review("pass")]])
+
+    assert main(["plan", "resume", "--plan-id", "p-restart1", "--name", "demo-restart", "--doc", "docs", "--restart-active"]) == exit_codes.OK
+
+    assert not any(run.active for run in world.kit.runtime.list_runs(decompose.id))      # the stuck decompose Run was cancelled
+    untouched = world.store.get_work_item(acceptance.id)
+    assert world.kit.runtime.list_runs(acceptance.id) == []
+    assert untouched.status is WorkItemStatus.DONE and untouched.deliverable == ACCEPTANCE_YAML
+    assert (repo.work / ".omac" / "demo-restart.yaml").exists()
+
+
+def test_no_review_does_not_release_a_stop_that_only_a_review_decision_releases(world, repo):
+    docs_in_repo(repo)
+    script(world, plan=None)
+    item = world.issue(TaskKind.ACCEPTANCE, "acceptance-p-noreview1", title="demo-noreview 验收文档")
+    decision = {"schema": DECISION_REQUIRED_SCHEMA, "reason_code": "review-budget-exhausted", "kind": "acceptance", "phase": "review",
+                "gate": "review", "rounds": 8, "resume_issue_id": item.id}
+    world.stage(item, phase=TaskPhase.REVIEW, deliverable=ACCEPTANCE_YAML, verdict="reject", bounce=8, status=WorkItemStatus.BLOCKED,
+                bound=False, decision_required=decision)
+
+    assert main(["plan", "resume", "--plan-id", "p-noreview1", "--name", "demo-noreview", "--doc", "docs", "--no-review"]) == exit_codes.NEEDS_DECISION
+
+    got = world.store.get_work_item(item.id)
+    assert got.status is WorkItemStatus.BLOCKED and got.decision_required["reason_code"] == "review-budget-exhausted"
 
 
 def test_a_resume_by_dag_key_continues_from_the_existing_plan_issue_without_creating_a_second(world, repo, capsys):

@@ -25,7 +25,8 @@ from ..core.machine_feedback import (
 from ..core.review_convergence import (
     bounded_decision_required, build_review_obligations,
 )
-from ..core.review_continuation import REVIEW_BUDGET_GATES, authorized_review_limit, review_budget_gate
+from ..core.review_continuation import authorized_review_limit, valid_review_continuation
+from ..core.taskmeta import review_nits_acceptance_is_valid
 from ..core.review_preflight import run_review_preflight
 from ..core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, DELIVERY_CONTENT_KEY, TaskKind, TaskPhase,
@@ -40,12 +41,19 @@ from .dispatch import (
 )
 from .apply import Ports, apply, apply_one
 from .decide_reviewer import prior_run_active
-from .decide_transitions import block_in_phase, block_if_needed
+from .decide_runs import active_direct_runs, unknown_direct_runs
+from .decide_stop import (
+    PLAN_KINDS, REVIEW_STOP_GATES, Release, Resume, ResumeFacts, StopReason, build_stop, classify_resume,
+    inspect_action, needs_run_facts, render_release,
+)
+from .decide_transitions import block_in_phase, block_if_needed, rework_to_producer
+from .decide_review import VerdictObservation, VerdictPath, decide_verdict_path
 from .decide_task import (
     Fact, Stage, TERMINAL, TaskObs, decide_task_step, plan_machine_feedback,
 )
 from .decide_effects import (
     Assign,
+    CancelRun,
     ClearAssignment,
     CreateWorkItem,
     DispatchReviewer,
@@ -78,6 +86,7 @@ class AuthoringTaskSpec:
     source_refs: List[Any] = field(default_factory=list)
     source_of_truth: Dict[str, str] = field(default_factory=dict)
     amendment_attempt: Optional[Dict[str, Any]] = None
+    plan_profile: Optional[Dict[str, Any]] = None
 
 
 def _markdown_fence_for(text: str) -> str:
@@ -122,6 +131,7 @@ def _raise_if_reviewer_dispatch_stopped(
             "phase": TaskPhase.REVIEW.value,
             "reason_code": "reviewer-dispatch-blocked",
             "decision_required": current.decision_required,
+            "next_action": inspect_action(item_id),
         },
     )
 
@@ -150,20 +160,16 @@ def _review_evidence_errors(contract: Any, item: WorkItem) -> List[str]:
 
 
 def _new_attempt_recovery(kind: TaskKind, item_id: str) -> tuple[str, str]:
-    if kind == TaskKind.AMENDMENT:
-        action = (
-            "omac dag amend propose <manifest> --report-file <report> "
-            "--docs <docs> --blocked-node <node> --new-attempt "
-            f"--supersedes-issue-id {item_id} --output json"
-        )
-        return action, (
-            "Keep the existing confirmation unchanged and create a deterministic "
-            "new amendment attempt with the current report/docs inputs."
-        )
-    return f"omac work show {item_id} --output json", (
-        "Inspect the current Store facts and start a fresh task through its normal "
-        "command; do not clear confirmation or simulate an in-place restart."
-    )
+    if kind != TaskKind.AMENDMENT:
+        return inspect_action(item_id), (
+            "Inspect the current Store facts and start a fresh task through its normal "
+            "command; do not clear confirmation or simulate an in-place restart.")
+    return (
+        "omac dag amend propose <manifest> --report-file <report> "
+        "--docs <docs> --blocked-node <node> --new-attempt "
+        f"--supersedes-issue-id {item_id} --output json",
+        "Keep the existing confirmation unchanged and create a deterministic "
+        "new amendment attempt with the current report/docs inputs.")
 
 
 def _confirmation_resume_errors(
@@ -183,6 +189,20 @@ def _confirmation_resume_errors(
     )
     errors.extend(_review_evidence_errors(persisted_contract, item))
     return errors
+
+
+def _refuse_review_bypass(item: WorkItem) -> None:
+    """Resuming without reviewers must not release a stop that only a review decision can release."""
+    decision = item.decision_required if isinstance(item.decision_required, dict) else {}
+    if item.status != WorkItemStatus.BLOCKED or decision.get("gate") not in REVIEW_STOP_GATES:
+        return
+    raise NeedsDecision(
+        ui(f"{item.kind.value} issue {item.id} is stopped on a review decision; resuming without review "
+           "would bypass it. Release the stop with the command in next_action, or resume with review enabled.",
+           f"{item.kind.value} issue {item.id} 停在评审决策上；不带评审恢复会绕过它。"
+           "请用 next_action 里的命令放行，或在开启评审的情况下恢复。"),
+        report={"item_id": item.id, "kind": item.kind.value, "reason_code": "review-decision-standing",
+                "gate": decision.get("gate"), "next_action": decision.get("next_action")})
 
 
 def _contract_identity(contract: Any) -> tuple[str, Any]:
@@ -251,10 +271,8 @@ def _resume_amendment_nits_confirmation(
                 "errors": errors,
             },
         )
-    unsafe_runs = [
-        run for run in engine.runtime.list_runs(item.id)
-        if run.kind == "direct" and (run.active or not run.terminal)
-    ]
+    runs = engine.runtime.list_runs(item.id)
+    unsafe_runs = active_direct_runs(runs) + unknown_direct_runs(runs)
     if unsafe_runs:
         raise NeedsDecision(
             ui(
@@ -302,14 +320,6 @@ def _review_opinion(item: WorkItem) -> Optional[str]:
     return None
 
 
-def _review_continuation_action(item: WorkItem) -> Optional[str]:
-    if item.kind not in {
-        TaskKind.PLAN, TaskKind.ACCEPTANCE, TaskKind.DECOMPOSE,
-    }:
-        return None
-    return f"omac plan continue-review --dag-key {item.dag_key}"
-
-
 def _rejected_verdict_was_counted(kind: TaskKind, item: WorkItem) -> bool:
     round_index = max(0, item.bounces.review)
     return (
@@ -318,72 +328,6 @@ def _rejected_verdict_was_counted(kind: TaskKind, item: WorkItem) -> bool:
         and item.review_subject_digest
         == _review_subject_digest(kind, item, round_index)
     )
-
-
-def _review_exhausted_error(
-    kind: TaskKind,
-    item: WorkItem,
-    rounds: int,
-    last_opinion: Optional[str],
-    *,
-    gate: str = "review",
-) -> NeedsDecision:
-    action = _review_continuation_action(item)
-    instruction = (
-        f" Run `{action}` to authorize exactly one additional review round, "
-        "then run plan resume."
-        if action else ""
-    )
-    instruction_zh = (
-        f" 运行 `{action}` 明确授权额外一轮 review，然后再运行 plan resume。"
-        if action else ""
-    )
-    report = {
-        "item_id": item.id,
-        "kind": kind.value,
-        "phase": TaskPhase.REVIEW.value,
-        "gate": gate,
-        "rounds": rounds,
-        "last_opinion": last_opinion,
-        "resume_issue_id": item.id,
-    }
-    if action:
-        report["next_action"] = action
-    return NeedsDecision(
-        ui(
-            f"{kind.value} did not pass review after {rounds} revisions."
-            f"{instruction}",
-            f"{kind.value} 任务在 {rounds} 轮修订后仍未通过评审。"
-            f"{instruction_zh}"),
-        report=report,
-    )
-
-
-def _budget_exhausted_decision(
-    kind: TaskKind,
-    item: WorkItem,
-    *,
-    gate: str,
-    rounds: int,
-) -> Dict[str, Any]:
-    """Build the bounded platform projection for an exhausted task budget."""
-    decision: Dict[str, Any] = {
-        "schema": DECISION_REQUIRED_SCHEMA,
-        "reason_code": f"{gate}-budget-exhausted",
-        "kind": kind.value,
-        "phase": TaskPhase.REVIEW.value,
-        "gate": gate,
-        "rounds": rounds,
-        "resume_issue_id": item.id,
-    }
-    for key in ("machine_feedback_ref", "review_report_ref", "review_ledger_ref"):
-        value = getattr(item, key, None)
-        if isinstance(value, dict) and value:
-            decision[key] = value
-    action = _review_continuation_action(item) if gate in REVIEW_BUDGET_GATES else None
-    if action:
-        decision["next_action"] = action
-    return decision
 
 
 def _review_subject_digest(
@@ -870,56 +814,74 @@ def refresh_authoring_task(
         'description': body,
         'source_refs': refs,
         'amendment_attempt': spec.amendment_attempt,
+        'plan_profile': spec.plan_profile,
     }), Ports(store=store))
+
+
+def _standing_reason(item: WorkItem) -> str:
+    """reason_code of the decision this issue stands on, "" unless it is a well-formed decision about this very issue."""
+    decision = item.decision_required
+    if not (isinstance(decision, dict) and decision.get("schema") == DECISION_REQUIRED_SCHEMA
+            and decision.get("resume_issue_id") == item.id
+            and decision.get("kind") == getattr(item.kind, "value", item.kind)):
+        return ""
+    return str(decision.get("reason_code") or "")
+
+
+def _resume_facts(item: WorkItem, runs=None) -> ResumeFacts:
+    direct = [run for run in runs or [] if run.kind == "direct"]
+    latest = max(direct, key=lambda run: run.updated_at or run.created_at or "") if direct else None
+    return ResumeFacts(
+        phase=item.phase, status=item.status, has_deliverable=bool(item.deliverable or item.deliverable_ref),
+        decision_reason=_standing_reason(item),
+        run_flagged_stopped=bool(item.agent_run_failed or item.agent_run_finished_without_submit),
+        produced=_produced(item), active_runs=bool(active_direct_runs(direct)),
+        unknown_runs=bool(unknown_direct_runs(direct)), has_direct_runs=bool(direct),
+        latest_run_terminal=bool(latest is not None and latest.terminal))
+
+
+def _observe_runs_for_resume(engine, item: WorkItem, kind: TaskKind, reason_code: str):
+    try:
+        return engine.runtime.list_runs(item.id)
+    except PlatformError as exc:
+        raise NeedsDecision(
+            "Could not safely observe the resumed Run; no new Run was started.",
+            report={"item_id": item.id, "kind": kind.value, "reason_code": reason_code, "detail": str(exc),
+                    "next_action": inspect_action(item.id)},
+        ) from exc
+
+
+def _run_not_terminal(item: WorkItem, kind: TaskKind, reason_code: str, message: str, runs) -> NeedsDecision:
+    return NeedsDecision(message, report={
+        "item_id": item.id, "kind": kind.value, "reason_code": reason_code,
+        "run_ids": [run.id for run in active_direct_runs(runs) + unknown_direct_runs(runs)],
+        "next_action": inspect_action(item.id)})
 
 
 def _resume_reviewer_completed_without_verdict(
     engine, item: WorkItem, expected_kind: TaskKind | None = None,
 ) -> WorkItem:
     """Clear only the bounded reviewer no-submit decision on safe resume."""
-    decision = item.decision_required
-    if not (
-        item.phase == TaskPhase.REVIEW
-        and item.status == WorkItemStatus.BLOCKED
-        and isinstance(decision, dict)
-        and decision.get("schema") == DECISION_REQUIRED_SCHEMA
-        and decision.get("reason_code") == "reviewer-completed-without-verdict"
-        and decision.get("resume_issue_id") == item.id
-        and decision.get("phase") == TaskPhase.REVIEW.value
-        and decision.get("kind") == getattr(item.kind, "value", item.kind)
-        and (
-            expected_kind is None
-            or decision.get("kind") == getattr(expected_kind, "value", expected_kind)
-        )
-    ):
+    if expected_kind is not None and item.kind != expected_kind:
         return item
-    runs = engine.runtime.list_runs(item.id)
-    unsafe_runs = [run for run in runs if run.active or not run.terminal]
-    if unsafe_runs:
-        raise NeedsDecision(
-            "The Reviewer Run is still active or its terminal state is unknown; "
-            "wait before resuming.",
-            report={
-                "item_id": item.id,
-                "reason_code": "reviewer-resume-run-not-terminal",
-                "run_ids": [run.id for run in unsafe_runs],
-                "next_action": f"omac work show {item.id} --output json",
-            },
-        )
+    if not needs_run_facts(_resume_facts(item)) or item.phase != TaskPhase.REVIEW:
+        return item
+    runs = _observe_runs_for_resume(engine, item, item.kind, "reviewer-resume-run-observation-failed")
+    outcome = classify_resume(_resume_facts(item, runs))
+    if outcome is Resume.RUN_NOT_TERMINAL:
+        raise _run_not_terminal(
+            item, item.kind, "reviewer-resume-run-not-terminal",
+            "The Reviewer Run is still active or its terminal state is unknown; wait before resuming.", runs)
+    if outcome is not Resume.CLEAR_REVIEWER_STOP:
+        return item
     cleared = apply_one(UpdateMetadata(item.id, {'decision_required': {}}), Ports(store=engine.store))
     if cleared.requires_decision:
         raise NeedsDecision(
             "The reviewer no-submit decision could not be cleared safely.",
-            report={
-                "item_id": item.id,
-                "reason_code": "reviewer-resume-decision-not-cleared",
-                "next_action": f"omac work show {item.id} --output json",
-            },
-        )
+            report={"item_id": item.id, "reason_code": "reviewer-resume-decision-not-cleared",
+                    "next_action": inspect_action(item.id)})
     if cleared.status != WorkItemStatus.IN_REVIEW:
-        apply([
-            UpdateStatus(item.id, WorkItemStatus.IN_REVIEW),
-        ], Ports(store=engine.store))
+        apply([UpdateStatus(item.id, WorkItemStatus.IN_REVIEW)], Ports(store=engine.store))
     verified = engine.store.get_work_item(item.id)
     if (
         verified.decision_required not in (None, {})
@@ -928,128 +890,64 @@ def _resume_reviewer_completed_without_verdict(
     ):
         raise NeedsDecision(
             "The reviewer no-submit decision did not clear to a reviewable state.",
-            report={
-                "item_id": item.id,
-                "reason_code": "reviewer-resume-readback-mismatch",
-                "next_action": f"omac work show {item.id} --output json",
-            },
-        )
+            report={"item_id": item.id, "reason_code": "reviewer-resume-readback-mismatch",
+                    "next_action": inspect_action(item.id)})
     return verified
 
 
 def _is_unstarted_authoring(item: WorkItem) -> bool:
     """No delivery and no stopped Run on record: the issue may be refreshed in place when it is resumed."""
-    return bool(
-        item.status == WorkItemStatus.TODO
-        and item.phase == TaskPhase.AUTHORING
-        and not item.deliverable
-        and not item.deliverable_ref
-        and not item.agent_run_failed
-        and not item.agent_run_finished_without_submit
-    )
+    return classify_resume(_resume_facts(item)) is Resume.UNSTARTED
 
 
 def _is_stopped_authoring_with_delivery(item: WorkItem) -> bool:
     """A delivery is already present and the authoring Run stopped: resuming it in place would be unsafe."""
-    return bool(
-        item.phase == TaskPhase.AUTHORING
-        and item.deliverable
-        and (
-            item.status in (WorkItemStatus.FAILED, WorkItemStatus.BLOCKED)
-            or item.agent_run_failed
-            or item.agent_run_finished_without_submit
-        )
-    )
+    return classify_resume(_resume_facts(item)) is Resume.STOPPED_WITH_DELIVERY
 
 
 def _guard_resume_authoring_terminal_run(
     engine, item: WorkItem, kind: TaskKind,
 ) -> WorkItem:
-    """Stop a resumed authoring issue whose prior Run ended without submit."""
-    if not (
-        item.phase == TaskPhase.AUTHORING
-        and item.status == WorkItemStatus.IN_PROGRESS
-        and not item.deliverable
-        and not item.deliverable_ref
-        and not item.agent_run_finished_without_submit
-    ):
+    """Stop a resumed authoring issue whose prior Run ended without submit; a live Run is waited for by the caller."""
+    if not needs_run_facts(_resume_facts(item)) or item.phase != TaskPhase.AUTHORING:
         return item
-    try:
-        runs = engine.runtime.list_runs(item.id)
-    except PlatformError as exc:
-        raise NeedsDecision(
-            "Could not safely observe the resumed authoring Run; no new Run was started.",
-            report={
-                "item_id": item.id,
-                "kind": kind.value,
-                "reason_code": "resume-authoring-run-observation-failed",
-                "detail": str(exc),
-                "next_action": f"omac work show {item.id} --output json",
-            },
-        ) from exc
-    direct_runs = [run for run in runs if run.kind == "direct"]
-    unsafe_runs = [run for run in direct_runs if run.active or not run.terminal]
-    if unsafe_runs:
-        raise NeedsDecision(
-            "The resumed authoring Run is active or its terminal state is unknown; "
-            "no duplicate Run was started.",
-            report={
-                "item_id": item.id,
-                "kind": kind.value,
-                "reason_code": "resume-authoring-run-not-terminal",
-                "run_ids": [run.id for run in unsafe_runs],
-                "next_action": f"omac work show {item.id} --output json",
-            },
-        )
-    if not direct_runs:
+    runs = _observe_runs_for_resume(engine, item, kind, "resume-authoring-run-observation-failed")
+    item = engine.store.get_work_item(item.id)      # a resumed Run can submit between the snapshot and list_runs
+    outcome = classify_resume(_resume_facts(item, runs))
+    if outcome is Resume.RUN_NOT_TERMINAL:
+        raise _run_not_terminal(
+            item, kind, "resume-authoring-run-not-terminal",
+            "The resumed authoring Run's terminal state is unknown; no duplicate Run was started.", runs)
+    if outcome is not Resume.COMPLETED_WITHOUT_SUBMIT:
         return item
-    latest = max(
-        direct_runs,
-        key=lambda run: run.updated_at or run.created_at or "",
-    )
-    if not latest.terminal:
-        raise NeedsDecision(
-            "The resumed authoring Run has no explicit terminal result; "
-            "no duplicate Run was started.",
-            report={
-                "item_id": item.id,
-                "kind": kind.value,
-                "reason_code": "resume-authoring-run-not-terminal",
-                "run_ids": [latest.id],
-                "next_action": f"omac work show {item.id} --output json",
-            },
-        )
-    # A resumed Run can also submit between the input snapshot and list_runs.
-    item = engine.store.get_work_item(item.id)
-    if _produced(item):
-        return item
-    decision = {
-        "schema": DECISION_REQUIRED_SCHEMA,
-        "reason_code": "completed-without-submit",
-        "kind": kind.value,
-        "phase": TaskPhase.AUTHORING.value,
-        "resume_issue_id": item.id,
-        "run_id": latest.id,
-        "next_action": f"omac node retry <manifest> <node>",
-    }
+    latest = max((run for run in runs if run.kind == "direct"), key=lambda run: run.updated_at or run.created_at or "")
+    decision = build_stop(
+        StopReason.COMPLETED_WITHOUT_SUBMIT, kind=kind, item_id=item.id, dag_key=item.dag_key, gate="authoring",
+        rounds=0, phase=TaskPhase.AUTHORING, extra={"run_id": latest.id})
     apply(block_in_phase(item.id, decision, TaskPhase.AUTHORING), Ports(store=engine.store))
     raise NeedsDecision(
         "The previous authoring Run ended without submitting a deliverable; "
         "no duplicate Run was started.",
-        report={**decision, "outcome": "unknown_partial"},
-    )
+        report={**decision, "outcome": "unknown_partial"})
 
 
 @dataclass
 class _Stop:
     """Why the run stops with NeedsDecision; the exception is built after the table has blocked the issue."""
 
-    kind: str                  # "guard" | "review" | "convergence"
+    reason: StopReason
     gate: str
     rounds: int
     opinion: Optional[str]
     logged: bool = False       # the needs-decision event was already logged before the first effect
     decision: Optional[Dict[str, Any]] = None
+
+
+def _review_budget_stop(item: WorkItem, rounds: int, opinion: Optional[str]) -> _Stop:
+    """A reject at the limit awaits rework; any other stop leaves a delivery awaiting its review."""
+    if item.review_verdict == "reject":
+        return _Stop(StopReason.REVIEW_BUDGET, "review", rounds, opinion)
+    return _Stop(StopReason.REVIEW_NITS_BUDGET, "review-nits", rounds, opinion)
 
 
 class _TaskRun:
@@ -1062,7 +960,7 @@ class _TaskRun:
     def __init__(
         self, engine, kind, payload, assignee, *, reviewers, max_revisions, poll, guard, confirm,
         pause_at_confirmation, source_refs, dag_key, resume_item_id, amendment_attempt,
-        reuse_dag_key, review_acceptance_doc, review_amendment_manifest,
+        reuse_dag_key, review_acceptance_doc, review_amendment_manifest, restart_active, refresh_source,
     ):
         self.engine = engine
         self.store = engine.store
@@ -1076,6 +974,8 @@ class _TaskRun:
         self.confirm = confirm
         self.pause_at_confirmation = pause_at_confirmation
         self.resume_item_id = resume_item_id
+        self.restart_active = restart_active
+        self.refresh_source = refresh_source
         self.amendment_attempt = amendment_attempt
         self.reuse_dag_key = reuse_dag_key
         self.review_acceptance_doc = review_acceptance_doc
@@ -1093,6 +993,7 @@ class _TaskRun:
             source_refs=list(source_refs or []),
             source_of_truth=payload.get("source_of_truth") or {},
             amendment_attempt=amendment_attempt,
+            plan_profile=payload.get("plan_profile"),
         )
         self.reused_created_item = False
         self.created_after_ambiguous_failure = False
@@ -1119,11 +1020,32 @@ class _TaskRun:
         self.result: Dict[str, Any] = {}
         self.on_done: Optional[Callable[[], None]] = None
 
+    def _reopen_in_place(self, item: WorkItem) -> WorkItem:
+        """--restart-active: cancel the Run; a delivery awaiting review goes back to its Reviewer, anything else to the
+        author. A replaced design source: the author redoes the stage against it, once its Run has ended."""
+        ports = Ports(store=self.store, runtime=self.runtime)
+        if self.restart_active:
+            apply([CancelRun(item.id), ClearAssignment(item.id)], ports)
+            if item.phase == TaskPhase.REVIEW and item.deliverable:
+                apply([UpdateStatus(item.id, WorkItemStatus.IN_REVIEW)], ports)
+                return self.store.get_work_item(item.id)
+        elif self.runtime.is_active(item.id):
+            raise ValidationError(ui(
+                f"The design source changed but {self.kind.value} issue {item.id} still has an active Agent run. "
+                "Wait for it to end, or run `omac plan resume --plan-id <id> --restart-active`.",
+                f"设计来源已变化,但 {self.kind.value} issue {item.id} 仍有活跃 Agent run。请等待其结束,"
+                "或运行 `omac plan resume --plan-id <id> --restart-active`。"))
+        apply(rework_to_producer(item.id), ports)
+        return refresh_authoring_task(self.engine, item.id, self.spec, item_snapshot=item)
+
     def _open_item(self) -> WorkItem:
         if self.resume_item_id is not None:
             # Store 当前事实是 resume 的唯一授权来源。调用方 snapshot 仅为兼容保留，
             # 绝不能在读取失败时授权 refresh 或其他副作用。
             item = self.store.get_work_item(self.resume_item_id)
+            if self.restart_active or (
+                    self.refresh_source and item.status != WorkItemStatus.DONE and not _is_unstarted_authoring(item)):
+                item = self._reopen_in_place(item)
             if self.kind == TaskKind.AMENDMENT:
                 self.contract = _validate_amendment_resume_contract(item, self.contract)
                 self.spec.contract = self.contract
@@ -1201,6 +1123,8 @@ class _TaskRun:
         self.resume_authoring_attempt_available = self.explicit_resume
         self.pristine_dispatch_required = self.amendment_attempt is not None
         self.resumed_confirmation: WorkItem | None = None
+        if self.resume_item_id is not None and not self.reviewers:
+            _refuse_review_bypass(item)
 
         if self.resume_item_id is not None and item.phase == TaskPhase.CONFIRMATION:
             confirmation_errors = _confirmation_resume_errors(self.kind, self.contract, item)
@@ -1241,7 +1165,12 @@ class _TaskRun:
                 self.engine, item, self.contract)
 
         if self.resume_item_id is not None and _is_stopped_authoring_with_delivery(item):
-            next_action, recovery = _new_attempt_recovery(self.kind, item.id)
+            report = {**build_stop(
+                StopReason.UNSAFE_AUTHORING_RESUME, kind=self.kind, item_id=item.id, dag_key=item.dag_key,
+                gate="authoring", rounds=0, phase=TaskPhase.AUTHORING),
+                "item_id": item.id, "last_opinion": "stopped authoring run already has a persisted deliverable"}
+            if self.kind == TaskKind.AMENDMENT:
+                report["next_action"], report["recovery"] = _new_attempt_recovery(self.kind, item.id)
             raise NeedsDecision(
                 ui(
                     f"{self.kind.value} authoring cannot resume a stopped run while a "
@@ -1249,17 +1178,7 @@ class _TaskRun:
                     f"{self.kind.value} authoring 已有交付物且原 Run 已停止，不能直接恢复"
                     f"（item {self.item_id}）",
                 ),
-                report={
-                    "reason_code": "unsafe-authoring-resume",
-                    "item_id": self.item_id,
-                    "kind": self.kind.value,
-                    "phase": TaskPhase.AUTHORING.value,
-                    "rounds": 0,
-                    "last_opinion": (
-                        "stopped authoring run already has a persisted deliverable"),
-                    "next_action": next_action,
-                    "recovery": recovery,
-                },
+                report=report,
             )
 
     def _raise_if_authoring_stopped(self, candidate: WorkItem) -> None:
@@ -1277,50 +1196,36 @@ class _TaskRun:
         )
         log.info(logsetup.EVT_NODE_FAILED, kind=self.kind.value, id=self.item_id,
                  reason=f"producer {outcome}")
+        report: Dict[str, Any] = {"item_id": self.item_id, "kind": self.kind.value, "rounds": 0,
+                                  "last_opinion": f"producer {outcome}"}
+        if candidate.requires_decision:
+            report = {**candidate.decision_required, **report}      # the stop the issue stands on names its own release
+        elif self.kind in PLAN_KINDS:
+            report["next_action"] = render_release(Release.RESTART_ACTIVE, candidate.dag_key)
         raise NeedsDecision(
             ui(
                 f"{self.kind.value} authoring {outcome} (item {self.item_id})",
                 f"{self.kind.value} 产出阶段{'被阻塞' if outcome == 'blocked' else '失败'}"
                 f"(item {self.item_id})"),
-            report={"item_id": self.item_id, "kind": self.kind.value, "rounds": 0,
-                    "last_opinion": f"producer {outcome}"})
+            report=report)
 
     def _raise_completed_without_submit(self, *, reason_code: str = "completed-without-submit", role: str = "worker",
     ) -> None:
-        decision_phase = (
-            TaskPhase.REVIEW if role == "reviewer" else TaskPhase.AUTHORING
-        )
-        decision = {
-            "schema": DECISION_REQUIRED_SCHEMA,
-            "reason_code": reason_code,
-            "kind": self.kind.value,
-            "phase": decision_phase.value,
-            "resume_issue_id": self.item_id,
-        }
-        apply(block_in_phase(self.item_id, decision, decision_phase), Ports(store=self.store))
-        log.info(
-            logsetup.EVT_NEEDS_DECISION,
-            kind=self.kind.value,
-            id=self.item_id,
-            gate=("review-verdict" if role == "reviewer" else "authoring-submit"),
-            rounds=0,
-        )
+        reviewer = role == "reviewer"
+        phase = TaskPhase.REVIEW if reviewer else TaskPhase.AUTHORING
+        reason = (StopReason.REVIEWER_COMPLETED_WITHOUT_VERDICT if reviewer else StopReason.COMPLETED_WITHOUT_SUBMIT)
+        gate = "review-verdict" if reviewer else "authoring-submit"
+        current = self.store.get_work_item(self.item_id)
+        decision = build_stop(reason, kind=self.kind, item_id=self.item_id, dag_key=current.dag_key, gate=gate,
+                              rounds=0, phase=phase)
+        apply(block_in_phase(self.item_id, decision, phase), Ports(store=self.store))
+        log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id, gate=gate, rounds=0)
         raise NeedsDecision(
             ui(
                 f"{self.kind.value} Agent run completed without a fresh structured deliverable (item {self.item_id})",
                 f"{self.kind.value} Agent Run 已结束但没有提交新的结构化交付物（item {self.item_id}）"),
-            report={
-                "item_id": self.item_id,
-                "kind": self.kind.value,
-                "phase": decision_phase.value,
-                "reason_code": reason_code,
-                "rounds": 0,
-                "last_opinion": (
-                    "Reviewer run completed without verdict"
-                    if role == "reviewer"
-                    else "Agent run completed without omac work submit"
-                ),
-            },
+            report={**decision, "item_id": self.item_id, "last_opinion": (
+                "Reviewer run completed without verdict" if reviewer else "Agent run completed without omac work submit")},
         )
 
     def _wait_for_dispatched_run(self, *,
@@ -1346,6 +1251,7 @@ class _TaskRun:
                         "item_id": self.item_id,
                         "reason_code": "dispatch-run-race",
                         "run_ids": [run.id for run in active_non_direct],
+                        "next_action": inspect_action(self.item_id),
                         "outcome": "unknown_partial",
                     },
                 )
@@ -1362,6 +1268,7 @@ class _TaskRun:
                         "item_id": self.item_id,
                         "reason_code": "dispatch-multiple-runs",
                         "run_ids": [run.id for run in new_direct],
+                        "next_action": inspect_action(self.item_id),
                         "outcome": "unknown_partial",
                     },
                 )
@@ -1405,6 +1312,7 @@ class _TaskRun:
                             "item_id": self.item_id,
                             "reason_code": "dispatch-run-not-observed",
                             "role": role,
+                            "next_action": inspect_action(self.item_id),
                             "outcome": "unknown_partial",
                         },
                     )
@@ -1442,7 +1350,7 @@ class _TaskRun:
     def _wait_for_runs_to_end(self) -> None:
         """A Reviewer's Run, or the author's own on a machine-gate retry, ends some time after its submit."""
         waiting = False
-        while any(run.kind == "direct" and run.active for run in self.runtime.list_runs(self.item_id)):
+        while active_direct_runs(self.runtime.list_runs(self.item_id)):
             if not waiting:
                 log.info(logsetup.EVT_REWORK_HANDOFF_WAIT, kind=self.kind.value, id=self.item_id,
                          worker=self.assignee)
@@ -1573,7 +1481,7 @@ class _TaskRun:
             Stage.REVIEWER_CHECK: self._at_reviewer_check, Stage.REVIEW_ENTER: self._at_review_enter,
             Stage.REVIEW_ROUND: self._at_review_round, Stage.REVIEW_CHECK: self._at_review_check,
             Stage.REVIEW_DISPATCH: self._at_review_dispatch, Stage.REVIEW_VERDICT: self._at_review_verdict,
-            Stage.PRODUCE_NITS: self._at_produce_nits, Stage.PRODUCE_REJECT: self._at_produce_reject,
+            Stage.PRODUCE_REJECT: self._at_produce_reject,
             Stage.BLOCK_BUDGET: self._at_block_budget, Stage.FINISH: self._at_finish,
             Stage.FINISH_WAIT: self._at_finish_wait,
         }
@@ -1648,7 +1556,7 @@ class _TaskRun:
             return Fact.GATE_RETRY, self._obs()
         log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id,
                  gate="guard", rounds=self.max_revisions)
-        self.stop = _Stop("guard", "guard", self.max_revisions, "\n".join(self.gate_errors), logged=True)
+        self.stop = _Stop(StopReason.GUARD_BUDGET, "guard", self.max_revisions, "\n".join(self.gate_errors), logged=True)
         # The producer's submit clears consumed feedback; once the budget is spent the full problem list is
         # persisted again so the operator and the Author can read it.
         feedback = build_machine_feedback("machine-gate", self.gate_errors)
@@ -1708,7 +1616,7 @@ class _TaskRun:
         self.next_round = review_bounce + 1
         if review_bounce < self.review_limit:
             return Fact.ROUNDS_REMAIN, self._obs()
-        self.stop = _Stop("review", review_budget_gate(self.delivered), review_bounce, _review_opinion(self.delivered))
+        self.stop = _review_budget_stop(self.delivered, review_bounce, _review_opinion(self.delivered))
         return Fact.BUDGET_EXHAUSTED, self._obs()
 
     def _at_review_round(self):
@@ -1779,55 +1687,69 @@ class _TaskRun:
         verdict = reviewed.review_verdict
         log.info(logsetup.EVT_VERDICT, kind=self.kind.value, id=self.item_id,
                  verdict=verdict, round=round_index)
-        if verdict == "pass":
+        path = decide_verdict_path(VerdictObservation(verdict=verdict, has_evidence_errors=False))
+        if path is VerdictPath.MERGE:
             self.finish_args = ("pass", round_index, True)
             return Fact.PASS, self._obs()
-        if verdict == "reject":
-            resolution = resolve_convergence(
-                reviewed, kind=self.kind.value, recommended_action="reconsider-task-boundary")
-            resolution.raise_if_invalid(PlatformError, self.item_id)
-            if resolution.state is ResolutionState.NEEDS_DECISION:
-                return self._convergence_stop(reviewed, resolution)
-        if verdict == "pass-with-nits":
-            if self.kind == TaskKind.AMENDMENT:
-                # A running-DAG amendment is already a reviewed control-plane change: the operator must
-                # explicitly accept the nits, then run `dag amend accept`.
-                self.finish_args = ("pass-with-nits", round_index, True)
-                return Fact.AMENDMENT_NITS, self._obs()
-            log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
-                     gate="review-nits", round=round_index, max=self.review_limit)
-            return Fact.NITS_RETRY, self._obs()
+        if path is VerdictPath.NITS_CHECK:
+            return self._nits_verdict(reviewed, round_index)
+        resolution = resolve_convergence(
+            reviewed, kind=self.kind.value, recommended_action="reconsider-task-boundary",
+            next_action=(render_release(Release.CONTINUE_REVIEW, reviewed.dag_key)
+                         if self.kind in PLAN_KINDS else None))
+        resolution.raise_if_invalid(PlatformError, self.item_id)
+        # An operator who authorized this very round (continue-review) has decided to go on past a convergence stop.
+        authorized = reviewed.review_continuation
+        operator_authorized = (valid_review_continuation(authorized, stage=self.kind.value)
+                               and round_index <= authorized["authorized_through_round"])
+        if resolution.state is ResolutionState.NEEDS_DECISION and not operator_authorized:
+            return self._convergence_stop(reviewed, resolution)
         # reject: the report is already in metadata; reset_review clears only the current verdict and returns the
         # item to the producer. Rework context comes from `work show`, never from a comment (it would trigger a Run).
         self.last_opinion = _review_opinion(reviewed)
         log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
                  gate="review", round=round_index, max=self.review_limit)
         if round_index >= self.review_limit:
-            self.stop = _Stop("review", review_budget_gate(reviewed), round_index, self.last_opinion)
+            self.stop = _review_budget_stop(reviewed, round_index, self.last_opinion)
             return Fact.REJECT_EXHAUSTED, self._obs()
         return Fact.REJECT_RETRY, self._obs()
+
+    def _nits_verdict(self, reviewed, round_index):
+        """pass-with-nits is a decision only a person makes (accept the nits, or send them back), here as for a node."""
+        self.finish_args = ("pass-with-nits", round_index, True)
+        if self.kind == TaskKind.AMENDMENT:
+            # A running-DAG amendment is already a reviewed control-plane change: the operator must
+            # explicitly accept the nits, then run `dag amend accept`.
+            return Fact.AMENDMENT_NITS, self._obs()
+        marker = reviewed.review_nits_acceptance
+        if (review_nits_acceptance_is_valid(marker)
+                and marker["review_subject_digest"] == reviewed.review_subject_digest
+                and marker["review_report_ref"] == reviewed.review_report_ref):
+            return Fact.NITS_ACCEPTED, self._obs()
+        log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id, gate="review-nits",
+                 rounds=round_index)
+        decision = build_stop(
+            StopReason.REVIEW_NITS_ACCEPTANCE, kind=self.kind, item_id=self.item_id, dag_key=reviewed.dag_key,
+            gate="review-nits", rounds=round_index, extra={
+                "verdict": "pass-with-nits", "review_subject_digest": reviewed.review_subject_digest,
+                "review_report_ref": reviewed.review_report_ref, "review_ledger_ref": reviewed.review_ledger_ref})
+        self.stop = _Stop(StopReason.REVIEW_NITS_ACCEPTANCE, "review-nits", round_index, _review_opinion(reviewed),
+                          logged=True, decision=decision)
+        return Fact.NITS_NEED_DECISION, self._obs(
+            decision=decision,
+            decision_current=reviewed.decision_required == decision and reviewed.phase == TaskPhase.REVIEW,
+            already_blocked=reviewed.status == WorkItemStatus.BLOCKED)
 
     def _convergence_stop(self, reviewed, resolution):
         decision = bounded_decision_required(resolution.decision)
         log.info(
             logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id, gate="review-convergence",
             rounds=resolution.convergence["cycle_count"], mode=resolution.convergence["mode"])
-        self.stop = _Stop("convergence", "review-convergence", 0, None, decision=decision)
+        self.stop = _Stop(StopReason.REVIEW_CONVERGENCE, "review-convergence", 0, None, decision=decision)
         return Fact.CONVERGENCE_STOP, self._obs(
             decision=decision,
             decision_current=reviewed.decision_required == decision and reviewed.phase == TaskPhase.REVIEW,
             already_blocked=reviewed.status == WorkItemStatus.BLOCKED)
-
-    def _at_produce_nits(self):
-        self.delivered = self._produce()
-        self.delivery = _delivery_of(self.kind, self.delivered)
-        if self.round_index >= self.review_limit:
-            self.stop = _Stop("review", review_budget_gate(self.delivered), self.round_index, _review_opinion(self.reviewed))
-            return Fact.PRODUCED_AT_LIMIT, self._obs()
-        # Whatever the size of the change, the final delivery is reviewed again: the next round's
-        # prepare_review_cycle clears the old verdict with the new subject digest.
-        self.next_round = self.round_index + 1
-        return Fact.PRODUCED, self._obs()
 
     def _at_produce_reject(self):
         self.delivered = self._produce()
@@ -1841,25 +1763,43 @@ class _TaskRun:
             log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id,
                      gate=stop.gate, rounds=stop.rounds)
         current = self.store.get_work_item(self.item_id)
-        decision = _budget_exhausted_decision(self.kind, current, gate=stop.gate, rounds=stop.rounds)
-        return Fact.OBSERVED, self._obs(decision=decision)
+        stop.decision = build_stop(
+            stop.reason, kind=self.kind, item_id=self.item_id, dag_key=current.dag_key, gate=stop.gate,
+            rounds=stop.rounds, extra={key: getattr(current, key, None) for key in (
+                "machine_feedback_ref", "review_report_ref", "review_ledger_ref")})
+        return Fact.OBSERVED, self._obs(decision=stop.decision)
 
     def _stop_error(self) -> NeedsDecision:
         stop = self.stop
-        if stop.kind == "convergence":
+        if stop.reason is StopReason.REVIEW_CONVERGENCE:
             return NeedsDecision(
                 ui(f"{self.kind.value} review is not converging within the current task boundary.",
                    f"{self.kind.value} 评审无法在当前任务边界内收敛。"),
                 report=stop.decision)
-        if stop.kind == "guard":
+        action = stop.decision.get("next_action")
+        report = {**stop.decision, "item_id": self.item_id, "last_opinion": stop.opinion}
+        if stop.reason is StopReason.REVIEW_NITS_ACCEPTANCE:
+            decline = next(iter(stop.decision.get("alternatives", [])), None)
             return NeedsDecision(
-                ui(f"{self.kind.value} did not pass the machine gate after {self.max_revisions} revisions",
-                   f"{self.kind.value} 任务经 {self.max_revisions} 轮 machine-gate 仍未通过"),
-                report={"item_id": self.item_id, "kind": self.kind.value,
-                        "rounds": self.max_revisions, "phase": "guard", "last_opinion": stop.opinion})
-        blocked = self.store.get_work_item(self.item_id)
-        extra = {} if stop.gate == "review" else {"gate": stop.gate}
-        return _review_exhausted_error(self.kind, blocked, stop.rounds, stop.opinion, **extra)
+                ui(f"{self.kind.value} passed review with nits (round {stop.rounds}); nothing was changed. "
+                   f"Accept them with `{action}`" + (f", or send them back to the author with `{decline}`." if decline else "."),
+                   f"{self.kind.value} 评审结论为 pass-with-nits（第 {stop.rounds} 轮）；未做任何修改。"
+                   f"用 `{action}` 接受建议项" + (f"，或用 `{decline}` 退回作者返工。" if decline else "。")),
+                report=report)
+        if stop.reason is StopReason.GUARD_BUDGET:
+            return NeedsDecision(
+                ui(f"{self.kind.value} did not pass the machine gate after {self.max_revisions} revisions"
+                   + (f". Run `{action}` to give it another round." if action else ""),
+                   f"{self.kind.value} 任务经 {self.max_revisions} 轮 machine-gate 仍未通过"
+                   + (f"。运行 `{action}` 再给一轮。" if action else "")),
+                report=report)
+        return NeedsDecision(
+            ui(f"{self.kind.value} did not pass review after {stop.rounds} revisions."
+               + (f" Run `{action}` to authorize exactly one additional review round, then run plan resume."
+                  if action else ""),
+               f"{self.kind.value} 任务在 {stop.rounds} 轮修订后仍未通过评审。"
+               + (f" 运行 `{action}` 明确授权额外一轮 review，然后再运行 plan resume。" if action else "")),
+            report=report)
 
     def _at_finish(self):
         verdict, rounds, prepare = self.finish_args
@@ -1911,6 +1851,8 @@ def run_task(
     reuse_dag_key: bool = False,
     review_acceptance_doc: Any = None,
     review_amendment_manifest: Any = None,
+    restart_active: bool = False,
+    refresh_source: bool = False,
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -1926,5 +1868,5 @@ def run_task(
         source_refs=source_refs, dag_key=dag_key, resume_item_id=resume_item_id,
         amendment_attempt=amendment_attempt, reuse_dag_key=reuse_dag_key,
         review_acceptance_doc=review_acceptance_doc,
-        review_amendment_manifest=review_amendment_manifest,
+        review_amendment_manifest=review_amendment_manifest, restart_active=restart_active, refresh_source=refresh_source,
     ).run()

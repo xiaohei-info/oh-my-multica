@@ -41,7 +41,7 @@ from ..core.taskmeta import (
     REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY,
     REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY,
-    REVIEW_SUBJECT_DIGEST_KEY, REVIEW_NITS_ACCEPTANCE_KEY,
+    REVIEW_SUBJECT_DIGEST_KEY, REVIEW_NITS_ACCEPTANCE_KEY, PLAN_PROFILE_KEY, parse_plan_profile,
     SOURCE_REFS_KEY, DeliveryIdentity, ReviewerRunBaseline, TaskKind, TaskPhase,
     VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
     review_feedback_is_current,
@@ -112,7 +112,7 @@ _KNOWN_WORK_ITEM_METADATA_KEYS = {
     REVIEWER_RUN_BASELINE_KEY,
     REVIEW_LEDGER_REF_KEY, REVIEW_OBLIGATIONS_KEY, REVIEW_OBLIGATIONS_REF_KEY,
     REVIEW_REPORT_REF_KEY, REVIEW_SUBJECT_DIGEST_KEY,
-    REVIEW_NITS_ACCEPTANCE_KEY, SOURCE_REFS_KEY,
+    REVIEW_NITS_ACCEPTANCE_KEY, SOURCE_REFS_KEY, PLAN_PROFILE_KEY,
     VERIFICATION_REF_KEY, WORKER_BOUNCE_KEY, WORKER_HANDOFF_KEY,
     DELIVERY_IDENTITY_KEY,
 }
@@ -1081,6 +1081,7 @@ class MulticaStore(WorkItemStore):
                 self._json_metadata(metadata, REVIEW_NITS_ACCEPTANCE_KEY)),
             amendment_attempt=(
                 amendment_attempt if isinstance(amendment_attempt, dict) else None),
+            plan_profile=parse_plan_profile(self._json_metadata(metadata, PLAN_PROFILE_KEY)),
             contract=legacy_contract if isinstance(legacy_contract, dict) else None,
             contract_ref=contract_ref if isinstance(contract_ref, dict) else None,
             source_refs=source_refs if isinstance(source_refs, list) else [],
@@ -2073,6 +2074,7 @@ class MulticaStore(WorkItemStore):
         decision_required: Optional[Dict[str, Any]] = None,
         review_nits_acceptance: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
+        plan_profile: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
@@ -2127,6 +2129,7 @@ class MulticaStore(WorkItemStore):
         self._set_present(item_id, (
             (REVIEW_NITS_ACCEPTANCE_KEY, review_nits_acceptance),
             (AMENDMENT_ATTEMPT_KEY, amendment_attempt),
+            (PLAN_PROFILE_KEY, plan_profile),
             (WORKER_BOUNCE_KEY, _text(worker_bounce)),
             (CI_BOUNCE_KEY, _text(ci_bounce)),
             (REVIEW_BOUNCE_KEY, _text(review_bounce)),
@@ -2291,6 +2294,17 @@ class MulticaStore(WorkItemStore):
                 break
             offset += len(page)
         return issues
+
+    def find_work_items_by_dag_key(self, workspace_id: str, dag_key: str) -> List[WorkItem]:
+        """Match paginated Issue identities from the control projection; only the matches are hydrated."""
+        extra_args = ["--project", self.config.project_id] if self.config.project_id else []
+        title_prefix = f"[DAG:{dag_key}]"
+        matches = []
+        for issue in self._list_issues_paginated(extra_args):
+            item = self._issue_to_control_projection(issue, workspace_id).work_item
+            if item.dag_key == dag_key or item.title.startswith(title_prefix):
+                matches.append(self._issue_to_work_item(issue, workspace_id))
+        return matches
 
     def find_work_item_by_dag_key(
         self, workspace_id: str, dag_key: str,

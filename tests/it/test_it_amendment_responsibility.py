@@ -194,7 +194,7 @@ def test_the_machine_guard_bounds_feedback_about_invalid_gate_refs(kit, tmp_path
             guard=lambda item: validate_proposal(manifest, item.deliverable or "", POOL, acceptance=responsibility_acceptance_doc()))
 
     report = raised.value.report
-    assert (report["phase"], report["rounds"]) == ("guard", 1)
+    assert (report["gate"], report["rounds"]) == ("guard", 1) and report["phase"] == "review"       # the report is the persisted decision
     assert "entries must be non-empty strings" in report["last_opinion"] and "must not contain duplicates" in report["last_opinion"]
     item = kit.store.get_work_item(report["item_id"])
     assert item.status == WorkItemStatus.BLOCKED and item.decision_required["reason_code"] == "guard-budget-exhausted"

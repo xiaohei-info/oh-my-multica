@@ -125,6 +125,17 @@ provision agents from the packaged templates.
 produce → machine gate → bounded review loop as any node, then writes the manifest and the acceptance document and
 commits them together.
 
+The shape of a pipeline (`--doc` or `--goal`, review, acceptance, human gate) is recorded on its source issue as
+`plan_profile`, so `plan resume --plan-id` takes no shape argument. A `--doc` source is a set: a directory is its
+inventory at one revision; a single file adds its path, the revision and its directory's inventory (links are not parsed);
+it must be committed and pushed. `plan resume` never rewrites a manifest that already is the plan's.
+
+Every stop of a stage is built by `decide_stop.build_stop`, so the persisted decision and the exit-20 report are one dict.
+`STOP_RELEASES` says which command releases which stop, `render_release` spells those commands, and `decide_release`
+decides whether `plan continue-review` / `plan accept-nits` may act and what they write. `pass-with-nits` stops a stage
+for a person, as it does a develop node (§7.5): `accept-nits` finishes the stage on the reviewed delivery, `continue-review`
+sends the nits back as a counted round. A resumed issue is classified by `decide_stop.classify_resume`.
+
 ### 7.3 dag run
 
 One tick:

@@ -78,14 +78,19 @@ blocked / in_review ── omac node accept ──► done        上游修复�
 
 `pipeline/decide_task.py`：显式转移表 `(Stage, Fact) → (下一 Stage, effects)`，
 终态只有 `STOPPED` 与 `DONE`；`OPEN → PRODUCE → MACHINE_GATE → REVIEW_* → … → DONE`，
-预算用尽走 `MACHINE_GATE → BLOCK_BUDGET → STOPPED`。改动任何一行都要同步 `tests/test_decide_task.py`。
+预算用尽走 `MACHINE_GATE → BLOCK_BUDGET → STOPPED`；`pass-with-nits` 走 `REVIEW_VERDICT → STOPPED`（等 `plan accept-nits`
+或 `plan continue-review`），不自动返工。改动任何一行都要同步 `tests/test_decide_task.py`。
+
+表外的三件事收在 `pipeline/decide_stop.py`：停止原因与放行命令（`StopReason`、`STOP_RELEASES`、`build_stop`、
+`render_release`、`decide_release`）、已停止 issue 的恢复分类（`classify_resume`）。exit 20 报告里的 `next_action`
+只能由 `render_release` 生成，`tests/test_decide_task.py` 用真实 argparse 解析每条放行命令。
 
 ### 2.4 端到端流程
 
 1. **init**：`omac init` 写配置，选择或创建平台 project，可选地从 `src/omac/agents/` 模板创建 Agent。
 2. **plan**：`omac plan create|confirm|resume` 依次跑 plan（设计）→ acceptance（验收文档）→ decompose（manifest），
    每步都是"产出 → 机器门 → 有界评审"；`workflow.human_in_loop` 为真时等人确认；最后一起提交 manifest 与验收文档。
-   `--doc` 跳过 planner：OMAC 把文档（目录则为其清单）发布到已完成的来源 issue（`doc-<plan_id>`，kind 为 `plan`，不指派 Agent），后续阶段照常经 source refs 引用。
+   `--doc` 跳过 planner：OMAC 把设计来源集合（目录为其清单；单文件为正文 + 路径 + revision + 同目录清单，须已提交并推送）发布到已完成的来源 issue（`doc-<plan_id>`，kind 为 `plan`，不指派 Agent），后续阶段照常经 source refs 引用。流水线形态记在来源 issue 的 `plan_profile` 上，`plan resume --plan-id` 不再需要形态参数。
 3. **dag run / tick**（一轮 tick）：
    `reconcile → 结果收集（collect_results）→ 证据 / CI / 合并门 → 就绪节点 → 派单 → 收敛或 exit 20`。
    `dag run` 循环 tick；`dag tick` 只跑一轮（exit 0/10/20）。每轮先观察平台与 manifest，再决策。

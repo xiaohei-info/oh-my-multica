@@ -35,6 +35,7 @@ _EN_SUBCOMMAND_HELP = {
     "retry": "Reset a node to todo, optionally with another worker",
     "accept-nits": "Accept pass-with-nits and resume review without marking done",
     "accept": "Accept a known risk and mark the node done",
+    "plan-accept-nits": "Accept the pass-with-nits review of a plan stage; plan resume then finishes it",
     "amend-accept": "Accept a Reviewer-approved amendment and apply it",
     "amend-accept-nits": "Explicitly accept amendment nits without applying it",
     "abandon": "Abandon a node and release non-hard-dependent work",

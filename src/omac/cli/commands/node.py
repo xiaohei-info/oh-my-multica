@@ -13,18 +13,16 @@ from ...core.manifest import (
     MISSING_CONSUMES, clear_confirmed_merge, load_manifest, save_manifest,
 )
 from ...core.graph import downstream_of
-from ...core.taskmeta import (
-    DECISION_REQUIRED_SCHEMA, REVIEW_NITS_ACCEPTANCE_SCHEMA, TaskKind, TaskPhase, exact_review_report_ref,
-    review_nits_acceptance_is_valid,
-)
+from ...core.taskmeta import TaskKind, TaskPhase, exact_review_report_ref
 from ...core.stage_recovery import validate_stage_recovery
 from ...pipeline.stage_recovery import prepare_stage_recovery
 from ...engines import engine_from_config
 from ...core.workitem import PullRequestState, WorkItemStatus
 from ...errors import NeedsDecision, OmacError, ValidationError, WorkItemNotFoundError
 from ...i18n import ui
-from ...pipeline.apply import Ports, apply, apply_one
+from ...pipeline.apply import Ports, apply
 from ...pipeline.decide_transitions import finish_clearing_decision
+from ...pipeline.nits_acceptance import nits_marker, persist_nits_acceptance
 from ...pipeline.decide_effects import UpdateMetadata, UpdateStatus
 from ...pipeline.decide_retry import (
     RetryFacts, RetryRefused, needs_review_context, plan_rework_handoff, retry_facts, wants_rework_handoff,
@@ -402,23 +400,6 @@ def _cmd_retry(args) -> int:
 # ==================== accept-nits ====================
 
 
-def _accept_nits_decision_matches(decision, item, node_key: str) -> bool:
-    if not isinstance(decision, dict):
-        return False
-    return bool(
-        decision.get("schema") == DECISION_REQUIRED_SCHEMA
-        and decision.get("reason_code") == "review-nits-acceptance-required"
-        and decision.get("kind") == TaskKind.DEVELOP.value
-        and decision.get("phase") == TaskPhase.REVIEW.value
-        and decision.get("gate") == "review-nits"
-        and decision.get("resume_issue_id") == item.id
-        and decision.get("node_id") == node_key
-        and decision.get("review_subject_digest") == item.review_subject_digest
-        and decision.get("review_report_ref") == item.review_report_ref
-        and decision.get("verdict") == "pass-with-nits"
-    )
-
-
 def _accept_nits_item(manifest, args, node):
     """Resolve the engine and the WorkItem that must currently hold a pass-with-nits review."""
     if not node.work_item_id:
@@ -483,95 +464,15 @@ def _accept_nits_check_delivery(manifest, node_key: str, item) -> None:
             "`omac node retry`。"))
 
 
-def _accept_nits_marker(item, node_key: str) -> dict:
-    marker = {
-        "schema": REVIEW_NITS_ACCEPTANCE_SCHEMA,
-        "review_subject_digest": item.review_subject_digest,
-        "review_report_ref": dict(item.review_report_ref),
-        "verdict": "pass-with-nits",
-    }
-    existing_marker = item.review_nits_acceptance
-    if existing_marker not in (None, {}) and (
-        not review_nits_acceptance_is_valid(existing_marker)
-        or existing_marker != marker
-    ):
-        raise ValidationError(ui(
-            "The existing review-nits acceptance marker does not match the current sealed review; "
-            "refusing to overwrite it. Run `omac node retry` for a fresh decision.",
-            "已有 review-nits acceptance marker 与当前 sealed review 不匹配；拒绝覆盖。请运行 "
-            "`omac node retry` 重新决策。"))
-    decision = item.decision_required
-    if decision not in (None, {}) and not _accept_nits_decision_matches(decision, item, node_key):
-        raise ValidationError(ui(
-            "The existing decision_required does not identify this exact pass-with-nits review; "
-            "no state was changed.",
-            "现有 decision_required 没有绑定当前 pass-with-nits review；未修改状态。"))
-    return marker
-
-
-def _accept_nits_apply(args, engine, item, marker: dict) -> None:
-    """Persist the marker, clear decision_required, return to in_review; every write is read back."""
-    def ensure_no_active_direct_run() -> None:
-        active = [
-            run.id for run in engine.runtime.list_runs(item.id)
-            if run.kind == "direct" and run.active
-        ]
-        if active:
-            raise ValidationError(ui(
-                "An active direct Run still exists ("
-                f"{', '.join(active)}); wait for it to finish before rerunning "
-                f"`omac node accept-nits {args.manifest} {args.node_key}`.",
-                "仍有 active direct Run（"
-                f"{', '.join(active)}）；请等待其结束后重新运行 "
-                f"`omac node accept-nits {args.manifest} {args.node_key}`。"))
-
-    # Write the marker before clearing decision_required. Each write is
-    # read-after-write verified, so a restart can safely resume this sequence.
-    if item.review_nits_acceptance in (None, {}):
-        ensure_no_active_direct_run()
-        updated = apply_one(UpdateMetadata(item.id, {'review_nits_acceptance': marker}), Ports(store=engine.store))
-        if updated.review_nits_acceptance != marker:
-            raise ValidationError(ui(
-                "The operator acceptance marker was not persisted; refusing to clear decision_required.",
-                "operator acceptance marker 未成功持久化；拒绝清除 decision_required。"))
-        item = updated
-
-    if item.decision_required not in (None, {}):
-        ensure_no_active_direct_run()
-        updated = apply_one(UpdateMetadata(item.id, {'decision_required': {}}), Ports(store=engine.store))
-        if updated.decision_required not in (None, {}):
-            raise ValidationError(ui(
-                "decision_required was not cleared; the WorkItem remains blocked.",
-                "decision_required 未清除；WorkItem 仍保持 blocked。"))
-        item = updated
-
-    ensure_no_active_direct_run()
-    if item.status != WorkItemStatus.IN_REVIEW:
-        apply([
-            UpdateStatus(item.id, WorkItemStatus.IN_REVIEW),
-        ], Ports(store=engine.store))
-    final = engine.store.get_work_item(item.id)
-    if not (
-        final.status == WorkItemStatus.IN_REVIEW
-        and final.phase == TaskPhase.REVIEW
-        and final.review_verdict == "pass-with-nits"
-        and final.review_nits_acceptance == marker
-        and final.decision_required in (None, {})
-    ):
-        raise ValidationError(ui(
-            "The WorkItem did not converge to review/in_review with its acceptance marker; "
-            "no merge or Reviewer fact was assumed.",
-            "WorkItem 未收敛到带 acceptance marker 的 review/in_review；未假设 merge 成功，Reviewer 事实未修改。"))
-
-
 def _cmd_accept_nits(args) -> int:
     manifest = _load_or_raise(args.manifest)
     node = _require_node(manifest, args.node_key)
     engine, item = _accept_nits_item(manifest, args, node)
     _accept_nits_check_item(item)
     _accept_nits_check_delivery(manifest, args.node_key, item)
-    marker = _accept_nits_marker(item, args.node_key)
-    _accept_nits_apply(args, engine, item, marker)
+    retry = f"omac node accept-nits {args.manifest} {args.node_key}"
+    marker = nits_marker(item, node_id=args.node_key, retry_command="omac node retry")
+    persist_nits_acceptance(engine, item, marker, rerun_command=retry)
 
     node.status = "in_review"
     node.recovery_marker = False

@@ -24,7 +24,8 @@
 
 1. `omac init` 配置 engine、workspace、project 和角色映射。
 2. `omac plan create --name <feature> [--goal 需求 | --doc 设计方案文档]`
-   生成设计方案、验收文档和 manifest DAG。
+   生成设计方案、验收文档和 manifest DAG。设计文档有附录时 `--doc` 传目录；之后任何中断都用
+   `omac plan resume --plan-id <id>` 续跑，无需重复形态参数。
 3. `omac dag run .omac/<feature>.yaml` 前台运行确定性 loop，直到收敛或 exit 20。
 4. exit 20 后运行 `omac dag status`、`omac node show`、
    `omac node retry|accept|abandon` 做显式决策，再重跑 `omac dag run`。
@@ -78,9 +79,10 @@ Controller Agent 应直接执行这条下一步命令，让 `dag run` 接管开�
   `review_state.decision.mode`。`scope-expanding` 还需连续两次 blocker 数不再减少、
   每个 open blocker 具名 `owner` 且至少两个不同 owner；命中后停止当前节点返工并进入
   显式 DAG amendment，不再派发普通 bounce。
-- plan / acceptance / decompose 的 review 预算耗尽后，Human 可用
-  `omac plan continue-review --dag-key <stage-key>` 明确授权一轮。授权作为平台 work item
-  的 `review_continuation` 持久化，不修改项目内 `retry.review`，跨进程 `plan resume` 仍有效。
+- plan / acceptance / decompose 的 review 在 `pass-with-nits`、预算耗尽或不收敛时 exit 20，报告里的
+  `next_action` 是可原样运行的放行命令：`omac plan accept-nits`（接受建议项）、
+  `omac plan continue-review`（授权一轮或退回作者）、`omac plan resume --plan-id <id>`。授权作为平台 work item
+  的 `review_continuation` 持久化，不修改项目内 `retry.review`，跨进程 `plan resume` 仍有效。详见 recovery 指南。
 - 状态同时落在 manifest 与平台 work item 中；重跑 `dag run` 会复用已完成节点并续跑。
 
 ## 监督边界

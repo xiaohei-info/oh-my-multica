@@ -223,6 +223,8 @@ class WorkItem:
     # Dedicated bounded operator fact for an accepted pass-with-nits review.
     # Kept last to preserve existing positional WorkItem construction.
     review_nits_acceptance: Optional[Dict[str, Any]] = None
+    # Shape of a plan pipeline (omac.plan-profile/v1); only on its source issue (doc-/plan-).
+    plan_profile: Optional[Dict[str, Any]] = None
 
     @property
     def requires_decision(self) -> bool:

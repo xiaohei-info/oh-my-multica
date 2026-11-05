@@ -90,31 +90,46 @@ develop 节点仍使用独立的 `omac node accept-nits`，两条路径不会互
 - amendment Reviewer Run 若明确终止但没有提交 verdict，`dag amend propose --resume-issue-id` 只在确认没有 active Run 后清除对应的 `reviewer-completed-without-verdict` decision，并重新派发同一 issue 的 Reviewer；其它 decision 不会被清除。
 - 节点即使 manifest 投影为 `done + merged + merged_at`，只要残留 `recovery_marker` 就仍属于 active control barrier。OMAC 只有在权威 control read 证明不存在 handoff、review baseline 或 decision 后才清除 marker；读取失败或不可用时保持 fail-closed，不能把真实 recovery 吞成已完成。
 
-## plan / decompose review 耗尽后的继续决策
+## plan 阶段的停止与放行
 
-当 `omac plan create/resume` 因 plan、acceptance 或 decompose 的 review 轮次耗尽而
-exit 20 时，先读取报告中的 `item_id`、`rounds`、`last_opinion` 和 `next_action`，再由
-Human 或获授权的 operator 明确决定是否增加一轮：
+`omac plan create/resume` 的每个 exit 20 报告都带 `reason_code` 和 `next_action`；`next_action` 是可以原样运行的命令，
+放行命令由停止原因唯一决定：
+
+| `reason_code` | 含义 | 放行命令 |
+|---|---|---|
+| `review-nits-acceptance-required` | Reviewer 给出 `pass-with-nits`，需要人决定 | `omac plan accept-nits --dag-key <stage-key>` 接受建议项；或 `omac plan continue-review --dag-key <stage-key>` 退回作者返工 |
+| `review-budget-exhausted` | reject 次数用尽 | `omac plan continue-review --dag-key <stage-key>` |
+| `review-convergence-*` | 同一根因 blocker 连续不收敛 | `omac plan continue-review --dag-key <stage-key>`（人工授权再试一轮）；或重新划定任务边界后重新 `plan create` |
+| `guard-budget-exhausted` | machine gate（lint/预检）用尽 | `omac plan resume --plan-id <id>`（显式再给一轮机器门预算） |
+| `completed-without-submit`、`unsafe-authoring-resume` | 作者 Run 已结束但没有可用交付 | `omac plan resume --plan-id <id> --restart-active` |
+| `reviewer-completed-without-verdict` | Reviewer Run 结束但没有 verdict | `omac plan resume --plan-id <id>` |
 
 ```bash
-omac plan continue-review --dag-key decompose-p-xxxx \
-  --reason "Human approved one additional review round"
+omac plan accept-nits --dag-key acceptance-p-xxxx     # 或：omac plan continue-review --dag-key acceptance-p-xxxx
 omac plan resume --plan-id p-xxxx
 ```
 
-- `continue-review` 在同一 work item 上写入小型 `review_continuation` decision，绝对上限
-  只增加一轮；它不清零 `review_bounce`，未消费上一轮授权时也拒绝继续叠加。
-- review 或 machine guard 的预算耗尽时，OMAC 会把同一 issue 投影为
-  `status=blocked`、`phase=review`，并写入有界的 `omac.decision-required/v1`
-  metadata（含 gate、轮次、resume issue ID 和已有证据引用）。完整问题仍由
-  review 或 machine-feedback 附件承载，不复制进 metadata。
-- exhausted reject 会通过 OMAC `reset_review` 和 status 恢复到 authoring/todo，让 producer
-  先更新交付；final pass-with-nits 已有新交付时只开放下一 Reviewer round。
-  这类停止记录为 `gate=review-nits`；旧版本记成 `gate=review` 且无 verdict 的 issue 同样可直接放行。
-- 该命令不修改 `.omac/config.yaml` 或 `retry.review`，因此不会为了单次人工决策制造项目
-  Git revision 漂移。`retry.review` 仍是新任务和旧自动化入口的默认预算。
-- 命令只读检查 active Agent；发现活跃 run 时拒绝，不会自动 cancel。等待当前 run 结束后
-  再执行，除非调用者另行选择现有的显式取消/重启流程。
+- **`plan resume --plan-id` 对所有形态成立**：`--doc` 目录/文件、`--goal`、`--no-review`、`--no-acceptance`、
+  `--no-confirm` 都记录在来源 issue（`doc-<id>` 或 `plan-<id>`）的 `plan_profile` 上，续跑不需要再带任何形态参数。
+  与记录相冲突的参数（如已带评审创建的流水线再传 `--no-review`）会被拒绝并给出可复制的命令。`--no-review` 不会放行
+  一个停在评审决策上的 issue。2.1 之前创建的流水线没有 `plan_profile`，形态沿用本次命令行与配置。
+- `--doc` 在 resume 上只用于**显式重发来源**：设计文本直接取自来源 issue；给了 `--doc` 且内容（不含 revision 行）
+  与已发布的不同才会替换，并让第一个未完成的阶段重做。无关的新 commit 不会改变已发布的来源。
+- `--restart-active` 作用于**第一个未完成的阶段**（plan、acceptance、decompose 任一），已完成的阶段不会被触碰。
+- `plan resume` 不会重写已经属于本 plan 的 manifest 与节点运行时状态，只补缺失的验收文档；manifest 属于另一个 plan 且
+  节点已开始时拒绝覆盖。
+- `continue-review` 在同一 work item 上写入小型 `review_continuation` decision（只增加一轮，不清零 `review_bounce`，
+  不修改项目 `retry.review`）；拒绝 `pass-with-nits` 会计入当前轮。它只读检查是否有 active Agent direct Run，绝不取消运行。
+- `accept-nits` 要求 verdict 仍绑定当前交付、report 已封存、没有 active direct Run；写入
+  `omac.review-nits-acceptance/v1` marker 后 `plan resume` 在**被评审过的那一版**上完成该阶段。开启人机确认时仍需
+  `plan confirm`。无人值守调用方遇到 nits 会 exit 20；要自动接受应由上层调用方执行 `plan accept-nits`。
+- review 或 machine guard 预算耗尽时，同一 issue 被投影为 `status=blocked`、`phase=review`，并写入有界的
+  `omac.decision-required/v1`（gate、轮次、resume issue ID、证据引用）；完整问题仍在 review 或 machine-feedback 附件中。
+- 2.1 之前因 nits 用尽预算而停止的 issue（`review-nits-budget-exhausted`，verdict 已被清）仍可放行：
+  `omac plan continue-review` → `omac plan resume`，由 Reviewer 重新评审；评审结果若仍是 nits，再用 `plan accept-nits`。
+- 机器门预算只在进程内计数：每次 `plan resume` 是一次显式的重新授权。
+- `--doc` 来源若有附录，**传目录**。单文件来源带主文件正文、路径、revision 和同目录文件清单，但不解析链接；来源必须已
+  提交且 revision 已推送（Agent 读取远端）。
 
 ## 动作选择
 

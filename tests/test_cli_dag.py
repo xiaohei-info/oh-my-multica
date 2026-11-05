@@ -55,6 +55,19 @@ def test_needs_decision_report_prioritizes_convergence_amendment_action():
     ]
 
 
+def test_the_report_keeps_the_stage_a_recorded_retry_names():
+    """A Reviewer-side stop is retried with `--stage review`; the report must not weaken it into a retry of authoring."""
+    recorded = "omac node retry .omac/dag.yaml a --stage review"
+
+    actions = _next_actions([{"key": "a", "decision_required": {"reason_code": "reviewer-run-dispatch-unresolved", "next_action": recorded}},
+                             {"key": "b", "decision_required": {"reason_code": "x", "next_action": "inspect the facts first"}},
+                             {"key": "c", "decision_required": None}], ".omac/dag.yaml")
+
+    assert actions == [recorded, "omac node abandon .omac/dag.yaml a",
+                       "omac node retry .omac/dag.yaml b", "omac node abandon .omac/dag.yaml b",
+                       "omac node retry .omac/dag.yaml c", "omac node abandon .omac/dag.yaml c"]
+
+
 def test_the_report_schema_is_locked():
     assert STATUS_REPORT_KEYS == ("manifest", "progress", "nodes", "needs_decision")
     assert PROGRESS_KEYS == ("total", "done", "running", "todo", "blocked", "failed", "abandoned", "converged")

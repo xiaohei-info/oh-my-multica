@@ -95,6 +95,7 @@ def resolve_convergence(
     kind: str | None = None,
     node_id: str | None = None,
     recommended_action: str = "dag-amendment",
+    next_action: str | None = None,
 ) -> ConvergenceResolution:
     ledger = current_review_ledger(item)
     cycles = ledger.get("cycles") if isinstance(ledger, dict) else None
@@ -122,7 +123,7 @@ def resolve_convergence(
     decision = build_review_convergence_decision(
         item, convergence, kind=resolved_kind, node_id=node_id,
         recommended_action=recommended_action)
-    decision["next_action"] = _next_action(node_id)
+    decision["next_action"] = next_action or _next_action(node_id)
     return ConvergenceResolution(
         ResolutionState.NEEDS_DECISION, ledger=ledger, decision=decision)
 
