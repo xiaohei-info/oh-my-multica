@@ -119,10 +119,6 @@ def _rework_to_authoring(obs: TaskObs) -> tuple[Effect, ...]:
     return (ResetReview(obs.item_id), UpdateStatus(obs.item_id, WorkItemStatus.TODO))
 
 
-def _reset_review(obs: TaskObs) -> tuple[Effect, ...]:
-    return (ResetReview(obs.item_id),)
-
-
 def _persist_feedback(obs: TaskObs) -> tuple[Effect, ...]:
     return plan_machine_feedback(obs.item_id, obs.feedback, obs.feedback_summary)
 
@@ -220,7 +216,7 @@ TRANSITIONS: dict[tuple[Stage, Fact], tuple[Stage, Builder]] = {
     (S.RESOLVE_INITIAL, F.PROCEED): _row(S.MACHINE_GATE),
     (S.PRODUCE_REWORK, F.PRODUCED): _row(S.MACHINE_GATE),
     (S.MACHINE_GATE, F.GATE_CLEAR): _row(S.RESUME_REVIEW),
-    (S.MACHINE_GATE, F.GATE_RETRY): _row(S.PRODUCE_HINTED, _reset_review),
+    (S.MACHINE_GATE, F.GATE_RETRY): _row(S.PRODUCE_HINTED, _rework_to_authoring),
     (S.MACHINE_GATE, F.GATE_EXHAUSTED): _row(S.BLOCK_BUDGET, _persist_feedback),
     (S.PRODUCE_HINTED, F.PRODUCED): _row(S.MACHINE_GATE),
     (S.RESUME_REVIEW, F.FINISH_PASS): _row(S.FINISH),

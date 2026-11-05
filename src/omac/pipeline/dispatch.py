@@ -1100,7 +1100,7 @@ class SubmitResult:
 
 def report_worker_blocker(store: WorkItemStore, issue_id: str, report_file: str, *, runtime=None) -> dict:
     """Persist a typed prerequisite failure; never interpret Agent final prose."""
-    from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, review_context_binding
+    from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, develop_node_id, review_context_binding
     report = _parse_structured(report_file)
     if isinstance(report, dict) and report.get("schema") == "omac.amendment-scope-gap/v1":
         from .amendment_scope_gap import report_scope_gap
@@ -1132,7 +1132,7 @@ def report_worker_blocker(store: WorkItemStore, issue_id: str, report_file: str,
         "kind": item.kind.value, "phase": TaskPhase.AUTHORING.value,
         "gate": "worker", "resume_issue_id": item.id,
         "blocker": report, "review_context_binding": review_context_binding(item),
-        "next_action": "Repair the upstream read, then run omac node retry <manifest> " + item.dag_key,
+        "next_action": "Repair the upstream read, then run omac node retry <manifest> " + develop_node_id(item.dag_key),
     }
     if item.decision_required not in (None, {}, decision):
         raise NeedsDecision("An existing decision must be resolved first", report=item.decision_required)

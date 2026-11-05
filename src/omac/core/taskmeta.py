@@ -56,6 +56,11 @@ def slug(value: str) -> str:
     return text or "task"
 
 
+def develop_node_id(dag_key: str) -> str:
+    """Node id of a develop issue: its dag_key is ``<meta.dag_key>/<node>`` when the manifest names an instance."""
+    return (dag_key or "").rsplit("/", 1)[-1]
+
+
 def make_dag_key(
     kind: TaskKind,
     *,

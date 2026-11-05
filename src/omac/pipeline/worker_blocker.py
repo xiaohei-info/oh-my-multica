@@ -7,6 +7,7 @@ from ..core.taskmeta import (
     DECISION_REQUIRED_SCHEMA,
     TaskKind,
     TaskPhase,
+    develop_node_id,
     review_context_binding,
 )
 from ..core.workitem import WorkItemStatus, WorkItemPayload
@@ -186,7 +187,7 @@ def decision_record(item, binding, report) -> dict:
         "resume_issue_id": item.id,
         "review_context_binding": binding,
         "blocker": deepcopy(report),
-        "next_action": f"Resolve the reported decision, then explicitly run omac node retry <manifest> {item.dag_key}",
+        "next_action": f"Resolve the reported decision, then explicitly run omac node retry <manifest> {develop_node_id(item.dag_key)}",
     }
 
 

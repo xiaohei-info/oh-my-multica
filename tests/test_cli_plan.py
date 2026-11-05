@@ -10,6 +10,7 @@ import yaml
 
 from omac.cli import exit_codes
 from omac.cli.main import main
+from omac.errors import ValidationError
 
 
 def test_acceptance_guard_rejects_generic_expected_template():
@@ -501,3 +502,64 @@ def test_doc_directory_rejects_tracked_symlink(tmp_path, monkeypatch):
 
 
 
+
+
+# ── plan outputs never overwrite a running DAG ────────────────────────────
+
+def _outputs(tmp_path, monkeypatch, *, plan_id, manifest=CLEAN_MANIFEST, acceptance="flows: []\n"):
+    from omac.pipeline.plan import _write_plan_outputs
+
+    monkeypatch.chdir(tmp_path)
+    ctx = SimpleNamespace(no_acceptance=False, language="en",
+                          engine=SimpleNamespace(store=SimpleNamespace(config=SimpleNamespace(engine_type="none"))))
+    _write_plan_outputs(ctx, plan_id=plan_id, name="demo", manifest_text=manifest, acceptance_text=acceptance, source_issues=["i-1"],
+                        manifest_path=".omac/demo.yaml", acceptance_path=".omac/demo.acceptance.yaml", project_rules_text=None,
+                        agents_snapshot=None)
+
+
+def _start_node(tmp_path):
+    from omac.core.manifest import load_manifest, save_manifest
+
+    path = str(tmp_path / ".omac" / "demo.yaml")
+    manifest = load_manifest(path)
+    manifest.nodes["a"].status, manifest.nodes["a"].work_item_id, manifest.nodes["a"].merged = "done", "wi-1", True
+    save_manifest(manifest, path)
+    return path
+
+
+def test_resuming_a_plan_whose_dag_has_started_keeps_the_node_state_and_only_restores_a_missing_acceptance_document(
+        tmp_path, monkeypatch):
+    from omac.core.manifest import load_manifest
+
+    _outputs(tmp_path, monkeypatch, plan_id="p-1")
+    path = _start_node(tmp_path)
+    (tmp_path / ".omac" / "demo.acceptance.yaml").unlink()
+
+    _outputs(tmp_path, monkeypatch, plan_id="p-1", acceptance="flows: [restored]\n")
+
+    node = load_manifest(path).nodes["a"]
+    assert (node.status, node.work_item_id, node.merged) == ("done", "wi-1", True)
+    assert (tmp_path / ".omac" / "demo.acceptance.yaml").read_text() == "flows: [restored]\n"
+    _outputs(tmp_path, monkeypatch, plan_id="p-1", acceptance="flows: [changed]\n")
+    assert (tmp_path / ".omac" / "demo.acceptance.yaml").read_text() == "flows: [restored]\n"
+
+
+def test_a_new_plan_never_replaces_the_started_dag_of_another_plan_under_the_same_name(tmp_path, monkeypatch):
+    from omac.core.manifest import load_manifest
+
+    _outputs(tmp_path, monkeypatch, plan_id="p-1")
+    path = _start_node(tmp_path)
+
+    with pytest.raises(ValidationError, match="different --name"):
+        _outputs(tmp_path, monkeypatch, plan_id="p-2")
+
+    assert load_manifest(path).meta["plan_id"] == "p-1" and load_manifest(path).nodes["a"].work_item_id == "wi-1"
+
+
+def test_a_new_plan_replaces_another_plans_manifest_that_has_not_started(tmp_path, monkeypatch):
+    from omac.core.manifest import load_manifest
+
+    _outputs(tmp_path, monkeypatch, plan_id="p-1")
+    _outputs(tmp_path, monkeypatch, plan_id="p-2")
+
+    assert load_manifest(str(tmp_path / ".omac" / "demo.yaml")).meta["plan_id"] == "p-2"

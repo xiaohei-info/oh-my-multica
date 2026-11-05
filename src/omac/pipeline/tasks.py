@@ -40,12 +40,13 @@ from .dispatch import (
 )
 from .apply import Ports, apply, apply_one
 from .decide_reviewer import prior_run_active
-from .decide_transitions import block_in_phase, block_if_needed
+from .decide_transitions import block_in_phase, block_if_needed, rework_to_producer
 from .decide_task import (
     Fact, Stage, TERMINAL, TaskObs, decide_task_step, plan_machine_feedback,
 )
 from .decide_effects import (
     Assign,
+    CancelRun,
     ClearAssignment,
     CreateWorkItem,
     DispatchReviewer,
@@ -63,6 +64,7 @@ log = logsetup.get_logger(__name__)
 _REVIEW_VERDICTS = {"pass", "pass-with-nits", "reject"}
 _MAX_INLINE_SOURCE_BYTES = 64 * 1024
 _RUN_VISIBILITY_MAX_POLLS = 3
+REVIEW_STOP_GATES = frozenset({"review", "review-nits", "review-convergence"})
 
 
 @dataclass
@@ -183,6 +185,20 @@ def _confirmation_resume_errors(
     )
     errors.extend(_review_evidence_errors(persisted_contract, item))
     return errors
+
+
+def _refuse_review_bypass(item: WorkItem) -> None:
+    """Resuming without reviewers must not release a stop that only a review decision can release."""
+    decision = item.decision_required if isinstance(item.decision_required, dict) else {}
+    if item.status != WorkItemStatus.BLOCKED or decision.get("gate") not in REVIEW_STOP_GATES:
+        return
+    raise NeedsDecision(
+        ui(f"{item.kind.value} issue {item.id} is stopped on a review decision; resuming without review "
+           "would bypass it. Release the stop with the command in next_action, or resume with review enabled.",
+           f"{item.kind.value} issue {item.id} 停在评审决策上；不带评审恢复会绕过它。"
+           "请用 next_action 里的命令放行，或在开启评审的情况下恢复。"),
+        report={"item_id": item.id, "kind": item.kind.value, "reason_code": "review-decision-standing",
+                "gate": decision.get("gate"), "next_action": decision.get("next_action")})
 
 
 def _contract_identity(contract: Any) -> tuple[str, Any]:
@@ -1062,7 +1078,7 @@ class _TaskRun:
     def __init__(
         self, engine, kind, payload, assignee, *, reviewers, max_revisions, poll, guard, confirm,
         pause_at_confirmation, source_refs, dag_key, resume_item_id, amendment_attempt,
-        reuse_dag_key, review_acceptance_doc, review_amendment_manifest,
+        reuse_dag_key, review_acceptance_doc, review_amendment_manifest, restart_active,
     ):
         self.engine = engine
         self.store = engine.store
@@ -1076,6 +1092,7 @@ class _TaskRun:
         self.confirm = confirm
         self.pause_at_confirmation = pause_at_confirmation
         self.resume_item_id = resume_item_id
+        self.restart_active = restart_active
         self.amendment_attempt = amendment_attempt
         self.reuse_dag_key = reuse_dag_key
         self.review_acceptance_doc = review_acceptance_doc
@@ -1119,11 +1136,23 @@ class _TaskRun:
         self.result: Dict[str, Any] = {}
         self.on_done: Optional[Callable[[], None]] = None
 
+    def _restart_in_place(self, item: WorkItem) -> WorkItem:
+        """--restart-active: cancel the Run; a delivery awaiting review goes back to its Reviewer, anything else to the author."""
+        ports = Ports(store=self.store, runtime=self.runtime)
+        apply([CancelRun(item.id), ClearAssignment(item.id)], ports)
+        if item.phase == TaskPhase.REVIEW and item.deliverable:
+            apply([UpdateStatus(item.id, WorkItemStatus.IN_REVIEW)], ports)
+            return self.store.get_work_item(item.id)
+        apply(rework_to_producer(item.id), ports)
+        return refresh_authoring_task(self.engine, item.id, self.spec, item_snapshot=item)
+
     def _open_item(self) -> WorkItem:
         if self.resume_item_id is not None:
             # Store 当前事实是 resume 的唯一授权来源。调用方 snapshot 仅为兼容保留，
             # 绝不能在读取失败时授权 refresh 或其他副作用。
             item = self.store.get_work_item(self.resume_item_id)
+            if self.restart_active:
+                item = self._restart_in_place(item)
             if self.kind == TaskKind.AMENDMENT:
                 self.contract = _validate_amendment_resume_contract(item, self.contract)
                 self.spec.contract = self.contract
@@ -1201,6 +1230,8 @@ class _TaskRun:
         self.resume_authoring_attempt_available = self.explicit_resume
         self.pristine_dispatch_required = self.amendment_attempt is not None
         self.resumed_confirmation: WorkItem | None = None
+        if self.resume_item_id is not None and not self.reviewers:
+            _refuse_review_bypass(item)
 
         if self.resume_item_id is not None and item.phase == TaskPhase.CONFIRMATION:
             confirmation_errors = _confirmation_resume_errors(self.kind, self.contract, item)
@@ -1911,6 +1942,7 @@ def run_task(
     reuse_dag_key: bool = False,
     review_acceptance_doc: Any = None,
     review_amendment_manifest: Any = None,
+    restart_active: bool = False,
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -1926,5 +1958,5 @@ def run_task(
         source_refs=source_refs, dag_key=dag_key, resume_item_id=resume_item_id,
         amendment_attempt=amendment_attempt, reuse_dag_key=reuse_dag_key,
         review_acceptance_doc=review_acceptance_doc,
-        review_amendment_manifest=review_amendment_manifest,
+        review_amendment_manifest=review_amendment_manifest, restart_active=restart_active,
     ).run()

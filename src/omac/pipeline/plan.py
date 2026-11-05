@@ -37,7 +37,7 @@ from ..core import acceptance as acceptance_mod
 from ..core.config import CONFIG_DIR, CONFIG_PATH
 from ..core.gitsync import commit_files, ensure_config_synced, ensure_files_clean
 from ..core.lint import lint
-from ..core.manifest import loads_manifest, manifest_files, save_manifest
+from ..core.manifest import load_manifest, loads_manifest, manifest_files, save_manifest
 from ..core.project_rules import read_agents_snapshot, write_project_rules
 from ..core.repository_files import revision_directory_files
 from ..core.review_preflight import plan_manifest_preflight
@@ -50,16 +50,10 @@ from ..core.taskmeta import (
 from ..core.workitem import WorkItem, WorkItemStatus
 from ..errors import ValidationError
 from ..i18n import CN, ui
-from .tasks import (
-    AuthoringTaskSpec,
-    refresh_authoring_task,
-    run_task,
-)
+from .tasks import run_task
 from .apply import Ports, apply, apply_one
 from .decide_transitions import rework_to_producer
-from .decide_effects import (
-    CancelRun, ClearAssignment, CreateWorkItem, UpdateMetadata, UpdateStatus,
-)
+from .decide_effects import CreateWorkItem, UpdateMetadata, UpdateStatus
 
 
 @dataclass
@@ -538,8 +532,8 @@ def _stage_source_refs(plan_item_id: Optional[str],
 
 
 def _run_plan_stage(ctx: PlanContext, name: str, *, goal_text: Optional[str], agents_snapshot,
-                    reviewers, poll_cb, dag_key: str,
-                    resume_item_id: Optional[str] = None) -> Tuple[str, str, str]:
+                    reviewers, poll_cb, dag_key: str, resume_item_id: Optional[str] = None,
+                    restart_active: bool = False) -> Tuple[str, str, str]:
     """phase 1:设计方案。返回 (plan_item_id, plan_text, project_rules_text)。"""
     res = run_task(
         ctx.engine,
@@ -552,6 +546,7 @@ def _run_plan_stage(ctx: PlanContext, name: str, *, goal_text: Optional[str], ag
         confirm=ctx.confirm,
         dag_key=dag_key,
         resume_item_id=resume_item_id,
+        restart_active=restart_active,
     )
     return (res["item_id"], _phase_text(res["delivery"], _PLAN_KEY),
             _phase_text(res["delivery"], "project_rules"))
@@ -559,10 +554,10 @@ def _run_plan_stage(ctx: PlanContext, name: str, *, goal_text: Optional[str], ag
 
 def _run_acceptance_stage(
     ctx: PlanContext, name: str, *, plan_text: str, plan_item_id: Optional[str], reviewers,
-    poll_cb, dag_key: str, resume_item_id: Optional[str], base_dir: str, acceptance_path: str,
+    poll_cb, dag_key: str, resume_item_id: Optional[str], restart_active: bool = False,
     source_of_truth: Optional[Dict[str, str]] = None, title: Optional[str] = None,
 ) -> Tuple[str, acceptance_mod.AcceptanceDoc, str]:
-    """phase 2:验收文档,通过校验后落盘。返回 (text, doc, item_id)。"""
+    """phase 2:验收文档。返回 (text, doc, item_id);落盘在 _write_plan_outputs。"""
     res = run_task(
         ctx.engine,
         TaskKind.ACCEPTANCE,
@@ -578,19 +573,16 @@ def _run_acceptance_stage(
         source_refs=_stage_source_refs(plan_item_id),
         dag_key=dag_key,
         resume_item_id=resume_item_id,
+        restart_active=restart_active,
     )
     text = _phase_text(res["delivery"], _ACCEPTANCE_KEY)
-    doc = _validate_acceptance(text)
-    _write_if_missing(base_dir)
-    with open(acceptance_path, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    return text, doc, res["item_id"]
+    return text, _validate_acceptance(text), res["item_id"]
 
 
 def _run_decompose_stage(
     ctx: PlanContext, name: str, *, plan_text: str, acceptance_text: Optional[str],
     acceptance_doc, plan_item_id: Optional[str], acceptance_item_id: Optional[str],
-    reviewers, poll_cb, dag_key: str, resume_item_id: Optional[str], base_dir: str,
+    reviewers, poll_cb, dag_key: str, resume_item_id: Optional[str], restart_active: bool = False,
 ) -> Tuple[str, str]:
     """phase 3:拆解(经 lint 机器门 ≤ max_revisions 轮 + 内置 review)。返回 (manifest_text, item_id)。"""
     inputs = {"plan": plan_text}
@@ -610,41 +602,66 @@ def _run_decompose_stage(
         dag_key=dag_key,
         resume_item_id=resume_item_id,
         review_acceptance_doc=acceptance_doc,
+        restart_active=restart_active,
     )
-    manifest_text = _phase_text(res["delivery"], _MANIFEST_KEY)
-    _write_if_missing(base_dir)
-    return manifest_text, res["item_id"]
+    return _phase_text(res["delivery"], _MANIFEST_KEY), res["item_id"]
+
+
+def _materialized(manifest_path: str, plan_id: str) -> bool:
+    """Whether the manifest on disk already is this plan's; another plan's DAG that has started is never replaced."""
+    if not os.path.exists(manifest_path):
+        return False
+    existing = load_manifest(manifest_path)
+    if existing.meta.get("plan_id") == plan_id:
+        return True
+    started = sorted(n.id for n in existing.nodes.values() if n.status != "todo" or n.work_item_id)
+    if started:
+        raise ValidationError(ui(
+            f"{manifest_path} already belongs to another plan and its nodes have started ({', '.join(started)}). "
+            "Choose a different --name; the running DAG's state is never overwritten.",
+            f"{manifest_path} 属于另一个 plan 且其节点已开始（{', '.join(started)}）。"
+            "请换一个 --name；运行中 DAG 的状态不会被覆盖。"))
+    return False
 
 
 def _write_plan_outputs(
-    ctx: PlanContext, *, plan_id: str, name: str, manifest_text: str, source_issues: List[str],
-    manifest_path: str, acceptance_path: str, project_rules_text: Optional[str], agents_snapshot,
+    ctx: PlanContext, *, plan_id: str, name: str, manifest_text: str, acceptance_text: Optional[str],
+    source_issues: List[str], manifest_path: str, acceptance_path: str, project_rules_text: Optional[str],
+    agents_snapshot,
 ) -> None:
-    # provenance:把塑造本 DAG 的源头 issue(设计/验收/拆解)记入 manifest meta,
-    # 让 dag run 派发的 develop issue 也能溯源,防后续执行跑偏。
-    # Reviewer 审查原始 decompose deliverable；最终文件使用同一个 Manifest
-    # 执行模型做 canonical dump。默认值/空字段可省略，权威 acceptance 原文
-    # 单独落盘并由 meta.acceptance_file 引用，不能形成第二份可漂移的正文。
-    manifest = loads_manifest(manifest_text)
-    manifest.meta["plan_id"] = plan_id
-    manifest.meta.setdefault("name", name)
-    manifest.meta["acceptance_required"] = not ctx.no_acceptance
-    if not ctx.no_acceptance:
-        manifest.meta["acceptance_file"] = os.path.basename(acceptance_path)
-    else:
-        manifest.meta.pop("acceptance_file", None)
-    if source_issues:
-        manifest.meta["source_issues"] = source_issues
-    save_manifest(manifest, manifest_path)
-    output_paths = manifest_files(manifest_path)
-    if not ctx.no_acceptance:
+    """Materialize the reviewed outputs. A manifest that already is this plan's is never rewritten:
+    its node state belongs to the running DAG; only a missing acceptance document is restored."""
+    _write_if_missing(os.path.dirname(manifest_path))
+    owned = _materialized(manifest_path, plan_id)
+    output_paths: List[str] = []
+    if not owned:
+        # provenance:把塑造本 DAG 的源头 issue(设计/验收/拆解)记入 manifest meta,
+        # 让 dag run 派发的 develop issue 也能溯源,防后续执行跑偏。
+        # Reviewer 审查原始 decompose deliverable；最终文件使用同一个 Manifest
+        # 执行模型做 canonical dump。权威 acceptance 原文单独落盘并由 meta.acceptance_file 引用。
+        manifest = loads_manifest(manifest_text)
+        manifest.meta["plan_id"] = plan_id
+        manifest.meta.setdefault("name", name)
+        manifest.meta["acceptance_required"] = not ctx.no_acceptance
+        if not ctx.no_acceptance:
+            manifest.meta["acceptance_file"] = os.path.basename(acceptance_path)
+        else:
+            manifest.meta.pop("acceptance_file", None)
+        if source_issues:
+            manifest.meta["source_issues"] = source_issues
+        save_manifest(manifest, manifest_path)
+        output_paths += manifest_files(manifest_path)
+    if acceptance_text is not None and (not owned or not os.path.exists(acceptance_path)):
+        with open(acceptance_path, "w", encoding="utf-8") as fh:
+            fh.write(acceptance_text)
         output_paths.append(acceptance_path)
     if project_rules_text is not None:
         write_project_rules(project_rules_text, agents_snapshot)
         output_paths.append("AGENTS.md")
-    commit_files(
-        output_paths, "chore(omac): sync plan outputs",
-        engine_type=ctx.engine.store.config.engine_type)
+    if output_paths:
+        commit_files(
+            output_paths, "chore(omac): sync plan outputs",
+            engine_type=ctx.engine.store.config.engine_type)
     _emit_plan_next_steps(manifest_path, acceptance_path, ctx.language)
 
 
@@ -669,9 +686,10 @@ def plan_create(
     base_dir = CONFIG_DIR
     manifest_path = os.path.join(base_dir, f"{name}.yaml")
     acceptance_path = os.path.join(base_dir, f"{name}.acceptance.yaml")
+    plan_id = make_plan_id()
+    _materialized(manifest_path, plan_id)      # refuse early when --name collides with a started DAG
     reviewers = [] if ctx.no_review else ctx.reviewers
     poll_cb = poll if poll is not None else ctx.poll()
-    plan_id = make_plan_id()
     agents_snapshot = read_agents_snapshot() if doc_path is None else None
     stage = dict(reviewers=reviewers, poll_cb=poll_cb)
 
@@ -693,19 +711,17 @@ def plan_create(
     if not ctx.no_acceptance:
         acceptance_text, acceptance_doc, acceptance_item_id = _run_acceptance_stage(
             ctx, name, plan_text=plan_text, plan_item_id=plan_item_id,
-            dag_key=make_dag_key(TaskKind.ACCEPTANCE, scope=plan_id), resume_item_id=None,
-            base_dir=base_dir, acceptance_path=acceptance_path, **stage)
+            dag_key=make_dag_key(TaskKind.ACCEPTANCE, scope=plan_id), resume_item_id=None, **stage)
 
     # ── phase 3:拆解 ──
     manifest_text, decompose_item_id = _run_decompose_stage(
         ctx, name, plan_text=plan_text, acceptance_text=acceptance_text,
         acceptance_doc=acceptance_doc, plan_item_id=plan_item_id,
         acceptance_item_id=acceptance_item_id,
-        dag_key=make_dag_key(TaskKind.DECOMPOSE, scope=plan_id), resume_item_id=None,
-        base_dir=base_dir, **stage)
+        dag_key=make_dag_key(TaskKind.DECOMPOSE, scope=plan_id), resume_item_id=None, **stage)
 
     _write_plan_outputs(
-        ctx, plan_id=plan_id, name=name, manifest_text=manifest_text,
+        ctx, plan_id=plan_id, name=name, manifest_text=manifest_text, acceptance_text=acceptance_text,
         source_issues=[r for r in [plan_item_id, acceptance_item_id, decompose_item_id] if r],
         manifest_path=manifest_path, acceptance_path=acceptance_path,
         project_rules_text=project_rules_text, agents_snapshot=agents_snapshot)
@@ -723,7 +739,8 @@ def _resume_plan_id(dag_key: Optional[str], plan_id: Optional[str]) -> str:
 
 
 def _resume_plan_stage(ctx: PlanContext, *, plan_key: str, name: Optional[str],
-                       doc_path: Optional[str], agents_snapshot, reviewers, poll_cb):
+                       doc_path: Optional[str], agents_snapshot, reviewers, poll_cb,
+                       restart_active: bool = False):
     """续跑 phase 1。返回 (resolved_name, plan_item_id, plan_text, project_rules_text)。"""
     if doc_path is not None:
         plan_id = plan_id_from_dag_key(plan_key)
@@ -747,46 +764,37 @@ def _resume_plan_stage(ctx: PlanContext, *, plan_key: str, name: Optional[str],
     resolved_name = name or _name_from_plan_issue(plan_item)
     item_id, plan_text, rules = _run_plan_stage(
         ctx, resolved_name, goal_text=None, agents_snapshot=agents_snapshot,
-        reviewers=reviewers, poll_cb=poll_cb, dag_key=plan_key, resume_item_id=plan_item.id)
+        reviewers=reviewers, poll_cb=poll_cb, dag_key=plan_key, resume_item_id=plan_item.id,
+        restart_active=restart_active)
     return resolved_name, item_id, plan_text, rules
 
 
-def _restart_acceptance_item(ctx: PlanContext, acceptance_item, spec: AuthoringTaskSpec):
-    """--restart-active:取消在途 Run,按是否已有交付决定回到 authoring 还是只重派 Reviewer。"""
-    store = ctx.engine.store
-    restart_review = (
-        acceptance_item.phase == TaskPhase.REVIEW and bool(acceptance_item.deliverable))
-    apply_one(CancelRun(acceptance_item.id), Ports(runtime=ctx.engine.runtime))
-    apply([
-        ClearAssignment(acceptance_item.id),
-    ], Ports(store=store))
-    if restart_review:
-        # Reviewer 卡住时保留已提交交付与 review phase，只重新派发 Reviewer。
-        apply([
-            UpdateStatus(acceptance_item.id, WorkItemStatus.IN_REVIEW),
-        ], Ports(store=store))
-        return store.get_work_item(acceptance_item.id)
-    apply(rework_to_producer(acceptance_item.id), Ports(store=store))
-    return refresh_authoring_task(
-        ctx.engine, acceptance_item.id, spec, item_snapshot=acceptance_item)
+def _stage_item_for_resume(ctx: PlanContext, kind: TaskKind, plan_id: str, issue_id: Optional[str],
+                           worker: str) -> Optional[WorkItem]:
+    key = make_dag_key(kind, scope=plan_id)
+    if issue_id is None:
+        return _find_by_dag_key(ctx, kind, key)
+    if kind == TaskKind.DECOMPOSE:
+        return _unstarted_stage_snapshot(ctx, kind, key, issue_id, worker)
+    return _exact_stage_item(ctx, kind, key, issue_id)
 
 
-def _resume_acceptance_stage(ctx: PlanContext, name: str, *, plan_text, plan_item_id,
-                             acceptance_issue_id, restart_active, plan_id: str, reviewers,
-                             poll_cb, base_dir: str, acceptance_path: str):
-    key = make_dag_key(TaskKind.ACCEPTANCE, scope=plan_id)
-    item = (_exact_stage_item(ctx, TaskKind.ACCEPTANCE, key, acceptance_issue_id)
-            if acceptance_issue_id else _find_by_dag_key(ctx, TaskKind.ACCEPTANCE, key))
-    title = ui(f"{name} acceptance document", f"{name} 验收文档", language=ctx.language)
-    if item is not None and restart_active:
-        spec = AuthoringTaskSpec(
-            kind=TaskKind.ACCEPTANCE, title=title, dag_key=key, assignee=ctx.planner,
-            source_refs=_stage_source_refs(plan_item_id), source_of_truth={"plan": plan_text})
-        item = _restart_acceptance_item(ctx, item, spec)
-    return _run_acceptance_stage(
-        ctx, name, plan_text=plan_text, plan_item_id=plan_item_id, reviewers=reviewers,
-        poll_cb=poll_cb, dag_key=key, resume_item_id=item.id if item else None,
-        base_dir=base_dir, acceptance_path=acceptance_path, title=title)
+def _restart_target(ctx: PlanContext, plan_id: str, *, doc: bool, acceptance_issue_id: Optional[str],
+                    decompose_issue_id: Optional[str]) -> TaskKind:
+    """--restart-active acts on the first stage that is not finished; a finished stage is never touched."""
+    stages = [] if doc else [(TaskKind.PLAN, None, ctx.planner)]
+    if not ctx.no_acceptance:
+        stages.append((TaskKind.ACCEPTANCE, acceptance_issue_id, ctx.planner))
+    stages.append((TaskKind.DECOMPOSE, decompose_issue_id, ctx.orchestrator))
+    for kind, issue_id, worker in stages:
+        item = _stage_item_for_resume(ctx, kind, plan_id, issue_id, worker)
+        if item is None:
+            break
+        if item.status != WorkItemStatus.DONE:
+            return kind
+    raise ValidationError(ui(
+        "--restart-active found no unfinished stage issue with an Agent run to restart.",
+        "--restart-active 没有找到可重启的未完成阶段 issue。"))
 
 
 def plan_resume(
@@ -815,11 +823,16 @@ def plan_resume(
     reviewers = [] if ctx.no_review else ctx.reviewers
     poll_cb = poll if poll is not None else ctx.poll()
     agents_snapshot = read_agents_snapshot() if doc_path is None else None
+    restart = (
+        _restart_target(ctx, plan_id_value, doc=doc_path is not None, acceptance_issue_id=acceptance_issue_id,
+                        decompose_issue_id=decompose_issue_id)
+        if restart_active else None)
     stage = dict(reviewers=reviewers, poll_cb=poll_cb)
 
     resolved_name, plan_item_id, plan_text, project_rules_text = _resume_plan_stage(
         ctx, plan_key=make_dag_key(TaskKind.PLAN, scope=plan_id_value), name=name,
-        doc_path=doc_path, agents_snapshot=agents_snapshot, **stage)
+        doc_path=doc_path, agents_snapshot=agents_snapshot,
+        restart_active=restart == TaskKind.PLAN, **stage)
     manifest_path = os.path.join(base_dir, f"{resolved_name}.yaml")
     acceptance_path = os.path.join(base_dir, f"{resolved_name}.acceptance.yaml")
 
@@ -827,25 +840,29 @@ def plan_resume(
     acceptance_doc: Optional[acceptance_mod.AcceptanceDoc] = None
     acceptance_item_id: Optional[str] = None
     if not ctx.no_acceptance:
-        acceptance_text, acceptance_doc, acceptance_item_id = _resume_acceptance_stage(
+        acceptance_item = _stage_item_for_resume(
+            ctx, TaskKind.ACCEPTANCE, plan_id_value, acceptance_issue_id, ctx.planner)
+        acceptance_text, acceptance_doc, acceptance_item_id = _run_acceptance_stage(
             ctx, resolved_name, plan_text=plan_text, plan_item_id=plan_item_id,
-            acceptance_issue_id=acceptance_issue_id, restart_active=restart_active,
-            plan_id=plan_id_value, base_dir=base_dir, acceptance_path=acceptance_path, **stage)
+            dag_key=make_dag_key(TaskKind.ACCEPTANCE, scope=plan_id_value),
+            resume_item_id=acceptance_item.id if acceptance_item else None,
+            restart_active=restart == TaskKind.ACCEPTANCE,
+            title=ui(f"{resolved_name} acceptance document", f"{resolved_name} 验收文档", language=ctx.language),
+            **stage)
 
-    decompose_key = make_dag_key(TaskKind.DECOMPOSE, scope=plan_id_value)
-    decompose_item = (
-        _unstarted_stage_snapshot(
-            ctx, TaskKind.DECOMPOSE, decompose_key, decompose_issue_id, ctx.orchestrator)
-        if decompose_issue_id else
-        _find_by_dag_key(ctx, TaskKind.DECOMPOSE, decompose_key))
+    decompose_item = _stage_item_for_resume(
+        ctx, TaskKind.DECOMPOSE, plan_id_value, decompose_issue_id, ctx.orchestrator)
     manifest_text, decompose_item_id = _run_decompose_stage(
         ctx, resolved_name, plan_text=plan_text, acceptance_text=acceptance_text,
         acceptance_doc=acceptance_doc, plan_item_id=plan_item_id,
-        acceptance_item_id=acceptance_item_id, dag_key=decompose_key,
-        resume_item_id=decompose_item.id if decompose_item else None, base_dir=base_dir, **stage)
+        acceptance_item_id=acceptance_item_id,
+        dag_key=make_dag_key(TaskKind.DECOMPOSE, scope=plan_id_value),
+        resume_item_id=decompose_item.id if decompose_item else None,
+        restart_active=restart == TaskKind.DECOMPOSE, **stage)
 
     _write_plan_outputs(
         ctx, plan_id=plan_id_value, name=resolved_name, manifest_text=manifest_text,
+        acceptance_text=acceptance_text,
         source_issues=[r for r in [plan_item_id, acceptance_item_id, decompose_item_id] if r],
         manifest_path=manifest_path, acceptance_path=acceptance_path,
         project_rules_text=project_rules_text, agents_snapshot=agents_snapshot)
