@@ -84,7 +84,7 @@ develop 节点仍使用独立的 `omac node accept-nits`，两条路径不会互
 ### 阶段级恢复与 merge 观察
 
 - 恢复以 issue 的真实 `phase` 为准：authoring 只恢复 worker；reviewer run 失败或结束但未提交 verdict 时，保留同一 issue、worker 的 PR/verification 与 review subject，在 `review` 阶段重新派发 reviewer；不得错误退回 worker。
-- `merging` 只观察已经持久化的 merge intent/request。GitHub/平台返回 `UNKNOWN` 或临时读取失败时，节点留在 `merging`，不消耗 `retry.merge`、不回退 worker、也不再发送第二次 merge 请求。
+- `merging` 只观察已经持久化的 merge intent/request。读取 PR 失败（命令出错、超时、输出损坏、缺 `mergeStateStatus`，即 `UNKNOWN`）或临时读取失败时，节点留在 `merging`，不消耗 `retry.merge`、不回退 worker、也不再发送第二次 merge 请求。OPEN PR 的 `mergeStateStatus` 为 GitHub 尚未算出的 `UNKNOWN` 不属于此类：PR 已明确 OPEN，照常发起一次 merge 请求，能否合入由 merge 命令判断。
 - 认证或授权失败不是暂态观察结果：OMAC 会本地持久化 `blocked` 并保留 work item、PR 和 merge marker，不会重新发起合入。修复凭证/权限、远端核实 PR 后，读取节点证据并使用提示的显式恢复命令再运行 DAG。
 - 只有明确的 `CLOSED_UNMERGED` 或已知 merge 命令失败才进入 merge 失败/回退语义。恢复期间仍必须以远端 `MERGED + mergedAt` 作为 done 的唯一事实。
 - Worker 在 no-submit 回退上限边界成功执行 `omac work submit` 时，Controller 会在耗尽上限前重新读取并封存这次交付（包括 `delivery_identity`）；只有最终权威读取仍证明无新交付时，才保留 no-submit 失败并阻断。真实 no-submit 上限保护不会被绕过。

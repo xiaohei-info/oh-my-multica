@@ -42,6 +42,13 @@ def test_observed_pull_request(state, pr, expected):
     assert decide_merge_observed(MergeObserved(state, pr)) is expected
 
 
+@pytest.mark.parametrize("state", [None, "intent", "requested"])
+def test_a_failed_observation_never_sends_a_merge_request(state):
+    """UNKNOWN means the read failed; a PR GitHub merely has not scored yet is observed as OPEN and does request."""
+    assert decide_merge_observed(MergeObserved(state, S.UNKNOWN)) is Step.SETTLE
+    assert decide_merge_observed(MergeObserved(None, S.OPEN)) is Step.REQUEST
+
+
 @pytest.mark.parametrize("state", ["intent", "requested"])
 @pytest.mark.parametrize("pr", list(S))
 def test_a_marked_request_is_never_sent_twice(state, pr):

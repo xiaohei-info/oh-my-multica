@@ -8,6 +8,16 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [2.3.1] — 2026-11-05
+
+- Fix: a node no longer waits in `merging` indefinitely when GitHub reports `mergeStateStatus: UNKNOWN` for an OPEN PR.
+  GitHub computes mergeability lazily and may leave it `UNKNOWN` for a long time after the base branch moves, so a reviewed,
+  CI-green, conflict-free PR was only merged on the rare tick that happened to observe `CLEAN`. `GitHubCodeHost.observe_pull_request`
+  now separates the two cases: an explicit `UNKNOWN` on an OPEN PR (no auto-merge, not queued) is `OPEN`, so the single
+  merge request is sent and the merge command decides (a refusal takes the existing bounded `retry.merge` bounce or block).
+  A failed read (`gh` exit non-zero, timeout, malformed JSON, missing `mergeStateStatus`) is still `UNKNOWN`: keep `merging`, no
+  request, no retry spent. The `intent`/`requested` once-only request markers are unchanged. No new configuration.
+
 ## [2.3.0] — 2026-11-05
 
 - Behavior change: a DAG develop node whose Reviewer returns a clean `pass-with-nits` (no blockers, valid evidence) is now a
