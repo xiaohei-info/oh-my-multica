@@ -5,7 +5,7 @@ import os
 
 from ...core import config as config_mod
 from ...engines import engine_from_config
-from ...errors import ValidationError
+from ...errors import NeedsDecision, ValidationError
 from ...i18n import resolve_language, ui
 from .. import exit_codes
 from ..output import hint
@@ -337,7 +337,7 @@ def _accept_nits(args) -> int:
     return exit_codes.OK
 
 
-def run(args) -> int:
+def _dispatch(args) -> int:
     if args.action == "create":
         return _create(args)
     if args.action == "confirm":
@@ -351,3 +351,12 @@ def run(args) -> int:
     raise ValidationError(ui(
         f"Unknown plan subcommand: {args.action}",
         f"未知 plan 子命令:{args.action}"))
+
+
+def run(args) -> int:
+    try:
+        return _dispatch(args)
+    except NeedsDecision as exc:
+        if exc.report is not None:
+            print_json(exc.report)      # the structured report the exit-20 contract promises; next_action is a runnable command
+        raise

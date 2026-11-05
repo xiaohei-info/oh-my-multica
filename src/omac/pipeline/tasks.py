@@ -26,6 +26,7 @@ from ..core.review_convergence import (
     bounded_decision_required, build_review_obligations,
 )
 from ..core.review_continuation import authorized_review_limit, valid_review_continuation
+from ..core.taskmeta import review_nits_acceptance_is_valid
 from ..core.review_preflight import run_review_preflight
 from ..core.taskmeta import (
     DECISION_REQUIRED_SCHEMA, DELIVERY_CONTENT_KEY, TaskKind, TaskPhase,
@@ -46,6 +47,7 @@ from .decide_stop import (
     inspect_action, needs_run_facts, render_release,
 )
 from .decide_transitions import block_in_phase, block_if_needed, rework_to_producer
+from .decide_review import VerdictObservation, VerdictPath, decide_verdict_path
 from .decide_task import (
     Fact, Stage, TERMINAL, TaskObs, decide_task_step, plan_machine_feedback,
 )
@@ -1479,7 +1481,7 @@ class _TaskRun:
             Stage.REVIEWER_CHECK: self._at_reviewer_check, Stage.REVIEW_ENTER: self._at_review_enter,
             Stage.REVIEW_ROUND: self._at_review_round, Stage.REVIEW_CHECK: self._at_review_check,
             Stage.REVIEW_DISPATCH: self._at_review_dispatch, Stage.REVIEW_VERDICT: self._at_review_verdict,
-            Stage.PRODUCE_NITS: self._at_produce_nits, Stage.PRODUCE_REJECT: self._at_produce_reject,
+            Stage.PRODUCE_REJECT: self._at_produce_reject,
             Stage.BLOCK_BUDGET: self._at_block_budget, Stage.FINISH: self._at_finish,
             Stage.FINISH_WAIT: self._at_finish_wait,
         }
@@ -1685,30 +1687,23 @@ class _TaskRun:
         verdict = reviewed.review_verdict
         log.info(logsetup.EVT_VERDICT, kind=self.kind.value, id=self.item_id,
                  verdict=verdict, round=round_index)
-        if verdict == "pass":
+        path = decide_verdict_path(VerdictObservation(verdict=verdict, has_evidence_errors=False))
+        if path is VerdictPath.MERGE:
             self.finish_args = ("pass", round_index, True)
             return Fact.PASS, self._obs()
-        if verdict == "reject":
-            resolution = resolve_convergence(
-                reviewed, kind=self.kind.value, recommended_action="reconsider-task-boundary",
-                next_action=(render_release(Release.CONTINUE_REVIEW, reviewed.dag_key)
-                             if self.kind in PLAN_KINDS else None))
-            resolution.raise_if_invalid(PlatformError, self.item_id)
-            # An operator who authorized this very round (continue-review) has decided to go on past a convergence stop.
-            authorized = reviewed.review_continuation
-            operator_authorized = (valid_review_continuation(authorized, stage=self.kind.value)
-                                   and round_index <= authorized["authorized_through_round"])
-            if resolution.state is ResolutionState.NEEDS_DECISION and not operator_authorized:
-                return self._convergence_stop(reviewed, resolution)
-        if verdict == "pass-with-nits":
-            if self.kind == TaskKind.AMENDMENT:
-                # A running-DAG amendment is already a reviewed control-plane change: the operator must
-                # explicitly accept the nits, then run `dag amend accept`.
-                self.finish_args = ("pass-with-nits", round_index, True)
-                return Fact.AMENDMENT_NITS, self._obs()
-            log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
-                     gate="review-nits", round=round_index, max=self.review_limit)
-            return Fact.NITS_RETRY, self._obs()
+        if path is VerdictPath.NITS_CHECK:
+            return self._nits_verdict(reviewed, round_index)
+        resolution = resolve_convergence(
+            reviewed, kind=self.kind.value, recommended_action="reconsider-task-boundary",
+            next_action=(render_release(Release.CONTINUE_REVIEW, reviewed.dag_key)
+                         if self.kind in PLAN_KINDS else None))
+        resolution.raise_if_invalid(PlatformError, self.item_id)
+        # An operator who authorized this very round (continue-review) has decided to go on past a convergence stop.
+        authorized = reviewed.review_continuation
+        operator_authorized = (valid_review_continuation(authorized, stage=self.kind.value)
+                               and round_index <= authorized["authorized_through_round"])
+        if resolution.state is ResolutionState.NEEDS_DECISION and not operator_authorized:
+            return self._convergence_stop(reviewed, resolution)
         # reject: the report is already in metadata; reset_review clears only the current verdict and returns the
         # item to the producer. Rework context comes from `work show`, never from a comment (it would trigger a Run).
         self.last_opinion = _review_opinion(reviewed)
@@ -1718,6 +1713,32 @@ class _TaskRun:
             self.stop = _review_budget_stop(reviewed, round_index, self.last_opinion)
             return Fact.REJECT_EXHAUSTED, self._obs()
         return Fact.REJECT_RETRY, self._obs()
+
+    def _nits_verdict(self, reviewed, round_index):
+        """pass-with-nits is a decision only a person makes (accept the nits, or send them back), here as for a node."""
+        self.finish_args = ("pass-with-nits", round_index, True)
+        if self.kind == TaskKind.AMENDMENT:
+            # A running-DAG amendment is already a reviewed control-plane change: the operator must
+            # explicitly accept the nits, then run `dag amend accept`.
+            return Fact.AMENDMENT_NITS, self._obs()
+        marker = reviewed.review_nits_acceptance
+        if (review_nits_acceptance_is_valid(marker)
+                and marker["review_subject_digest"] == reviewed.review_subject_digest
+                and marker["review_report_ref"] == reviewed.review_report_ref):
+            return Fact.NITS_ACCEPTED, self._obs()
+        log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id, gate="review-nits",
+                 rounds=round_index)
+        decision = build_stop(
+            StopReason.REVIEW_NITS_ACCEPTANCE, kind=self.kind, item_id=self.item_id, dag_key=reviewed.dag_key,
+            gate="review-nits", rounds=round_index, extra={
+                "verdict": "pass-with-nits", "review_subject_digest": reviewed.review_subject_digest,
+                "review_report_ref": reviewed.review_report_ref, "review_ledger_ref": reviewed.review_ledger_ref})
+        self.stop = _Stop(StopReason.REVIEW_NITS_ACCEPTANCE, "review-nits", round_index, _review_opinion(reviewed),
+                          logged=True, decision=decision)
+        return Fact.NITS_NEED_DECISION, self._obs(
+            decision=decision,
+            decision_current=reviewed.decision_required == decision and reviewed.phase == TaskPhase.REVIEW,
+            already_blocked=reviewed.status == WorkItemStatus.BLOCKED)
 
     def _convergence_stop(self, reviewed, resolution):
         decision = bounded_decision_required(resolution.decision)
@@ -1729,17 +1750,6 @@ class _TaskRun:
             decision=decision,
             decision_current=reviewed.decision_required == decision and reviewed.phase == TaskPhase.REVIEW,
             already_blocked=reviewed.status == WorkItemStatus.BLOCKED)
-
-    def _at_produce_nits(self):
-        self.delivered = self._produce()
-        self.delivery = _delivery_of(self.kind, self.delivered)
-        if self.round_index >= self.review_limit:
-            self.stop = _review_budget_stop(self.delivered, self.round_index, _review_opinion(self.reviewed))
-            return Fact.PRODUCED_AT_LIMIT, self._obs()
-        # Whatever the size of the change, the final delivery is reviewed again: the next round's
-        # prepare_review_cycle clears the old verdict with the new subject digest.
-        self.next_round = self.round_index + 1
-        return Fact.PRODUCED, self._obs()
 
     def _at_produce_reject(self):
         self.delivered = self._produce()
@@ -1768,6 +1778,14 @@ class _TaskRun:
                 report=stop.decision)
         action = stop.decision.get("next_action")
         report = {**stop.decision, "item_id": self.item_id, "last_opinion": stop.opinion}
+        if stop.reason is StopReason.REVIEW_NITS_ACCEPTANCE:
+            decline = next(iter(stop.decision.get("alternatives", [])), None)
+            return NeedsDecision(
+                ui(f"{self.kind.value} passed review with nits (round {stop.rounds}); nothing was changed. "
+                   f"Accept them with `{action}`" + (f", or send them back to the author with `{decline}`." if decline else "."),
+                   f"{self.kind.value} 评审结论为 pass-with-nits（第 {stop.rounds} 轮）；未做任何修改。"
+                   f"用 `{action}` 接受建议项" + (f"，或用 `{decline}` 退回作者返工。" if decline else "。")),
+                report=report)
         if stop.reason is StopReason.GUARD_BUDGET:
             return NeedsDecision(
                 ui(f"{self.kind.value} did not pass the machine gate after {self.max_revisions} revisions"

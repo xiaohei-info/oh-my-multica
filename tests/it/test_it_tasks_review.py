@@ -92,7 +92,7 @@ def test_the_reviewer_is_woken_after_the_authors_run_has_ended_not_while_it_is_e
     assert [e["event"] for e in events].count(logsetup.EVT_REVIEW_HANDOFF_WAIT) == 1
 
 
-@pytest.mark.parametrize("verdict", ["pass-with-nits", "reject"])
+@pytest.mark.parametrize("verdict", ["reject"])
 def test_a_running_resumed_task_redispatches_the_author_once_the_reviewers_run_has_ended(world, verdict):
     # A real Reviewer submits and its Run goes on: the same resumed process must hand the issue back to the author.
     item = world.issue(TaskKind.PLAN, f"plan-returned-{verdict}")
@@ -118,15 +118,61 @@ def test_a_machine_gate_retry_reruns_the_author_once_its_own_run_has_ended(world
     assert [e["event"] for e in events].count(logsetup.EVT_REWORK_HANDOFF_WAIT) == 1
 
 
-def test_a_changed_worker_follow_up_after_pass_with_nits_is_reviewed_again(world):
+def stopped_on_nits(world, key):
+    """Round 1 passes with nits: the stage stops for a person, with the review it stands on untouched."""
     world.author(world.plan("计划正文-v1"), world.plan("计划正文-v2"))
     world.review("pass-with-nits", "pass")
+    with pytest.raises(NeedsDecision) as raised:
+        world.run(TaskKind.PLAN, payload(), "alice", reviewers=["bob"], max_revisions=3, dag_key=key)
+    return raised.value.report, next(i for i in world.store.list_work_items(world.kit.workspace) if i.dag_key == key)
 
-    res = world.run(TaskKind.PLAN, payload(), "alice", reviewers=["bob"])
 
-    item = world.store.get_work_item(res["item_id"])
-    assert res["verdict"] == "pass" and res["rounds"] == 2 and res["delivery"]["plan"] == "计划正文-v2"
-    assert item.status == WorkItemStatus.DONE and item.bounces.review == 1 and item.decision_required is None
+def test_pass_with_nits_stops_for_a_decision_and_keeps_the_review_it_stands_on(world):
+    report, item = stopped_on_nits(world, "plan-p-nits1")
+
+    assert report["reason_code"] == "review-nits-acceptance-required" and report["gate"] == "review-nits"
+    assert report["next_action"] == "omac plan accept-nits --dag-key plan-p-nits1"
+    assert report["alternatives"] == ["omac plan continue-review --dag-key plan-p-nits1"]
+    assert item.status is WorkItemStatus.BLOCKED and item.review_verdict == "pass-with-nits" and item.deliverable == "计划正文-v1"
+    assert item.bounces.review == 0 and item.decision_required["review_subject_digest"] == item.review_subject_digest
+    assert len(world.kit.runtime.list_runs(item.id)) == 2           # one author Run, one Reviewer Run; nobody was sent back
+
+
+def test_accepting_the_nits_finishes_the_stage_on_the_delivery_that_was_reviewed(world):
+    from omac.pipeline.plan import plan_accept_nits
+
+    _report, item = stopped_on_nits(world, "plan-p-nits2")
+
+    accepted = plan_accept_nits(world.kit.engine, 3, dag_key=item.dag_key)
+    assigns = world.kit.record(world.store, "assign_work_item")
+    result = world.run(TaskKind.PLAN, payload(), "alice", reviewers=["bob"], max_revisions=3, resume_item_id=item.id)
+
+    assert accepted["next_action"] == "omac plan resume --plan-id p-nits2"
+    assert result["verdict"] == "pass-with-nits" and result["delivery"]["plan"] == "计划正文-v1" and not assigns
+    assert len(world.kit.runtime.list_runs(item.id)) == 2
+
+
+def test_resuming_a_nits_stop_without_a_decision_stops_again_and_dispatches_nobody(world):
+    _report, item = stopped_on_nits(world, "plan-p-nits3")
+    assigns = world.kit.record(world.store, "assign_work_item")
+
+    with pytest.raises(NeedsDecision) as raised:
+        world.run(TaskKind.PLAN, payload(), "alice", reviewers=["bob"], max_revisions=3, resume_item_id=item.id,
+                  poll=lambda: pytest.fail("a stop that awaits a decision must not poll"))
+
+    assert raised.value.report["reason_code"] == "review-nits-acceptance-required" and not assigns
+
+
+def test_declining_the_nits_returns_the_stage_to_its_author_as_a_counted_round_and_it_is_reviewed_again(world):
+    _report, item = stopped_on_nits(world, "plan-p-nits4")
+
+    released = plan_continue_review(world.kit.engine, 3, dag_key=item.dag_key)
+    result = world.run(TaskKind.PLAN, payload(), "alice", reviewers=["bob"], max_revisions=3, resume_item_id=item.id)
+
+    final = world.store.get_work_item(item.id)
+    assert released["mode"] == "producer-rework" and released["authorized_through_round"] == 3
+    assert result["verdict"] == "pass" and result["rounds"] == 2 and result["delivery"]["plan"] == "计划正文-v2"
+    assert final.status == WorkItemStatus.DONE and final.bounces.review == 1 and final.decision_required is None
     assert handoff_comments(world, item.id) == []
 
 
@@ -380,7 +426,7 @@ def test_a_review_only_continuation_reviews_the_final_nits_delivery_once(world):
     assert result["verdict"] == "pass" and result["rounds"] == 9 and roles(assigns) == ["reviewer"]
 
 
-def test_the_final_pass_with_nits_can_be_continued_for_one_more_review_round(world):
+def test_nits_at_the_last_round_are_declined_into_one_more_round(world):
     kit = world.kit
     world.author(revised_manifest(world), revised_manifest(world))
     world.review("pass-with-nits", "pass")
@@ -389,17 +435,15 @@ def test_the_final_pass_with_nits_can_be_continued_for_one_more_review_round(wor
         world.run(TaskKind.DECOMPOSE, {"title": "decompose review"}, "alice", reviewers=["bob"], max_revisions=1, dag_key="decompose-p-final-nits")
 
     item = next(i for i in kit.store.list_work_items(kit.workspace) if i.dag_key == "decompose-p-final-nits")
-    assert item.review_verdict is None and item.bounces.review == 1
+    assert item.review_verdict == "pass-with-nits" and item.bounces.review == 0
 
-    decision = plan_continue_review(kit.engine, 1, dag_key=item.dag_key, reason="operator approved final nits recheck")
-    assert decision["mode"] == "review-only"
-    authorized = kit.store.get_work_item(item.id)
-    assert authorized.status == WorkItemStatus.IN_REVIEW and authorized.decision_required in (None, {})
-    assigns = kit.record(kit.store, "assign_work_item")
+    decision = plan_continue_review(kit.engine, 1, dag_key=item.dag_key, reason="operator declined the final nits")
+    assert decision["mode"] == "producer-rework" and decision["authorized_through_round"] == 2
+    assert kit.store.get_work_item(item.id).bounces.review == 1
 
     result = world.run(TaskKind.DECOMPOSE, {"title": "decompose review"}, "alice", reviewers=["bob"], max_revisions=1, resume_item_id=item.id)
 
-    assert result["verdict"] == "pass" and result["rounds"] == 2 and roles(assigns)[-1] == "reviewer"
+    assert result["verdict"] == "pass" and result["rounds"] == 2
 
 
 @pytest.mark.parametrize("recorded_gate", ["review-nits", "review"])
