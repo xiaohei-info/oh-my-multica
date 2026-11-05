@@ -24,7 +24,8 @@ This file records public changes to oh-my-multica. The format follows
 - Fix: every stop of the plan pipeline names one release command that runs as printed (`reason_code` and `next_action`), and
   that command is accepted for that stop. Stops that had no `next_action`, or an unrunnable one (`dag amend propose` before a
   manifest exists, `node retry <manifest> <node>` for a plan issue), now have one. The exit-20 report of plan commands is
-  printed on stdout.
+  printed on stdout. The report of a stop is now the persisted decision itself: for a machine-gate stop it carries
+  `gate=guard`, `phase=review` and a `reason_code` (it used to say `phase=guard` and had no `reason_code`).
 - Fix: a machine-gate retry returned the issue to review instead of authoring and left it blocked, so a later `plan resume`
   could not recover; an author Run that ended without submitting had no release at all. `plan resume --restart-active`
   releases both and now acts on the first unfinished stage (plan, acceptance or decompose), not always acceptance; it no
