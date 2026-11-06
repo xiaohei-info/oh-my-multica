@@ -9,6 +9,9 @@ document, or incremental-fix facts.
 - `work show` identifies `decompose` authoring and you as orchestrator.
 - On first decomposition, turn the approved design and acceptance document into
   a manifest DAG.
+- An incremental decomposition may list in `blocked_by` only finished (done/abandoned) nodes or nodes added by the
+  same increment. OMAC merges it through a system amendment that adds `contract.defect_refs` to every new node; a flow
+  that fails again after it was fixed gets no further nodes.
 - After final acceptance fails, add only incremental fix nodes connected to the
   original manifest.
 - The orchestrator owns decomposition and contract boundaries, not product code.

@@ -33,13 +33,14 @@ from ..core.config import (
 )
 from ..core.evidence import validate_acceptance_results
 from ..core.lint import lint_increment
-from ..core.manifest import Manifest, Node, _dump_contract, loads_manifest, merge_increment, save_manifest
+from ..core.manifest import Manifest, Node, _dump_contract, loads_manifest
 from ..core.taskmeta import TaskKind, make_dag_key
 from ..core.workitem import WorkItemStatus
 from ..engines.store import WorkItemStore
 from ..errors import NeedsDecision
 from ..i18n import resolve_language, ui
 from ..pipeline import loop as loop_mod
+from .defects import merge_acceptance_increment, recurred_flows
 from .tasks import AuthoringTaskSpec, create_authoring_task
 from .apply import Ports, apply
 from .decide_effects import Assign, UpdateStatus, Wake
@@ -316,8 +317,11 @@ def _run_acceptance_round(run: _AcceptanceRun, round_num: int):
 
 
 def _merge_round_increment(run: _AcceptanceRun, round_num: int, failed_items: List[str],
-                           acceptance_item_id: str) -> None:
-    """步骤 4–7:为 fail 项派发增量拆解,lint 后并入原 manifest,再回到内层 tick-loop。"""
+                           acceptance_item_id: str) -> bool:
+    """步骤 4–7:为 fail 项派发增量拆解,lint 后经系统 amendment 并入原 manifest,再回到内层 tick-loop。
+
+    返回 True = 有 flow 在修过之后再次失败:不再增补节点,外层循环就此停止(同一缺陷指纹只自动修一次)。
+    """
     if not run.orchestrator:
         raise NeedsDecision(
             ui(
@@ -325,6 +329,8 @@ def _merge_round_increment(run: _AcceptanceRun, round_num: int, failed_items: Li
                 "无法派发增量拆解:配置/角色缺 orchestrator",
                 language=run.language),
             report={"round": round_num})
+    if recurred_flows(run.engine, run.manifest, run.manifest_path, failed_items):
+        return True
     decompose_item_id = _dispatch_and_wait(
         run.engine,
         _incremental_decompose_spec(run, round_num, failed_items, acceptance_item_id),
@@ -332,7 +338,7 @@ def _merge_round_increment(run: _AcceptanceRun, round_num: int, failed_items: Li
     )
     increment = _read_increment(run.engine.store, decompose_item_id)
     if not increment or not increment.nodes:
-        return
+        return False
     pool = set(_collect_workers(run.manifest))
     pool.update(run.reviewers)
     if run.acceptor_cfg:
@@ -346,9 +352,9 @@ def _merge_round_increment(run: _AcceptanceRun, round_num: int, failed_items: Li
                 language=run.language),
             report={"round": round_num, "lint_errors": lint_errors,
                     "failed_items": failed_items})
-    merge_increment(run.manifest, increment)
-    save_manifest(run.manifest, run.manifest_path)
+    merge_acceptance_increment(run.engine, run.manifest, run.manifest_path, increment, failed_items, run.config)
     _run_inner_loop(run.engine, run.manifest, run.manifest_path, run.config, poll=run.poll)
+    return False
 
 
 def run_acceptance_loop(
@@ -385,7 +391,8 @@ def run_acceptance_loop(
         })
         if not failed_items:  # 步骤 3:全 pass -> exit 0
             return AcceptanceOutcome(exit_code=0, rounds=round_num, reports=reports)
-        _merge_round_increment(run, round_num, failed_items, acceptance_item_id)
+        if _merge_round_increment(run, round_num, failed_items, acceptance_item_id):
+            return AcceptanceOutcome(exit_code=20, rounds=round_num, failed_items=failed_items, reports=reports)
 
     # ── 耗尽仍 fail -> exit 20 ──
     return AcceptanceOutcome(

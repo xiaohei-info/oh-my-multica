@@ -42,6 +42,10 @@
 - 若 `work show.context.responsibility` 存在，必须按 `evidence_mode`、`consumes`、
   `produces` 判断当前节点的证据和制品边界。fixture 节点以完整可执行 fixture 证明，
   不能被要求等待未声明的 live 环境或下游产物。
+- `evidence_mode: live` 的节点：reviewer 主机通常没有 live 环境，不得因“无法复跑 live 命令”而 reject，
+  也不得把复跑 live 命令当作义务。改为审 PR diff，以及 Worker 在 verification 里提交的 live 证据：命令、真实退出码、
+  产物路径与运行时间必须齐全、彼此一致，并对应 contract 的 verification 与 integration gate。缺少或无法对应的 live
+  证据才是 blocker；不需要 live 环境的命令（单测、lint、构建）仍照常独立复跑。
 
 ## 有限审查与跨轮回归
 
@@ -58,6 +62,9 @@
   声明 `fixed` 的根因不得同时仍列为 blocker。
 - 若本轮可能构成 `scope-expanding`，每个 open blocker 必须补充稳定的 `owner`（同一 owner
   可以对应多个 blocker，但至少需要两个不同 owner）；同时只有 blocker 数连续两轮不再减少时才可建议 DAG amendment。
+- blocker 的 `owner` 写**节点 id**。若某 blocker 的根因在已完成的上游节点里，把 `owner` 设为该节点 id：
+  当本轮全部 open blocker 的 `owner` 都是已完成的上游节点时，OMAC 不再退回本节点返工，而是作为上游缺陷处理
+  （不消耗评审回退次数）；只要有一个 blocker 没有 `owner` 或属于本节点，就照常返工。
 - blocker 若要求新增外部输入，必须补充 `required_inputs`，每项为
   `{artifact_id, producer, evidence_mode}`；若要求特定证据类别，补充
   `required_evidence_mode: fixture|artifact|live`。这些字段只描述边界，不复制交付物正文。
@@ -78,6 +85,7 @@
    env_setup、评审目标和精确提交命令。
 2. 打开真实交付物或 PR diff，不把产出者的说明当作已验证事实。
 3. 按 env_setup 建立独立验证环境，独立复跑 verification commands 和 integration gates，记录真实退出码与结果。
+   `evidence_mode: live` 的节点例外：不复跑需要 live 环境的命令，按上文审 Worker 提交的 live 证据。
 4. 检查需求对齐：该做的已完成，`non_goals` 和相邻范围没有被突破。
 5. 检查设计与契约：实现或产物符合 `source_of_truth`，共享契约只被 import，没有平行定义。
    `plan review` 必须同时检查 `project_rules`：它与设计及已有 `AGENTS.md` 一致，只包含长期仓库级约束，

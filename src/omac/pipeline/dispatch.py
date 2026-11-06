@@ -1105,7 +1105,7 @@ def report_worker_blocker(store: WorkItemStore, issue_id: str, report_file: str,
     if isinstance(report, dict) and report.get("schema") == "omac.amendment-scope-gap/v1":
         from .amendment_scope_gap import report_scope_gap
         return report_scope_gap(store, runtime, issue_id, report)
-    if isinstance(report, dict) and report.get("schema") == "omac.worker-blocker/v2":
+    if isinstance(report, dict) and report.get("schema") in {"omac.worker-blocker/v2", "omac.worker-blocker/v3"}:
         from .worker_blocker import report_decision
         return report_decision(store, runtime, issue_id, report)
     fields = {"schema", "reason_code", "upstream_issue_id", "operation", "exit_code"}

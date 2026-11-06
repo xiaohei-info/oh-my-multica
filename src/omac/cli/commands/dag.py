@@ -25,6 +25,7 @@ from ...core.gitsync import ensure_config_synced
 from ...engines import engine_from_config
 from ...errors import NeedsDecision, ValidationError
 from ...i18n import current_language, ui
+from ...pipeline.defects import advance as advance_defects, resume_system_amendment
 from ...pipeline.loop import tick
 from ...pipeline.reconcile_audit import record_successful_tick, should_full_scan
 from ...pipeline.review import run_review
@@ -757,6 +758,9 @@ def _validate_execution_invariants(manifest, manifest_path: str) -> None:
                 "或从已评审 acceptance issue 附件恢复该文件。"))
 
 
+_MAX_DEFECT_PASSES = 10
+
+
 def _scheduled_tick(
     engine,
     manifest,
@@ -767,15 +771,24 @@ def _scheduled_tick(
     config: dict,
 ):
     """Run one tick with P3's persisted, explicit full-scan selection."""
-    reconcile_config = resolve_reconcile(config)
-    full_scan = should_full_scan(manifest, reconcile_config)
-    return tick(
-        engine.store, engine.runtime, engine.code_host, manifest, manifest_path,
-        max_parallel=max_parallel, retry_limits=retry_limits, config=config,
-        full_scan=full_scan,
-        after_successful_tick=lambda: record_successful_tick(
-            manifest, full_scan=full_scan),
-    )
+    def one_tick():
+        full_scan = should_full_scan(manifest, resolve_reconcile(config))
+        return tick(
+            engine.store, engine.runtime, engine.code_host, manifest, manifest_path,
+            max_parallel=max_parallel, retry_limits=retry_limits, config=config,
+            full_scan=full_scan,
+            after_successful_tick=lambda: record_successful_tick(
+                manifest, full_scan=full_scan),
+        )
+
+    result = one_tick()
+    # Between two ticks: route upstream-defect reports (fix nodes, stops); a changed DAG is observed again at once so the
+    # exit-20 report never shows a defect that was already routed.
+    for _ in range(_MAX_DEFECT_PASSES):
+        if not advance_defects(engine, manifest, manifest_path, config):
+            break
+        result = one_tick()
+    return result
 
 
 @dataclass
@@ -913,11 +926,14 @@ def _loop_or_single_locked(args, single_round: bool, clock: Optional[_Clock] = N
 
     manifest = load_manifest(args.manifest)
     notified.intersection_update(_decision_keys(manifest, args.manifest))   # a decision resolved while we waited is forgotten
+    system_resume = False
     try:
         ensure_amendment_apply_complete(manifest, args.manifest)
     except NeedsDecision as exc:
-        print_json(exc.report)
-        raise
+        if not exc.report.get("system"):       # a human-confirmed amendment is resumed by `dag amend accept`
+            print_json(exc.report)
+            raise
+        system_resume = True
 
     engine, _ = _assemble_engine(args)
     # 派单前:真实引擎下自动把 config 同步到 main,否则隔离区 agent clone 后读不到。
@@ -925,6 +941,13 @@ def _loop_or_single_locked(args, single_round: bool, clock: Optional[_Clock] = N
     ensure_config_synced(config_path, branch="main",
                          engine_type=engine.store.config.engine_type)
     config = load_config(config_path)
+    if system_resume:                          # a code-built amendment left half applied: finish it, then re-check
+        resume_system_amendment(engine, manifest, args.manifest, config)
+        try:
+            ensure_amendment_apply_complete(manifest, args.manifest)
+        except NeedsDecision as exc:
+            print_json(exc.report)
+            raise
     retry_limits = resolve_retry(config)
     # fail-closed:非法 retry.no_submit_runs 在进 tick 前报错(exit 5)
     resolve_no_submit_runs(config)

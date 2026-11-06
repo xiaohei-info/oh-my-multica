@@ -91,7 +91,7 @@ def test_two_failed_flows_get_fix_nodes_and_the_second_round_passes(project, sta
     assert "export" in decompose.description and "当前 Manifest" not in decompose.description
 
 
-def test_acceptance_that_keeps_failing_stops_at_max_rounds_with_the_failed_items(project, stack):
+def test_a_flow_that_fails_again_after_its_increment_was_merged_stops_the_loop_with_the_failed_items(project, stack):
     results = [results_file(project, f"x{n}", login="pass", export="fail") for n in (1, 2)]
     manifest = acceptance_project(project, stack, "exhaust", flows=["login", "export"], rounds=results, max_rounds=2,
                                   increments=[increment_file(project, "incx1", "fix-export-r1"), increment_file(project, "incx2", "fix-export-r2")])
@@ -99,11 +99,12 @@ def test_acceptance_that_keeps_failing_stops_at_max_rounds_with_the_failed_items
     code, data, done = run_dag(project, manifest)
 
     assert code == 20, done.stdout + done.stderr
-    assert data["state"] == "needs_decision" and data["done"] == ["build", "fix-export-r1", "fix-export-r2"]
+    # The same flow failing again after its increment was merged stops the loop: no second increment is ever asked for.
+    assert data["state"] == "needs_decision" and data["done"] == ["build", "fix-export-r1"]
     report = data["report"]["acceptance"]
     assert report["rounds"] == 2 and report["failed_items"] == ["export"]
     assert [round_["failed_items"] for round_ in report["reports"]] == [["export"], ["export"]]
-    assert {"fix-export-r1", "fix-export-r2"} <= set(load_manifest(manifest).nodes)
+    assert "fix-export-r1" in load_manifest(manifest).nodes and "fix-export-r2" not in load_manifest(manifest).nodes
 
 
 # ---- in process: what the acceptor and the orchestrator are given ---------------------------------------------------------

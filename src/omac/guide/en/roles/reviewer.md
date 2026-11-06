@@ -58,6 +58,11 @@ conflict or cannot be reproduced, do not infer pass.
   its `evidence_mode`, `consumes`, and `produces`. A fixture node proves itself
   with complete executable fixtures; it must not be required to wait for an
   undeclared live environment or downstream output.
+- A node with `evidence_mode: live`: the reviewer host usually has no live environment. Do not reject because a live
+  command cannot be rerun, and never make rerunning one an obligation. Review the PR diff and the live evidence the Worker
+  submitted in verification instead: commands, real exit codes, artifact paths, and run times must be complete,
+  consistent with each other, and map to the contract's verification and integration gates. Only missing or unmappable
+  live evidence is a blocker; commands that need no live environment (unit tests, lint, build) are still rerun independently.
 
 ## Finite coverage and regression
 
@@ -75,6 +80,10 @@ conflict or cannot be reproduced, do not infer pass.
   not `fixed` must remain in `blockers` with the same root and a classification
   matching `prior_blocker_results`; a root declared fixed cannot also remain a
   current blocker.
+- Write a **node id** as a blocker `owner`. When the root cause of a blocker sits in a finished upstream node, set
+  `owner` to that node id: if every open blocker of the round is owned by a finished upstream node, OMAC does not bounce
+  the node back for rework but handles it as an upstream defect (no review bounce is spent). One blocker without an
+  `owner`, or owned by this node, keeps the ordinary rework.
 - When a cycle may qualify as `scope-expanding`, add a stable `owner` to every
   open blocker. Multiple blockers may share an owner, but at least two distinct
   owners and two consecutive non-reducing blocker transitions are required before
@@ -103,7 +112,9 @@ conflict or cannot be reproduced, do not infer pass.
    and submission command.
 2. Open the actual artifact or PR diff. An author narrative is not evidence.
 3. Build an independent environment from `env_setup`, rerun verification and
-   integration commands, and record real exit codes and results.
+   integration commands, and record real exit codes and results. Exception: a
+   `evidence_mode: live` node; do not rerun commands that need the live environment,
+   review the Worker's submitted live evidence as described above.
 4. Check requested behavior is present and non-goals and adjacent scope are
    respected.
 5. Check source-of-truth alignment and shared contracts; imports are permitted,

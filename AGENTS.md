@@ -34,8 +34,8 @@
 | 配置 Config | 引擎、workspace、project、角色、重试预算等 | `.omac/config.yaml`，`core/config.py` | 人（`omac init`、`omac config set`）；优先级 文件 < `OMAC_*` 环境变量 < 命令行参数 |
 | Manifest（DAG） | `meta` + 节点定义 | `.omac/<name>.yaml`，`core/manifest.py::Manifest` | 只在 plan / amendment 时由 omac 改写 |
 | 节点 Node | 定义（`id`、`worker`、`blocked_by`、`reviewer`、`gate`、`contract`…）+ 运行时状态 | `core/manifest.py::Node` | 定义见上；运行时状态**只由 omac Loop 写**（单写者锁） |
-| DAG 状态文件 | DAG 级运行时事实（目前是 `reconcile_audit`），不属于定义，不进定义摘要 | `.omac/<name>.state/_dag.yaml`（`Manifest.dag_state`） | omac Loop（经 `SetDagFact`） |
-| 节点状态文件 | 每节点的运行时事实：`work_item_id`、`status`、`merged`、`merged_at`、`merge_request_state`、`recovery_marker`，以及挂起节点的 `held`、`hold_reason` 和最近一次 `node retry --note` 的 `retry_note` | `.omac/<name>.state/<node>.yaml`（`_RUNTIME_KEYS`） | omac Loop |
+| DAG 状态文件 | DAG 级运行时事实（`reconcile_audit`、上游缺陷账本 `defects`、`pending_human_amendment`），不属于定义，不进定义摘要 | `.omac/<name>.state/_dag.yaml`（`Manifest.dag_state`） | omac Loop（经 `SetDagFact`） |
+| 节点状态文件 | 每节点的运行时事实：`work_item_id`、`status`、`merged`、`merged_at`、`merge_request_state`、`recovery_marker`，挂起节点的 `held`、`hold_reason`，最近一次 `node retry --note` 的 `retry_note`，以及带待路由缺陷报告的 `defect_pending` | `.omac/<name>.state/<node>.yaml`（`_RUNTIME_KEYS`） | omac Loop |
 | 契约 Contract | 目标、验收、非目标、验证命令、集成门、`pr_base`、覆盖率门 | `core/manifest.py::Contract`，派单时下发到工作项 | orchestrator 产出，经评审与 lint |
 | 工作项 Work item | 平台上的一个 issue，承载一个完整阶段（产出、评审、回退往返都在同一条上） | `core/workitem.py::WorkItem` | omac 只经 `apply` 写；Agent 只经 `omac work submit|block` 提交 |
 | 任务类型 TaskKind | `plan`、`acceptance`、`decompose`、`amendment`、`develop`、`final-acceptance` | `core/taskmeta.py` | — |
@@ -45,7 +45,7 @@
 | 证据 Evidence | verification、review report、verdict、验收结果；有 schema | `core/evidence.py` | Agent 产出；omac 校验 |
 | 评审结论 Verdict | `pass` / `pass-with-nits` / `reject`，只对其 subject digest 有效 | `core/evidence.py` | Reviewer（不能是产出者本人） |
 | 验收文档 | 业务流与证明它们的证据 | `.omac/<name>.acceptance.yaml`，`core/acceptance*.py` | planner 产出；acceptor 执行 |
-| 修订 Amendment | 运行中改 DAG：绑定基线 manifest digest 的已评审提案 + 账本 | `core/amendment.py`，`pipeline/amendment.py` | `omac dag amend propose|accept` |
+| 修订 Amendment | 运行中改 DAG：绑定基线 manifest digest 的已评审提案 + 账本；另有**系统 amendment**（上游缺陷回流 / 最终验收增量）：代码按固定白名单生成，不经 Agent 评审与人工确认 | `core/amendment.py`，`pipeline/amendment.py`，`pipeline/defects.py` | `omac dag amend propose|accept`；系统 amendment 只在持锁的 `dag run|tick` 进程里、两轮 tick 之间应用 |
 | 机制角色 | `planner`、`orchestrator`、`worker`、`reviewer`、`acceptor`（`pipeline/dispatch.py::KIND_ROLE`） | `src/omac/guide/roles/` | 配置在 `roles` 中映射到具体 Agent |
 | Agent 模板 | 通用能力画像（architect、backend-eng…），**不是**机制角色 | `src/omac/agents/`，`cli/agent_templates.py` | `omac init` 用它创建 Agent |
 
@@ -233,7 +233,9 @@ Worker/Reviewer 交接检查点是守护协议：每次 `apply` 只带一个效�
 | 回退 / rework（bounce） | 有界、计数地把交付退回产出者 | `retry.worker|ci|review|merge`，`WorkItem.bounces` |
 | 决策函数 / decision function | 代码中的纯函数：事实进，`Plan` 或动作名出 | `pipeline/decide_*.py` |
 | 显式决策 / explicit decision | 只能由人或调用方做的选择，exit 20 + 结构化报告 | `NeedsDecision`、`omac node retry|abandon|accept|accept-nits` |
-| Worker 阻断 / worker blocker | Agent 请求人做显式决策的结构化报告；是否 exit 20 由代码判定 | `omac work block`、`pipeline/worker_blocker.py`（`omac.worker-blocker/v2`） |
+| Worker 阻断 / worker blocker | Agent 请求人做显式决策的结构化报告；是否 exit 20 由代码判定 | `omac work block`、`pipeline/worker_blocker.py`（`omac.worker-blocker/v3`，原因 `upstream-defect`、`environment-failure` 在 v2 之上新增） |
+| 上游缺陷 / upstream defect | 报告者指认的、已完成上游节点未做到的事；指纹 = 疑似节点 + 排序后的锚点 id，状态只前进 | `core/defects.py`、`pipeline/decide_defects.py::DEFECT_ROUTES`、`pipeline/defects.py`、`omac defect` |
+| 系统 amendment / system amendment | 代码生成、只允许 add 修复节点 + 追加报告者 `blocked_by` + resume 报告者的 amendment | `core/amendment.py::build_system_amendment`、`system_proposal_errors` |
 | 观察冲突 / observation conflict | 读取期间工作项被并发改动；逐项捕获，本轮跳过、下轮重新观察，不使 tick 失败 | `errors.ObservationConflict`、`pipeline/observation_conflict.py` |
 | 观察 / Observation | 决策读取的冻结事实 | `pipeline/decide_effects.py::Observation` |
 | 计划 / Plan | 有序的 Effect 元组 + 结果名 | `decide_effects.py::Plan`、`validate_plan` |
@@ -427,7 +429,7 @@ Agent 的产出只经 `omac work submit|block` 进入，一律是待校验的证
 ## 7. 已知取舍与历史包袱（不要当成规范）
 
 1. **存量直接 manifest 写**：`pipeline/loop.py` 51 处、`cli/commands/node.py` 5 处、`core/amendment.py` 2 处、
-   `pipeline/acceptance.py` 与 `pipeline/plan.py` 各 1 处仍直接调用 `set_node`/`save_manifest`，没有走 `SetNode`/`SaveState`。
+   `pipeline/plan.py` 1 处仍直接调用 `set_node`/`save_manifest`，没有走 `SetNode`/`SaveState`。
    迁移成本高，收益只在与端口写交错处，因此暂留；`MANIFEST_WRITE_BASELINE` 只许减少。不要模仿。
 2. **`core/amendment.py::apply_amendment` 是放在 `core` 的编排**：它读工作项、写 manifest 账本，平台写入由注入的
    `recover`（`pipeline/stage_recovery.prepare_stage_recovery`）完成。调用方用 `pipeline.amendment.apply_amendment`。

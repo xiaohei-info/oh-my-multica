@@ -480,7 +480,7 @@ work item ID、contract digest 和原始 worker/review/merge baseline；不复�
 当前 develop/authoring Worker 遇到合同规定的失败停止条件或需要 owner
 决定时，先重新运行 `omac work show <issue-id> --output json`，复制
 `control.blocker_report_template`，通过返回的 `report_blocker` 命令提交
-`omac.worker-blocker/v2` 报告。普通 Reviewer reject 仍须正常返工；不能仅因
+`omac.worker-blocker/v3` 报告（v2 仍被接受；原因码另有 `upstream-defect`、`environment-failure`，见 worker 指南）。普通 Reviewer reject 仍须正常返工；不能仅因
 被 reject 就报告需要决定，也不能将已结束的旧 Run 追溯补报。
 
 - `quality-gate-failed`：evidence 至少一项包含真实执行的 command、非零整数
@@ -507,7 +507,7 @@ work item ID、contract digest 和原始 worker/review/merge baseline；不复�
 恢复许可。Worker block/submit/重派共享本机锁并在写入前重读控制事实；这不是跨机器
 CAS。保持现有单 Runner 管理约束，不允许多个控制器同时替换同一节点的 generation。
 
-报告最多 2048 UTF-8 JSON 字节，含 1–4 条证据；完整日志留在引用位置，不内嵌。
+报告最多 6144 UTF-8 JSON 字节，含 1–4 条证据；完整日志留在引用位置，不内嵌。
 
 新建 Worker handoff 时，OMAC 必须先读取标记为 deferred 的 Store contract，
 再计算绑定；未下载的 `None` 不能作为真实空合同。若附件读取失败，停止派发，
