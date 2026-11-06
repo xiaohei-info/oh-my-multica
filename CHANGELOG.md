@@ -8,6 +8,114 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-11-06
+
+A major release. Exit codes, existing `--output json` fields (only additions), the three ports and the `ignore_imports`
+baseline are unchanged. Read "Migrating from 2.4.x" below before upgrading a running DAG.
+
+### Breaking
+
+- **Mixed versions are not supported.** A 3.0 manifest can carry fields (`provides`/`requires`/`registers`/`requirement_refs`/
+  `defect_refs`, acceptance `requirements`) that a 2.x reader silently drops. A new plan writes `meta.omac_schema: 3`;
+  omac refuses a manifest whose `omac_schema` is newer than the release and says how to upgrade.
+- **A proposal reviewed under 2.x and not yet accepted is no longer valid.** The definition digest now leaves out all runtime
+  `meta` keys, so it differs from the 2.x one; run `omac dag amend propose` again.
+- **New plans are checked harder** (`standard` profile, below) and every node with `acceptance_refs` gets one more review
+  obligation (`trace:refs`).
+- **The DAG can change by itself.** `defects.auto_fix` defaults to `design-gap`: a reported upstream defect inserts a fix
+  node through a code-built system amendment. Set `defects.auto_fix: off` to keep every such report as an exit-20 decision.
+- **Final acceptance** merges the increment of a failed flow through a system amendment, and a flow that fails again after its
+  increment was merged stops the loop (it used to run the next round).
+- **The Reviewer of a `contract.evidence_mode: live` node judges the Worker's live evidence** (command, exit code, artifacts)
+  and the PR diff; it no longer reruns commands that need the live environment.
+
+### State
+
+- New `.omac/<name>.state/_dag.yaml` holds DAG-level runtime facts: `reconcile_audit` (migrated out of `meta` on load; the next
+  save rewrites the definition file once), the defect ledger, `pending_human_amendment`, `auto_held`. `SetDagFact` is the
+  effect that writes it. A running `dag run` reloads a definition file someone else changed at the start of every tick, so a
+  save never puts a stale definition back (for example over `node retry --worker`).
+- Node state files gain `retry_note` and `defect_pending`.
+
+### Planning
+
+- Acceptance `omac.acceptance/v3`: `requirements` (id, source, summary, disposition, verification `action|technical`) and
+  `action.requirement_ids`. The acceptance guard checks ids and coverage; decompose must give every `technical` requirement a node
+  with `contract.requirement_refs`. Reviewers get `requirements:extraction` and `interface:matrix` obligations.
+- Typed interfaces: artifacts declare `provides: [{id, ref}]` and `requires: [id]`; `meta.registries` and node `registers`
+  name a guard node that must run after every registrant. `lint` and `lint_increment` report a missing provide or a misplaced
+  guard with a YAML snippet to paste. Reviewers get `interface:<artifact>:<id>`, `registry:<id>` and `trace:refs`; a `pass`
+  for these must cite a path with an extension or a test name.
+- Plan profile `light` / `standard`, decided by code from the node and business-action counts (`plan.light_max_nodes` 12,
+  `plan.light_max_business_actions` 20; only `plan.profile` overrides it), recorded as `meta.plan_scale`. `light` adds no gate
+  to the 2.4 plan.
+- A plan stage stops when a machine-gate round does not lower the number of errors (`guard-non-reducing`) and when a Reviewer's
+  report fails the evidence gate more than `review.invalid_evidence_restarts` (2) times on one subject
+  (`review-evidence-invalid`); `plan resume` releases both.
+- Ready nodes are dispatched by priority: owner of a complete flow, then most transitive downstream nodes, then manifest order.
+
+### Upstream defect feedback
+
+- `omac.worker-blocker/v3` adds the reasons `upstream-defect` (`defects`, 1–6 items; v2 reports are still accepted) and
+  `environment-failure`. A Reviewer whose every open blocker names a finished upstream node as `owner` produces the same
+  defect report instead of rework, without spending a review bounce.
+- Between two ticks of `dag run|tick`, `pipeline/defects.py` fingerprints each defect and routes it with one table
+  (`decide_defects.DEFECT_ROUTES`): stop for a person (`defect-needs-owner`, `-unroutable`, `-fix-generation-cap`, `-recurred`,
+  `-budget-exhausted`, each with copyable commands), queue, attach to a fix in flight, or insert a `fix.*` node. The reporter
+  waits for the fix through `blocked_by`. Intent → system-amendment file → `apply_amendment` → `fixing`; a restart finishes or
+  withdraws the intent.
+- New `omac defect list|report|grant`. New config `defects.auto_fix|per_reporter|max_auto_fixes`.
+
+### Running a DAG
+
+- `omac dag run --wait-decisions [--max-minutes N]`, read-only `omac dag decisions` (stable `decision_key`) and
+  `omac dag followups`; the closeout node's review gains `followups:triage`.
+- `environment-failure` is retried once by the same Worker (`retry.environment`, default 1, `bounces.environment`), then exit 20
+  with `omac node retry … --worker <next worker>`.
+- `dispatch.hold_live` (default false) holds each ready `evidence_mode: live` node once until `omac node release`.
+- `omac node retry --note <text>` (at most 2000 characters) puts an operator note into the Worker's issue body for that retry.
+
+### Fixes
+
+- `omac node accept` and `omac node abandon` retire the `decision_required` and `worker_handoff` they answer (see 2.4.1).
+- `reconcile_with_observations` kept a stale on-disk baseline after replacing `meta`/nodes, so the next save rewrote more files than needed.
+
+### Migrating from 2.4.x
+
+1. Stop running `dag run` processes, upgrade omac on **every** machine that touches the manifest (`pipx install … @v3.0.0`),
+   then restart. Do not mix 2.x and 3.0 on one manifest.
+2. An existing manifest keeps working: `meta.reconcile_audit` moves into `_dag.yaml` on first load, and the first save rewrites
+   the definition file once. Commit the new state file with the next tick's sync. 2.x manifests have no `omac_schema`; they are
+   not rejected and they do not gain 3.0 fields.
+3. Re-propose any amendment that was reviewed under 2.x and not accepted.
+4. New configuration, all optional with defaults: `retry.environment` (1), `defects.auto_fix` (`design-gap`), `defects.per_reporter`
+   (2), `defects.max_auto_fixes` (`auto`), `dispatch.hold_live` (false), `review.invalid_evidence_restarts` (2), `plan.profile`
+   (`auto`), `plan.light_max_nodes` (12), `plan.light_max_business_actions` (20). `omac init` writes `retry.environment` with the
+   other retry defaults.
+5. New commands: `omac defect list|report|grant`, `omac dag decisions`, `omac dag followups`, `omac dag run --wait-decisions`,
+   `omac node retry --note`.
+6. Worker agents: report `upstream-defect` for finished-upstream gaps and `environment-failure` for push/network/dependency
+   timeouts (evidence needs a command that really exited non-zero); the packaged guides say how. Reviewer agents of `live` nodes
+   review evidence instead of rerunning live commands. Update custom role prompts that told them otherwise.
+7. If you do not want automatic DAG changes yet, set `defects.auto_fix: off`; if you want the 2.4 planning gates, set
+   `plan.profile: light`.
+
+### Known limitations
+
+- `_dag.yaml` is one file: two machines that both tick can conflict on rebase. The system-amendment file is local and not synced; on
+  another machine an intent without its file is withdrawn and routed again.
+- `bounces.environment` is an absolute count outside the amendment baseline; `node retry --worker` does not reset it.
+- The acceptance outer loop's inner ticks do not route defects; a report from an increment node stops with exit 20 until the next `dag run`.
+- Authoring recovery by system amendment (S3/S15) was exercised on a private Docker Multica, not on a production platform.
+- Whether a command "needs the live environment" is left to the Reviewer; the evidence gate does not require live fields.
+- Evidence locators and `provides[].ref` are checked for format only, not for existence in the pull request.
+- `--wait-decisions` compares the manifest only; a change made only on the platform is noticed at the next `dag run`.
+  `dag decisions` `next_actions` list retry/abandon/release, not `accept-nits`.
+- Amendment stages use the default of 2 for `review.invalid_evidence_restarts`; develop nodes are bounded by `retry.review`.
+- `plan.profile: light` forced by a person also skips the standard checks. A plan that becomes `standard` only by node count keeps
+  acceptance `requirements` optional.
+- Python 3.14 is not covered by CI; one lightweight-reconcile test asserts a call order that differs there.
+
 ## [2.4.1] — 2026-11-06
 
 - Fix: `omac node accept` on a node whose WorkItem still carried a worker blocker (`decision_required`) or a review→worker

@@ -187,8 +187,15 @@ must be acyclic.
 | `acceptance_doc` | Optional structured acceptance context when the instance contract needs it. |
 | `scope_paths` | Optional for running legacy manifests; new plan decomposition must declare exactly one primary code-ownership path. Supporting files remain explainable in the PR/verification. |
 | `evidence_mode` | Optional for running legacy manifests; new plan decomposition must explicitly choose `fixture`, `artifact`, or `live`. |
-| `produces` | Stable artifact IDs uniquely produced by this node, shaped as `{artifact_id}`. One artifact ID has one canonical producer. |
-| `consumes` | Tri-state input policy. Omitted permits transitional legacy inputs only from transitive upstream dependencies; `[]` permits no external input; a non-empty list is a strict `{artifact_id, producer, evidence_mode}` allowlist. Explicit `null` is invalid. New complete DAGs use explicit `[]` or a non-empty list. |
+| `produces` | Stable artifact IDs uniquely produced by this node, shaped as `{artifact_id}`. One artifact ID has one canonical producer. Optional `provides: [{id, ref}]` lists the checkable interface items of the artifact (`ref` is a design anchor); each becomes a producer review obligation `interface:<artifact>:<id>`. |
+| `consumes` | Tri-state input policy. Omitted permits transitional legacy inputs only from transitive upstream dependencies; `[]` permits no external input; a non-empty list is a strict `{artifact_id, producer, evidence_mode}` allowlist. Explicit `null` is invalid. New complete DAGs use explicit `[]` or a non-empty list. An entry may carry `requires: [<provides id>]`, which must be a subset of the producer artifact's `provides`; otherwise lint fails with a YAML snippet to paste. |
+| `registers` | Optional. The `meta.registries` entries this node adds to (a list of ids); each becomes a review obligation `registry:<id>`. Registries are declared in `meta.registries: [{id, ref, guard}]`; the `guard` node must run after every registrant. |
+| `requirement_refs` | Optional. Technical requirement ids this node claims (in-scope `verification: technical` requirements of an acceptance v3 document); only such ids are allowed, and in a new plan every technical requirement must be claimed by some node. Requirements with acceptance actions are not claimed here; they are covered transitively through `acceptance_contributions`. |
+| `defect_refs` | Optional id list, parsed and round-tripped only; used by defect feedback. |
+
+A new plan's profile (`meta.plan_scale: light|standard`, decided by code from size and recorded): light adds no gate;
+standard requires `requires` on every non-empty `consumes` entry, a `ref` on every required `provides` item, and a
+`meta.closeout_node` that is the sink of the whole graph (it depends on every other node).
 
 Each integration gate has `name`, `layer`, `delivery_goal`, and non-empty
 `source_of_truth`, `covers`, `acceptance_refs`, and `commands`. If present,

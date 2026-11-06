@@ -277,3 +277,35 @@ def test_a_report_bound_to_the_null_contract_is_stale_while_the_materialized_one
     assert not writes
     kit.store.update_work_item_metadata(case.item_id, worker_handoff=intent)
     assert case.send(report)["exit_code"] == 20 and case.item.status == WorkItemStatus.BLOCKED
+
+
+# ---- an environment failure is retried once by the same Worker, then handed to a person with the next Worker's command -------
+
+def test_s8_an_environment_failure_goes_back_to_the_same_worker_once_then_stops_with_the_next_workers_command(case):
+    kit = case.kit
+    config = {"roles": {"workers": ["alice", "bob"]}}
+    first_generation = case.item.worker_handoff.generation
+
+    def report_and_end_the_run():
+        case.send(case.report(reason_code="environment-failure", summary="git push to the remote timed out"))
+        kit.runtime.cancel(case.item_id)
+        kit.wait_runs_ended(case.item_id)
+
+    report_and_end_the_run()
+    failures = kit.collect(case.manifest, case.path, config=config)
+
+    retried = case.item
+    assert failures == {} and case.manifest.nodes["a"].status == "in_progress"
+    assert (retried.bounces.environment, retried.bounces.worker, retried.worker) == (1, 0, "alice")
+    assert not retried.decision_required and retried.worker_handoff.generation != first_generation
+    kit.wait_for(lambda: kit.runtime.is_active(case.item_id), what="the retried Worker Run")
+
+    report_and_end_the_run()
+    failures = kit.collect(case.manifest, case.path, config=config)
+
+    stopped = case.item
+    assert failures == {"a": "worker-decision-required"} and case.manifest.nodes["a"].status == "blocked"
+    assert stopped.status == WorkItemStatus.BLOCKED and stopped.bounces.environment == 1
+    assert stopped.decision_required["next_action"] == f"omac node retry {case.path} a --worker bob"
+    assert stopped.decision_required["blocker"]["reason_code"] == "environment-failure"
+    assert not case.manifest.nodes["a"].defect_pending                  # an environment failure is never a defect report

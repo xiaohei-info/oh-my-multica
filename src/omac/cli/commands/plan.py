@@ -189,6 +189,7 @@ def _build_context(cfg: dict, engine, args) -> PlanContext:
             "或设置 roles.workers(取首位作为 planner)"))
 
     members = set(engine.store.list_members(workspace_id))
+    plan = config_mod.resolve_plan(cfg)
     return PlanContext(
         engine=engine,
         workspace_id=workspace_id,
@@ -201,6 +202,10 @@ def _build_context(cfg: dict, engine, args) -> PlanContext:
         members=members,
         confirm=workflow["human_in_loop"] and not args.no_confirm,
         language=resolve_language(cfg),
+        profile=plan["profile"],
+        light_max_nodes=plan["light_max_nodes"],
+        light_max_business_actions=plan["light_max_business_actions"],
+        invalid_evidence_restarts=config_mod.resolve_invalid_evidence_restarts(cfg),
     )
 
 

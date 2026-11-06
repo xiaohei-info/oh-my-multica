@@ -525,7 +525,7 @@ def _outputs(tmp_path, monkeypatch, *, plan_id, manifest=CLEAN_MANIFEST, accepta
     from omac.pipeline.plan import _write_plan_outputs
 
     monkeypatch.chdir(tmp_path)
-    ctx = SimpleNamespace(no_acceptance=False, language="en",
+    ctx = SimpleNamespace(no_acceptance=False, language="en", profile="auto", light_max_nodes=12, light_max_business_actions=20,
                           engine=SimpleNamespace(store=SimpleNamespace(config=SimpleNamespace(engine_type="none"))))
     _write_plan_outputs(ctx, plan_id=plan_id, name="demo", manifest_text=manifest, acceptance_text=acceptance, source_issues=["i-1"],
                         manifest_path=".omac/demo.yaml", acceptance_path=".omac/demo.acceptance.yaml", project_rules_text=None,

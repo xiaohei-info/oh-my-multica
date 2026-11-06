@@ -1,16 +1,19 @@
 """验收文档结构 —— plan 阶段(P3)产出,总控验收(P4)共用同一份 schema。
 
-flows: [{id, name, actions: [{id, kind, step, how, expected}]}]
+flows: [{id, name, actions: [{id, kind, step, how, expected, requirement_ids?}]}]
+requirements: [{id, source, summary, disposition, verification, reason?}]   (omac.acceptance/v3 only; see core.requirements)
 
 plan 阶段把业务流程拆成 flows(每条 flow 一个可验收的端到端路径),
 总控验收按 flow 逐项走查、记录 pass/fail。两边对齐同一个 id,故漏项可被
 左移门机器校验打回(见 core.evidence.validate_acceptance_results)。
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections import defaultdict
 import re
 
 import yaml
+
+from .requirements import load_requirements
 
 
 @dataclass
@@ -20,6 +23,7 @@ class Action:
     step: str
     how: str
     expected: str
+    requirement_ids: tuple = ()
 
 
 @dataclass
@@ -33,6 +37,7 @@ class Flow:
 class AcceptanceDoc:
     schema: str
     flows: list  # list[Flow]
+    requirements: list = field(default_factory=list)  # list[core.requirements.Requirement]; v3 only
 
     @property
     def flow_ids(self) -> list:
@@ -71,6 +76,8 @@ _EMBEDDED_ACTION_ID = re.compile(r"Action ID=`([^`]+)`")
 ACTION_KIND_BUSINESS = "business-action"
 ACTION_KIND_FLOW_STEP = "flow-step"
 _ACTION_KINDS = {ACTION_KIND_BUSINESS, ACTION_KIND_FLOW_STEP}
+SCHEMA_V2, SCHEMA_V3 = "omac.acceptance/v2", "omac.acceptance/v3"
+EXPLICIT_ID_SCHEMAS = frozenset({SCHEMA_V2, SCHEMA_V3})
 
 
 def _embedded_action_ids(raw) -> list[str]:
@@ -127,7 +134,19 @@ def _validate_expected_specificity(flows: list[Flow]) -> None:
     )
 
 
-def _load_action(raw, *, flow_id: str, index: int, require_id: bool) -> Action:
+def _requirement_ids(raw, flow_id: str, index: int, schema: str) -> tuple:
+    ids = raw.get("requirement_ids")
+    if ids is None:
+        return ()
+    if schema != SCHEMA_V3:
+        raise ValueError(f"flow {flow_id} action {index} requirement_ids needs schema {SCHEMA_V3}")
+    if not isinstance(ids, list) or not all(isinstance(value, str) and value.strip() for value in ids):
+        raise ValueError(f"flow {flow_id} action {index} requirement_ids must be a list of requirement ids")
+    return tuple(dict.fromkeys(value.strip() for value in ids))
+
+
+def _load_action(raw, *, flow_id: str, index: int, schema: str) -> Action:
+    require_id = schema in EXPLICIT_ID_SCHEMAS
     if not isinstance(raw, dict):
         raise ValueError(f"action must be an object, got {type(raw).__name__}")
     if require_id and not (
@@ -164,6 +183,7 @@ def _load_action(raw, *, flow_id: str, index: int, require_id: bool) -> Action:
         step=step,
         how=how,
         expected=expected,
+        requirement_ids=_requirement_ids(raw, flow_id, index, schema),
     )
 
 
@@ -172,7 +192,7 @@ def load_acceptance_doc(raw) -> AcceptanceDoc:
     if not isinstance(raw, dict):
         raise ValueError(f"acceptance doc must be a mapping, got {type(raw).__name__}")
     schema = raw.get("schema", "omac.acceptance/v1")
-    if schema not in {"omac.acceptance/v1", "omac.acceptance/v2"}:
+    if schema not in {"omac.acceptance/v1", *EXPLICIT_ID_SCHEMAS}:
         raise ValueError(f"unsupported acceptance schema: {schema}")
     flows_raw = raw.get("flows")
     if not isinstance(flows_raw, list) or not flows_raw:
@@ -202,7 +222,7 @@ def load_acceptance_doc(raw) -> AcceptanceDoc:
                 action,
                 flow_id=flow_id,
                 index=index,
-                require_id=schema == "omac.acceptance/v2",
+                schema=schema,
             )
             for index, action in enumerate(actions_raw, start=1)
         ]
@@ -215,7 +235,10 @@ def load_acceptance_doc(raw) -> AcceptanceDoc:
             actions=actions,
         ))
     _validate_expected_specificity(flows)
-    return AcceptanceDoc(schema=schema, flows=flows)
+    if "requirements" in raw and schema != SCHEMA_V3:
+        raise ValueError(f"acceptance requirements need schema {SCHEMA_V3}")
+    requirements = load_requirements(raw["requirements"]) if "requirements" in raw else []
+    return AcceptanceDoc(schema=schema, flows=flows, requirements=requirements)
 
 
 def load_acceptance_doc_file(path: str) -> AcceptanceDoc:

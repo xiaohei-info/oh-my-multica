@@ -107,8 +107,22 @@ def _validate_set_value(key: str, value):
                 f"{key} 不能为负数(非法值 {value});需 ≥ 0"))
         return
 
+    if key == "dispatch.hold_live":
+        config_mod.validate_hold_live(value)
+        return
+
     if key == "review.node_nits":
         config_mod.validate_node_nits(value)
+        return
+
+    if key == "review.invalid_evidence_restarts":
+        config_mod.resolve_invalid_evidence_restarts({"review": {"invalid_evidence_restarts": value}})
+        return
+
+    if key.startswith("plan.") and key.split(".", 1)[1] in config_mod.DEFAULT_PLAN:
+        config_mod.resolve_plan({"plan": {key.split(".", 1)[1]: value}})
+    if key.startswith("defects.") and key.split(".", 1)[1] in config_mod.DEFAULT_DEFECTS:
+        config_mod.resolve_defects({"defects": {key.split(".", 1)[1]: value}}, 0)
         return
 
     if key.startswith("reconcile."):

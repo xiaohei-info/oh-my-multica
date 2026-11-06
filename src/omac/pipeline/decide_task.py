@@ -57,6 +57,7 @@ class Fact(Enum):
     GATE_CLEAR = "gate-clear"
     GATE_RETRY = "gate-retry"
     GATE_EXHAUSTED = "gate-exhausted"
+    GATE_NON_REDUCING = "gate-non-reducing"          # the error count did not fall from one gate round to the next
     FINISH_PASS = "finish-pass"
     FINISH_CONFIRMED = "finish-confirmed"
     STALE_CONFIRMATION = "stale-confirmation"
@@ -69,6 +70,7 @@ class Fact(Enum):
     PREPARE = "prepare"
     VERDICT_READY = "verdict-ready"
     EVIDENCE_INVALID = "evidence-invalid"
+    EVIDENCE_INVALID_EXHAUSTED = "evidence-invalid-exhausted"   # the same subject kept drawing invalid review evidence
     NEEDS_DISPATCH = "needs-dispatch"
     REVIEWED = "reviewed"
     PASS = "pass"
@@ -211,6 +213,7 @@ TRANSITIONS: dict[tuple[Stage, Fact], tuple[Stage, Builder]] = {
     (S.MACHINE_GATE, F.GATE_CLEAR): _row(S.RESUME_REVIEW),
     (S.MACHINE_GATE, F.GATE_RETRY): _row(S.PRODUCE_HINTED, _rework_to_authoring),
     (S.MACHINE_GATE, F.GATE_EXHAUSTED): _row(S.BLOCK_BUDGET, _persist_feedback),
+    (S.MACHINE_GATE, F.GATE_NON_REDUCING): _row(S.BLOCK_BUDGET, _persist_feedback),
     (S.PRODUCE_HINTED, F.PRODUCED): _row(S.MACHINE_GATE),
     (S.RESUME_REVIEW, F.FINISH_PASS): _row(S.FINISH),
     (S.RESUME_REVIEW, F.FINISH_CONFIRMED): _row(S.FINISH),
@@ -224,6 +227,7 @@ TRANSITIONS: dict[tuple[Stage, Fact], tuple[Stage, Builder]] = {
     (S.REVIEW_ROUND, F.PREPARE): _row(S.REVIEW_CHECK, _prepare_cycle),
     (S.REVIEW_CHECK, F.VERDICT_READY): _row(S.REVIEW_VERDICT),
     (S.REVIEW_CHECK, F.EVIDENCE_INVALID): _row(S.REVIEW_CHECK, _restart_invalid_review),
+    (S.REVIEW_CHECK, F.EVIDENCE_INVALID_EXHAUSTED): _row(S.STOPPED, _stop_with_decision),
     (S.REVIEW_CHECK, F.NEEDS_DISPATCH): _row(S.REVIEW_DISPATCH, _review_in_review),
     (S.REVIEW_DISPATCH, F.REVIEWED): _row(S.REVIEW_CHECK),
     (S.REVIEW_VERDICT, F.PASS): _row(S.FINISH),

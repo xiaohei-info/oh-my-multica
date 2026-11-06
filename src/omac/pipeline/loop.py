@@ -9,6 +9,7 @@ docs/design/README.md §7.3:sync → decide → dispatch,状态全在 manifest +
 from __future__ import annotations
 
 import copy
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -20,8 +21,9 @@ from typing import Any, Callable, Dict, List, Set, Tuple
 import yaml
 
 from ..core import graph, logsetup
+from ..core.defects import UPSTREAM_DEFECT, defect_errors, review_origin_defects
 from ..core.amendment import ensure_amendment_apply_complete
-from ..core.config import DEFAULT_RETRY, resolve_no_submit_runs, resolve_node_nits
+from ..core.config import DEFAULT_RETRY, resolve_defects, resolve_hold_live, resolve_no_submit_runs, resolve_node_nits
 from ..core.contract_boundaries import (
     build_contract_boundary_decision,
     contract_boundary_conflicts,
@@ -36,7 +38,7 @@ from ..core.retry_budget import (
 from ..core.stage_recovery import stage_recovery_subject
 from ..core.gitsync import commit_manifest
 from ..core.manifest import (
-    Manifest, confirmed_merge_is_closed, save_manifest,
+    Manifest, confirmed_merge_is_closed, reload_if_definition_changed, save_manifest,
     set_node,
 )
 from ..pipeline.delivery import (
@@ -60,9 +62,13 @@ from .observation_conflict import conflict_streaks
 from ..errors import AuthError, ObservationConflict, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from .decide_review import VerdictObservation, VerdictPath, decide_verdict_path
+from .decide_hold import AUTO_HELD_KEY, plan_auto_hold_live
+from . import worker_blocker
+from .followups import review_obligations_for
 from .decide_worker import (
     control_matches_handoff_candidate, handoff_has_new_delivery,
-    AfterCi, AfterCiObservation, NoSubmit, NoSubmitObservation, decide_after_ci, decide_worker_no_submit,
+    AfterCi, AfterCiObservation, ENVIRONMENT_FAILURE, EnvironmentFailure, EnvironmentFailureObservation, NoSubmit,
+    NoSubmitObservation, decide_after_ci, decide_environment_failure, decide_worker_no_submit, next_worker_retry_command,
 )
 from .decide_merge import is_recovering_merge_handoff, merge_bounce_attempt, merge_request_state_is_valid, plan_finish_bounce
 from .convergence import (
@@ -104,14 +110,18 @@ from .decide_runs import (
     observe_direct_run_attempt, parse_baseline_cutoff, parse_platform_time, run_created_within_baseline,
 )
 from .decide_effects import (
+    Plan,
+    SetNode,
     AcknowledgeAssignment,
     Assign,
     ClearAssignment,
     CreateWorkItem,
     DispatchReviewer,
     NormalizeConfirmedMerge,
+    Plan,
     PrepareReviewCycle,
     ResetReview,
+    SetNode,
     SetNodeContract,
     UpdateMetadata,
     UpdateStatus,
@@ -1174,7 +1184,8 @@ def _prepare_new_review_subject(store, manifest, key, item_id, current, subject_
     if guard():
         return None
     apply([
-        UpdateMetadata(item_id, {'review_obligations': build_review_obligations(current)}),
+        UpdateMetadata(item_id, {'review_obligations': review_obligations_for(
+            store, manifest, key, build_review_obligations(current))}),
     ], Ports(store=store))
     if guard():
         return None
@@ -2636,6 +2647,7 @@ def reconcile_with_observations(
         save_manifest(candidate, manifest_path)
         manifest.meta = candidate.meta
         manifest.nodes = candidate.nodes
+        manifest._disk = candidate._disk
     return ReconcileResult(
         changed=changed,
         observations={
@@ -2867,14 +2879,73 @@ class _Node:
     decision_class: str | None = None
 
 
+def _blocker_reason(decision: Any) -> str | None:
+    blocker = decision.get("blocker") if isinstance(decision, dict) else None
+    return blocker.get("reason_code") if isinstance(blocker, dict) else None
+
+
+def _environment_blocker(decision: Any) -> bool:
+    return _blocker_reason(decision) == ENVIRONMENT_FAILURE
+
+
+def _retry_environment_failure(c: _Collect, n: _Node) -> bool:
+    """An environment-failure report within ``retry.environment`` goes back to the same Worker once; True when it did.
+
+    The count is written before the new Worker generation: a crash in between leaves the budget spent, never a second
+    replay. It is a fresh generation of the same handoff without spending ``retry.worker`` (as for a transient Run failure).
+    The reporting Run may not have ended yet; then nothing is counted and the next tick looks again.
+    """
+    consumed = n.item.bounces.environment
+    limit = c.limits["environment"]
+    if decide_environment_failure(EnvironmentFailureObservation(consumed=consumed, limit=limit)) \
+            is not EnvironmentFailure.RETRY:
+        return False
+    if any(run.kind == "direct" and run.active for run in c.runtime.list_runs(n.item.id)):
+        return True
+    apply([
+        UpdateMetadata(n.item.id, {"environment_bounce": consumed + 1, "decision_required": {}}),
+        UpdateStatus(n.item.id, WorkItemStatus.IN_PROGRESS),
+    ], Ports(store=c.store))
+    log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=n.key, id=n.item.id, gate="environment",
+             round=consumed + 1, max=limit)
+    n.handoff = _retry_worker_handoff(
+        c.store, c.runtime, c.code_host, c.manifest, n.key, n.item, consume_business_bounce=False)
+    stopped = n.handoff.state == "needs-decision"
+    status = "blocked" if stopped else "in_progress"
+    _apply_plan(Ports(store=c.store), c.manifest, Plan((SetNode(n.key, {"status": status}),), status))
+    if stopped:
+        c.failures[n.key] = "worker-decision-required"
+    return True
+
+
+def _environment_escalation(c: _Collect, n: _Node) -> dict:
+    """The standing decision, with the retry command that hands the node to the next configured Worker."""
+    roles = (c.config or {}).get("roles")
+    workers = roles.get("workers") if isinstance(roles, dict) else None
+    workers = [workers] if isinstance(workers, str) else list(workers or [])
+    command = next_worker_retry_command(c.manifest_path, n.key, n.node.worker, workers)
+    return {**n.item.decision_required, "next_action": command}
+
+
 def _collect_worker_blocker(c: _Collect, n: _Node) -> bool:
-    """A structured worker blocker is an operator decision, not a no-submit failure."""
+    """A structured worker blocker is an operator decision, not a no-submit failure.
+
+    The one exception is an environment failure with budget left: it returns to the same Worker (no decision needed).
+    """
     key, node = n.key, n.node
-    # Structured worker blockers are operator decisions, not no-submit failures.
-    if n.item.phase == TaskPhase.AUTHORING and n.item.decision_required:
-        _apply_plan(Ports(store=c.store), c.manifest, plan_block(
-            key, n.item.id, write_status=n.item.status != WorkItemStatus.BLOCKED))
-        c.failures[key] = str(n.item.decision_required.get("reason_code", "worker-decision-required"))
+    decision = n.item.decision_required
+    if n.item.phase == TaskPhase.AUTHORING and decision:
+        environment = _environment_blocker(decision)
+        if environment and _retry_environment_failure(c, n):
+            return True
+        escalation = _environment_escalation(c, n) if environment else None
+        plan = plan_block(
+            key, n.item.id, decision=escalation, write_decision=escalation is not None and escalation != decision,
+            write_status=n.item.status != WorkItemStatus.BLOCKED)
+        if _blocker_reason(decision) == UPSTREAM_DEFECT:   # environment-failure never gets here: only this reason is routed
+            plan = Plan(plan.effects + (SetNode(key, {"defect_pending": True}),), plan.outcome)   # `dag run` routes it next
+        _apply_plan(Ports(store=c.store), c.manifest, plan)
+        c.failures[key] = str(decision.get("reason_code", "worker-decision-required"))
         return True
     return False
 
@@ -3559,6 +3630,35 @@ def _review_consume_baseline(c: _Collect, n: _Node) -> bool:
     return False
 
 
+def _route_review_to_defect(c: _Collect, n: _Node) -> bool:
+    """A reject whose every open blocker is owned by finished upstream work is a defect of that work, not rework.
+
+    The reviewer's ``owner`` fields are the evidence; the node stops with a defect report and costs no review bounce.
+    """
+    if resolve_defects(c.config or {}, len(c.manifest.nodes))["auto_fix"] == "off":
+        return False
+    report = n.item.review_report
+    blockers = report.get("blockers") if isinstance(report, dict) else None
+    defects = review_origin_defects(blockers, n.key, c.manifest) if isinstance(blockers, list) and blockers else None
+    if not defects or defect_errors(defects, repro_required=False):
+        return False
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA, "reason_code": UPSTREAM_DEFECT, "kind": TaskKind.DEVELOP.value,
+        "phase": TaskPhase.REVIEW.value, "gate": "review", "resume_issue_id": n.item.id, "node_id": n.key,
+        "blocker": {"schema": worker_blocker.SCHEMA, "reason_code": UPSTREAM_DEFECT, "defects": defects},
+        "next_action": f"omac node retry {c.manifest_path} {n.key}"}
+    if len(json.dumps(decision, ensure_ascii=False).encode("utf-8")) > worker_blocker.MAX_REPORT_BYTES:     # would not fit the 8 KiB metadata limit once stopped
+        return False
+    plan = plan_block(n.key, n.node.work_item_id, decision=decision, phase=TaskPhase.REVIEW, mark=True,
+                      persist_marker=_recovery_path(c.manifest) is not None)
+    _apply_plan(Ports(store=c.store), c.manifest, Plan(plan.effects + (SetNode(n.key, {"defect_pending": True}),), plan.outcome))
+    c.failures[n.key] = ui(
+        "Every open review blocker belongs to finished upstream work; reported as an upstream defect.",
+        "评审的全部未决 blocker 都属于已完成的上游节点;已作为上游缺陷上报。")
+    log.info(logsetup.EVT_NEEDS_DECISION, kind=_DAG_KIND, node=n.key, id=n.node.work_item_id, gate="review-upstream-defect")
+    return True
+
+
 def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
     """Apply a submitted verdict: merge on pass, bounded rework on reject or invalid evidence."""
     key, node = n.key, n.node
@@ -3593,6 +3693,8 @@ def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
                 id=node.work_item_id,
                 gate="review-boundary",
             )
+            return None
+        if _route_review_to_defect(c, n):
             return None
         resolution = resolve_convergence(n.item, node_id=key)
         resolution.raise_if_invalid(PlatformError, n.item.id)
@@ -4273,6 +4375,18 @@ def _with_fresh_failures(store, manifest, observations, new_failures):
     return {**observations, **{key: fresh[item_id] for key, item_id in ids.items() if item_id in fresh}}
 
 
+def _auto_hold_live(manifest: Manifest, manifest_path: str, ready: List[str]) -> List[str]:
+    """``dispatch.hold_live``: hold the ready live nodes before they dispatch; returns the ready nodes that remain."""
+    plan = plan_auto_hold_live(ready, manifest.nodes, manifest.dag_state.get(AUTO_HELD_KEY) or ())
+    if plan is None:
+        return ready
+    held = [effect.node_key for effect in plan.effects if isinstance(effect, SetNode)]
+    apply(plan, Ports(), ManifestState(manifest, manifest_path))
+    for key in held:
+        log.info(logsetup.EVT_AUTO_HOLD, kind=_DAG_KIND, node=key, reason=manifest.nodes[key].hold_reason)
+    return [key for key in ready if key not in held]
+
+
 def tick(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -4294,6 +4408,9 @@ def tick(
     与「自动重试」不同 —— tick 不会把已 blocked 节点重置为 todo
     (必须经 `omac node retry` 显式决策);retry_limits 是节点内的有界往返。
     """
+    # 定义文件被外部改动(如 `node retry --worker`)时先重载,否则本轮的保存会把旧定义写回去。
+    if reload_if_definition_changed(manifest, manifest_path):
+        log.info(logsetup.EVT_DEFINITION_RELOADED, kind=_DAG_KIND, path=manifest_path)
     ensure_amendment_apply_complete(manifest, manifest_path)
     manifest._recovery_manifest_path = manifest_path
 
@@ -4336,7 +4453,9 @@ def tick(
 
     # 4. DECIDE: 计算就绪节点
     snapshot = _build_snapshot(manifest)
-    ready = graph.ready_nodes(snapshot)
+    ready = graph.prioritize_ready(graph.ready_nodes(snapshot), manifest.nodes)
+    if resolve_hold_live(config or {}):
+        ready = _auto_hold_live(manifest, manifest_path, ready)
 
     # 5. DISPATCH: 派发就绪节点(受 max_parallel 约束)
     dispatched = _dispatch(store, runtime, code_host, manifest, manifest_path, ready, max_parallel)

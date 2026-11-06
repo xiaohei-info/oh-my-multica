@@ -29,6 +29,8 @@ structured stdout report is the current recovery fact.
      in-progress node is refused (let it finish or `abandon` it), a `blocked`/`failed` node must be
      `retry`-ed first. Unlike `abandon`, a held node does not satisfy its downstream, so a closing
      node behind it is not released early.
+   - `omac node retry` also takes `--note <text>` (at most 2000 characters): it appears in the issue body as the
+     operator note for this retry, and a retry without `--note` clears the previous one.
    - `omac node release <manifest> <key>`: lift the hold; the node is dispatched like any ready node.
      Both commands take the manifest write lock, so stop a running `omac dag run` first; the hold is
      stored in the node's state file and survives the Loop's manifest sync and restarts.
@@ -37,6 +39,54 @@ structured stdout report is the current recovery fact.
      acceptance-mapping, or topology defects. Do not overwrite the live manifest.
 4. Re-run `omac dag run <manifest>`. Completed nodes are reused; the remainder
    continues from current state.
+
+### Waiting for decisions, the decision list and follow-ups
+
+- `omac dag decisions <manifest> [--output json]` (read-only) lists what the DAG waits for: the source `blocked`/`failed`
+  nodes and the held nodes, each with a stable `decision_key` (`node:status:work_item_id`) and copyable commands.
+  Read the evidence with `omac node show`.
+- `omac dag run <manifest> --wait-decisions [--max-minutes N]`: when nothing is running and a decision is pending,
+  release the write lock and wait (so `omac node retry|release` and other writers do not exit 5). Each new decision
+  emits one `decision_pending` event on stderr, deduplicated by `decision_key` (a decision that comes back after it was
+  resolved is announced again). The run resumes by itself once the set of decisions changes; it exits 0 on
+  convergence and 10 when `--max-minutes` ends before that. Without the flag nothing changes: exit 20.
+- `omac dag followups <manifest> [--output json]` (read-only) gathers the `pass-with-nits` nits of the merged nodes
+  (`<node>#<n>`). The closeout node's (`meta.closeout_node`) review requires each to be disposed of as
+  `fix`, `defer` or `drop`.
+- `dispatch.hold_live: true`: a ready node whose `contract.evidence_mode` is `live` is held by the code (once per node);
+  the tick reports `held` with the `omac node release` command. Prepare the live environment, release it, and it
+  dispatches like any other node.
+
+### Upstream defect feedback
+
+After a Worker (or a Reviewer whose every blocker names a finished upstream node as `owner`) reports `upstream-defect`, the
+locked `omac dag run|tick` routes it between two ticks. With `defects.auto_fix: design-gap` (the default; `off` disables it)
+a `design-gap` defect inserts a `fix.*` node, the reporter's `blocked_by` gains it, and the reporter becomes ready once the
+fix is merged. That is a system amendment built by code: no Agent reviews it and no person confirms it. Budgets:
+`defects.per_reporter` (default 2) and `defects.max_auto_fixes` (default `auto` = max(5, ⌈0.15 × nodes⌉)).
+
+When it cannot be handled automatically `dag run` stops with exit 20 and `next_actions` carry copyable release commands.
+Stop reasons:
+
+| Reason | Meaning | What to do |
+|---|---|---|
+| `defect-needs-owner` | A trade-off or contract gap, or `defects.auto_fix` is `off` | `omac dag amend propose <manifest> --report-file <report.md> --docs <design.md> --blocked-node <node>`, or `node abandon|accept|retry` |
+| `defect-unroutable` | The report cannot be tied to a finished upstream node or anchor | Same; first check `suspected_node` and `anchors` in the report |
+| `defect-fix-generation-cap` | A fix node itself reported a defect; a fix is never fixed automatically | Same |
+| `defect-recurred` | The same defect (suspected node + anchors) came back after its fix was merged | `dag amend propose` or `node retry` first, or `abandon|accept` |
+| `defect-budget-exhausted` | The reporter's or the whole DAG's automatic-fix budget is used up | `omac defect grant <manifest> --reporter <node> --count 1`, or as above |
+
+- `omac defect list <manifest> [--output json]` is read-only: the defect ledger (fingerprint states
+  `queued → applying → fixing → fixed → recurred | needs-owner`), budget use, reports waiting for a route and
+  `pending_human_amendment`.
+- `omac defect report <manifest> --before <node> --report-file <defects.yaml>` queues a person's report (at most 5 queued),
+  shaped like a Worker's `defects`; `repro` may be omitted.
+- `omac defect grant <manifest> --reporter <node> [--count N]` adds automatic fixes for a reporter and routes its stopped report again.
+- While a human amendment is pending, a defect only queues (`queued`) and the DAG is not changed; `dag amend accept` or discard that proposal first.
+- The incremental decomposition for a failed final-acceptance flow also goes through a system amendment; a flow that fails
+  again after its increment was merged stops the loop and lists the failed items.
+- Known limits: the inner ticks of the acceptance outer loop do not route defects (a report from an increment node stops with
+  exit 20 and is routed by the next `omac dag run`); the system-amendment file exists on this machine only.
 
 ### `pass-with-nits` acceptance
 
@@ -175,6 +225,8 @@ runs exactly as printed, and the stop reason alone decides which command release
 | `review-budget-exhausted` | rejects used up the review budget | `omac plan continue-review --dag-key <stage-key>` |
 | `review-convergence-*` | the same root-cause blockers keep not converging | `omac plan continue-review --dag-key <stage-key>` (authorize one more round) or redraw the task boundary and run `plan create` again |
 | `guard-budget-exhausted` | the machine gate (lint/preflight) ran out of revisions | `omac plan resume --plan-id <id>` (an explicit new machine-gate budget) |
+| `guard-non-reducing` | two machine-gate rounds in a row did not lower the error count, so more revisions would not converge; the report lists every error | fix the listed errors (or adjust `plan.profile`/the inputs), then `omac plan resume --plan-id <id>` |
+| `review-evidence-invalid` | the Reviewer's evidence on one review subject stayed invalid beyond `review.invalid_evidence_restarts` (default 2) | `omac plan resume --plan-id <id>` (clears the stop and reviews again) |
 | `completed-without-submit`, `unsafe-authoring-resume` | the author's Run ended without a usable delivery | `omac plan resume --plan-id <id> --restart-active` |
 | `reviewer-completed-without-verdict` | the Reviewer's Run ended without a verdict | `omac plan resume --plan-id <id>` |
 
@@ -623,12 +675,18 @@ contract change to compensate for lost budget records.
 
 For an active develop/authoring execution, re-read
 `omac work show <issue-id> --output json`, copy `control.blocker_report_template`,
-and use its `report_blocker` command to submit an `omac.worker-blocker/v2` report.
+and use its `report_blocker` command to submit an `omac.worker-blocker/v3` report (v2 is still accepted; the reason
+codes `upstream-defect` and `environment-failure` are described in the worker guide).
 This is for a contract stop condition or an owner decision, not ordinary Reviewer
 reject rework. Completed old Runs cannot be reported retroactively.
 
 Use `quality-gate-failed` with at least one actual command, nonzero integer
-exit_code, retained evidence ref and observation. Use `owner-decision-required`
+exit_code, retained evidence ref and observation. Use `environment-failure` when
+the environment, not the task, stopped you (a push, network or download timeout)
+with the same evidence rule: OMAC retries the same Worker automatically within
+`retry.environment` (default 1) without spending `retry.worker`, then stops with
+exit 20 and a copyable `omac node retry <manifest> <key> --worker <next worker in
+roles.workers>` in `next_actions`. Use `owner-decision-required`
 with evidence refs/observations and a specific decision_needed. contract_ref must
 name an existing top-level context.contract field; explain its relevance in
 summary. Do not run later verification forbidden by the stop condition, invent a
@@ -652,7 +710,7 @@ Block, submit and Worker redispatch share a host-local lock and re-read control
 before writes. This is not cross-host CAS: retain the single-Runner control
 boundary and do not concurrently replace a node's generation from multiple hosts.
 
-Reports are limited to 2048 UTF-8 JSON bytes and 1–4 evidence entries; keep full logs at the referenced location.
+Reports are limited to 6144 UTF-8 JSON bytes and 1–4 evidence entries; keep full logs at the referenced location.
 
 Before creating a Worker handoff, OMAC materializes a deferred Store contract
 before hashing it. An unloaded `None` is not an authoritative null contract.

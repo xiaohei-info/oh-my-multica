@@ -124,6 +124,18 @@ def test_build_review_obligations_is_stable_and_contract_aware():
     ]
 
 
+def test_a_live_node_gate_is_judged_from_the_workers_live_evidence_not_rerun_on_the_reviewer_host():
+    gates = [{"name": "e2e"}]
+    live = {entry["obligation_id"]: entry["requirement"] for entry in build_review_obligations(
+        _item(contract={"evidence_mode": "live", "integration_gates": gates}))}
+    other = {entry["obligation_id"]: entry["requirement"] for entry in build_review_obligations(
+        _item(contract={"evidence_mode": "fixture", "integration_gates": gates}))}
+
+    assert "do not rerun" in live["integration:e2e"] and "live evidence the Worker submitted" in live["integration:e2e"]
+    assert other["integration:e2e"] == "Independently verify integration gate e2e"
+    assert live["dimension:evidence"] == other["dimension:evidence"]          # only the integration gate changes
+
+
 @pytest.mark.parametrize("deliverable,unchanged", [("same text", True), ("revised text", False)])
 def test_a_redone_stage_obliges_the_reviewer_to_check_source_coverage_and_marks_an_unchanged_delivery(deliverable, unchanged):
     import hashlib

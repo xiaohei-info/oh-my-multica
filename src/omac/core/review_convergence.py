@@ -12,13 +12,19 @@ import json
 from types import MappingProxyType
 from typing import Any, Mapping
 
+import yaml
+
+from .acceptance import load_acceptance_doc
 from .contract_boundaries import review_boundary_report_errors
 
 from .acceptance_responsibility import (
     contributions,
     full_claims,
     responsibility_matrix,
+    trace_refs,
 )
+from .followups import TRIAGE_CATEGORY, triage_gaps
+from .interfaces import has_evidence_locator, interface_matrix, provided_items, registrations
 from .manifest import loads_manifest
 from .taskmeta import (
     DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase, current_review_ledger,
@@ -527,6 +533,14 @@ def validate_review_ledger(
     return ledger
 
 
+def _integration_requirement(gate_name: str, live: bool) -> str:
+    """A live node's gate is judged from the live evidence the Worker submitted: the reviewer host rarely has that environment."""
+    if live:
+        return (f"Verify integration gate {gate_name} from the live evidence the Worker submitted (commands, exit codes, "
+                "artifacts) and the PR diff; this node's evidence_mode is live, so do not rerun commands that need the live environment")
+    return f"Independently verify integration gate {gate_name}"
+
+
 def _contract_value(contract: Any, name: str, default):
     if isinstance(contract, dict):
         return contract.get(name, default)
@@ -853,6 +867,75 @@ def source_change_obligations(item: Any) -> list[dict]:
     return found
 
 
+# Obligations whose passing evidence must say where the proof is (a repository path or a test name).
+_LOCATOR_CATEGORIES = frozenset({"acceptance-contribution", "interface", "registry", "defect"})
+
+
+def _interface_chain_obligations(contract: Any) -> list[dict]:
+    """What this node provides, which registries it adds to, and one aggregate for the acceptance refs it only traces."""
+    obligations = [{
+        "obligation_id": f"interface:{artifact_id}:{provided_id}",
+        "category": "interface",
+        "requirement": (
+            f"Verify the delivery provides {provided_id} of artifact {artifact_id} exactly as the contract declares, "
+            "for the consumers that require it; cite where (file path or test)"),
+        "subject": {"artifact_id": artifact_id, "id": provided_id},
+    } for artifact_id, provided_id in provided_items(contract)]
+    obligations.extend({
+        "obligation_id": f"registry:{registry_id}",
+        "category": "registry",
+        "requirement": f"Verify this node adds its entry to registry {registry_id}; cite where (file path or test)",
+        "subject": registry_id,
+    } for registry_id in registrations(contract))
+    refs = sorted({ref for ref in trace_refs(contract) if isinstance(ref, str) and ref.strip()})
+    if refs:
+        obligations.append({
+            "obligation_id": "trace:refs",
+            "category": "trace",
+            "requirement": (
+                "These acceptance flows are only traced by this node. Verify none of them contains business behavior "
+                "this node is responsible for but did not declare as a contribution"),
+            "subject": refs,
+        })
+    return obligations
+
+
+def _plan_stage_obligations(kind: Any, deliverable: Any) -> list[dict]:
+    """Obligations of the plan stages that read a whole document at once: the interface matrix and the requirement list."""
+    if not isinstance(deliverable, str):
+        return []
+    if kind == TaskKind.DECOMPOSE.value:
+        try:
+            matrix = interface_matrix(loads_manifest(deliverable))
+        except (TypeError, ValueError):
+            return []
+        return [{
+            "obligation_id": "interface:matrix",
+            "category": "interface-matrix",
+            "requirement": (
+                "Review the compact interface matrix in one pass, as each consumer: does what its producer provides "
+                "carry everything the consumer's objective needs, and is anything the consumer needs missing from "
+                "`provides`/`requires`? Disposition every row"),
+            "interface_matrix": matrix,
+        }] if matrix else []
+    if kind == TaskKind.ACCEPTANCE.value:
+        try:
+            requirements = load_acceptance_doc(yaml.safe_load(deliverable)).requirements
+        except (TypeError, ValueError, yaml.YAMLError):
+            return []
+        return [{
+            "obligation_id": "requirements:extraction",
+            "category": "requirements",
+            "requirement": (
+                "Verify the requirement list is a complete extraction of the design: every requirement the design "
+                "states appears with a disposition (nothing silently dropped, nothing invented), every non-in-scope "
+                "disposition has a sound reason, and each source anchor points at the text it claims"),
+            "requirements": [{"id": r.id, "source": r.source, "disposition": r.disposition,
+                              "verification": r.verification} for r in requirements],
+        }] if requirements else []
+    return []
+
+
 def build_review_obligations(
     item: Any,
     *,
@@ -897,6 +980,8 @@ def build_review_obligations(
             "subject": {"flow_id": flow_id, "action_id": action_id},
         })
     gates = _contract_value(contract, "integration_gates", [])
+    mode = _contract_value(contract, "evidence_mode", None)
+    live = getattr(mode, "value", mode) == "live"
     gate_names = sorted({
         gate.get("name") for gate in gates
         if isinstance(gate, dict) and isinstance(gate.get("name"), str)
@@ -906,11 +991,13 @@ def build_review_obligations(
         obligations.append({
             "obligation_id": f"integration:{gate_name}",
             "category": "integration",
-            "requirement": f"Independently verify integration gate {gate_name}",
+            "requirement": _integration_requirement(gate_name, live),
             "subject": gate_name,
         })
+    obligations.extend(_interface_chain_obligations(contract))
     kind = getattr(getattr(item, "kind", None), "value", getattr(item, "kind", None))
     deliverable = getattr(item, "deliverable", None)
+    obligations.extend(_plan_stage_obligations(kind, deliverable))
     if kind == TaskKind.DECOMPOSE.value and isinstance(deliverable, str):
         try:
             matrix = responsibility_matrix(
@@ -1039,6 +1126,9 @@ def _validate_obligation_results(item: Any, report: dict, errors: list[str]):
     results = _results_by_id(
         report.get("obligation_results"), "obligation_id",
         errors=errors, prefix="review_report.obligation_results")
+    locator_ids = {
+        obligation.get("obligation_id") for obligation in obligations
+        if isinstance(obligation, dict) and obligation.get("category") in _LOCATOR_CATEGORIES}
     for obligation_id in sorted(expected):
         if obligation_id not in results:
             errors.append(f"review_report missing obligation result: {obligation_id}")
@@ -1050,9 +1140,30 @@ def _validate_obligation_results(item: Any, report: dict, errors: list[str]):
         if not isinstance(result.get("evidence"), str) or not result["evidence"].strip():
             errors.append(
                 f"review_report obligation evidence is required: {obligation_id}")
+        elif result.get("status") == "pass" and obligation_id in locator_ids and not has_evidence_locator(result["evidence"]):
+            errors.append(
+                f"review_report obligation evidence must cite a repository path with a file extension or a test name: "
+                f"{obligation_id} (e.g. `src/api/packs.py:build_view` or `test_pack_views`)")
+    for obligation in obligations:
+        if isinstance(obligation, dict) and obligation.get("category") == TRIAGE_CATEGORY:
+            _validate_triage(obligation, results.get(obligation.get("obligation_id")), errors)
     for obligation_id in sorted(set(results) - expected):
         errors.append(f"review_report references unknown obligation: {obligation_id}")
     return expected, results
+
+
+def _validate_triage(obligation: dict, result: Any, errors: list[str]) -> None:
+    """A passing closeout triage names every follow-up with a disposition."""
+    evidence = result.get("evidence") if isinstance(result, dict) else None
+    subject = obligation.get("subject")
+    if not (isinstance(result, dict) and result.get("status") == "pass" and isinstance(evidence, str)
+            and isinstance(subject, list)):
+        return
+    gaps = triage_gaps(subject, evidence)
+    if gaps:
+        errors.append(
+            f"review_report obligation {obligation.get('obligation_id')} does not dispose of: {', '.join(gaps)}; "
+            "name each follow-up id with fix, defer or drop on its own line")
 
 
 def _open_blockers_for_subject(item: Any, ledger: Any) -> dict:

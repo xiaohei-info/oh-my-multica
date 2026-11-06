@@ -75,3 +75,23 @@ def test_only_a_todo_node_counts_as_held():
     issues["a"]["held"] = issues["b"]["held"] = True
 
     assert held_nodes(issues) == []
+
+
+def test_ready_nodes_are_dispatched_full_flow_owner_first_then_by_transitive_downstream_then_manifest_order():
+    from omac.core.graph import prioritize_ready
+
+    def node(blocked_by=(), claims=()):
+        return SimpleNamespace(blocked_by=list(blocked_by), contract=SimpleNamespace(acceptance_claims=list(claims)))
+
+    nodes = {
+        "plain-first": node(),
+        "owner": node(claims=["FLOW-1"]),
+        "wide": node(),                       # two nodes wait on it, one of them through another
+        "wide-child": node(["wide"]),
+        "wide-grandchild": node(["wide-child"]),
+        "plain-last": node(),
+    }
+
+    ready = prioritize_ready(["plain-first", "owner", "wide", "plain-last"], nodes)
+
+    assert ready == ["owner", "wide", "plain-first", "plain-last"]

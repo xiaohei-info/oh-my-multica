@@ -42,6 +42,10 @@
 - 若 `work show.context.responsibility` 存在，必须按 `evidence_mode`、`consumes`、
   `produces` 判断当前节点的证据和制品边界。fixture 节点以完整可执行 fixture 证明，
   不能被要求等待未声明的 live 环境或下游产物。
+- `evidence_mode: live` 的节点：reviewer 主机通常没有 live 环境，不得因“无法复跑 live 命令”而 reject，
+  也不得把复跑 live 命令当作义务。改为审 PR diff，以及 Worker 在 verification 里提交的 live 证据：命令、真实退出码、
+  产物路径与运行时间必须齐全、彼此一致，并对应 contract 的 verification 与 integration gate。缺少或无法对应的 live
+  证据才是 blocker；不需要 live 环境的命令（单测、lint、构建）仍照常独立复跑。
 
 ## 有限审查与跨轮回归
 
@@ -58,6 +62,9 @@
   声明 `fixed` 的根因不得同时仍列为 blocker。
 - 若本轮可能构成 `scope-expanding`，每个 open blocker 必须补充稳定的 `owner`（同一 owner
   可以对应多个 blocker，但至少需要两个不同 owner）；同时只有 blocker 数连续两轮不再减少时才可建议 DAG amendment。
+- blocker 的 `owner` 写**节点 id**。若某 blocker 的根因在已完成的上游节点里，把 `owner` 设为该节点 id：
+  当本轮全部 open blocker 的 `owner` 都是已完成的上游节点时，OMAC 不再退回本节点返工，而是作为上游缺陷处理
+  （不消耗评审回退次数）；只要有一个 blocker 没有 `owner` 或属于本节点，就照常返工。
 - blocker 若要求新增外部输入，必须补充 `required_inputs`，每项为
   `{artifact_id, producer, evidence_mode}`；若要求特定证据类别，补充
   `required_evidence_mode: fixture|artifact|live`。这些字段只描述边界，不复制交付物正文。
@@ -78,6 +85,7 @@
    env_setup、评审目标和精确提交命令。
 2. 打开真实交付物或 PR diff，不把产出者的说明当作已验证事实。
 3. 按 env_setup 建立独立验证环境，独立复跑 verification commands 和 integration gates，记录真实退出码与结果。
+   `evidence_mode: live` 的节点例外：不复跑需要 live 环境的命令，按上文审 Worker 提交的 live 证据。
 4. 检查需求对齐：该做的已完成，`non_goals` 和相邻范围没有被突破。
 5. 检查设计与契约：实现或产物符合 `source_of_truth`，共享契约只被 import，没有平行定义。
    `plan review` 必须同时检查 `project_rules`：它与设计及已有 `AGENTS.md` 一致，只包含长期仓库级约束，
@@ -88,13 +96,24 @@
 8. 检查集成门：commands、metrics、artifacts、`source_of_truth`、`delivery_goal` 和验收映射彼此一致。
    develop review 中只对 `acceptance_claims` 要求完整端到端 flow；对
    `acceptance_contributions` 只检查声明的 Action 与当前节点 contract；
-   `acceptance_refs` 仅追溯，不得产生完整 UJ 或测试证据义务。
+   `acceptance_refs` 仅追溯，不得产生完整 UJ 或测试证据义务；它们只汇总成一条 `trace:refs` obligation：
+   检查这些 flow 里是否有本节点负责却未声明为 contribution 的业务行为。
+   `acceptance-action:*`、`interface:*`、`registry:*` 类 obligation 判 `pass` 时，evidence 必须含
+   定位符：带扩展名的仓库路径（如 `src/api/packs.py:build_view`）或测试名（如 `test_pack_views`），否则提交被拒。
+   收尾节点的评审多一条 `followups:triage` obligation：先运行 `omac dag followups <manifest>`，其中每条建议项
+   （`<节点>#<序号>`）都必须在本次交付里被处置为 `fix`、`defer` 或 `drop`；`pass` 的 evidence 里每条建议项独占一行，
+   写明 id、处置和位置（如 `api-core#1: defer - docs/followups.md`），缺任何一条提交被拒。
 9. 检查 coverage；改动分支 coverage 低于 gate 一律 reject。
 10. 判断范围：`scope_paths` 是主要代码归属范围。必要配套文件只要服务于 contract 且已说明原因，
    不因必要配套文件未被预先列出而 reject；无关扩张、并行边界破坏或 `non_goals` 违规仍须 reject。
 11. `decompose review` 检查是否最大化并行；若节点还能拆出独立 PR/test/review 单元却被合并，应要求拆小。
     同时读取 obligation 中的紧凑责任矩阵，一轮内找全缺失/重复 owner、业务 Action 缺口、
     未知 Action 与完整 owner 无法到达贡献节点的问题，不能只抽查少数节点。
+    `interface:matrix` obligation（有 `requires` 时生成）一次给出完整接口矩阵（消费者、producer、
+    `requires`、producer 的 `provides`）：站在每个消费者的位置判断 producer 声明的接口能否支撑其目标，
+    缺口写成 blocker 并给出应补进 `provides`/`requires` 的 id；逐行 disposition，不抽查。
+    `acceptance review` 的 `requirements:extraction` obligation（验收文档含 `requirements` 时生成）：对照设计核对
+    需求抽取是否完整（无遗漏、无杜撰）、非 in-scope 的 `reason` 是否成立、`source` 锚点是否指向其声称的文字。
     `amendment review` 必须逐项 disposition before/after responsibility obligation 与历史校正审计；
     done/merged correction 只能变 acceptance responsibility 和命名 gate 的 `acceptance_refs`，
     不得要求 Store 恢复、Agent 派发或 merge replay。

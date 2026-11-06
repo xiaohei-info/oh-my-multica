@@ -23,13 +23,13 @@ from omac.errors import ValidationError
 
 # ==================== resolve_retry 合并 + 校验 ====================
 
-ALL_THREE = {"worker": 3, "ci": 3, "review": 3, "merge": 3}
+ALL_THREE = {"worker": 3, "ci": 3, "review": 3, "merge": 3, "environment": 1}
 
 
 @pytest.mark.parametrize(("config", "expected"), [
     ({"engine": "multica"}, ALL_THREE),                                                            # missing: the defaults
     ({"retry": {"review": 5}}, {**ALL_THREE, "review": 5}),                                        # a partial override merges
-    ({"retry": {"worker": 0, "ci": 0, "review": 0, "merge": 0}}, dict.fromkeys(ALL_THREE, 0)),     # zero is valid
+    ({"retry": dict.fromkeys(ALL_THREE, 0)}, dict.fromkeys(ALL_THREE, 0)),     # zero is valid
     ({"retry": {"review": 2, "bogus": 9}}, {**ALL_THREE, "review": 2}),                            # an unknown key is ignored
 ])
 def test_resolve_retry_merges_over_the_defaults(config, expected):
@@ -199,7 +199,7 @@ def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(dag_cmd, "ensure_config_synced", lambda *a, **k: None)   # git push of the config: not under test
 
     assert main(["dag", "tick", str(manifest)]) == exit_codes.OK
-    assert seen["retry_limits"] == {"worker": 3, "ci": 0, "review": 1, "merge": 2}
+    assert seen["retry_limits"] == {"worker": 3, "ci": 0, "review": 1, "merge": 2, "environment": 1}
     assert seen["full_scan"] is True
 
 
@@ -263,7 +263,7 @@ def test_resolve_retry_still_ignores_no_submit_runs_key():
     """no_submit_runs 不进 bounce 上限 dict——它不是「回到 worker」回退预算。"""
     cfg = {"retry": {"no_submit_runs": 6, "review": 2}}
     assert config_mod.resolve_retry(cfg) == {
-        "worker": 3, "ci": 3, "review": 2, "merge": 3}
+        "worker": 3, "ci": 3, "review": 2, "merge": 3, "environment": 1}
 
 
 # ==================== config set 校验 retry.no_submit_runs ====================
@@ -286,3 +286,14 @@ def test_config_set_no_submit_runs_accepts_positive(tmp_path, monkeypatch, capsy
     assert main(["config", "set", "retry.no_submit_runs", "6"]) == exit_codes.OK
     capsys.readouterr()
     assert config_mod.load_config()["retry"]["no_submit_runs"] == 6
+
+
+@pytest.mark.parametrize(("config", "expected"), [({}, False), ({"dispatch": {}}, False), ({"dispatch": {"hold_live": True}}, True)])
+def test_dispatch_hold_live_defaults_to_off(config, expected):
+    assert config_mod.resolve_hold_live(config) is expected
+
+
+@pytest.mark.parametrize("dispatch", [{"hold_live": "yes"}, {"hold_live": 1}, "on"])
+def test_dispatch_hold_live_rejects_anything_but_a_boolean(dispatch):
+    with pytest.raises(ValidationError, match="dispatch"):
+        config_mod.resolve_hold_live({"dispatch": dispatch})

@@ -5,7 +5,10 @@ import pytest
 
 from omac.core.taskmeta import DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity, TaskPhase, WorkerHandoffIntent
 from omac.core.workitem import WorkItem, WorkItemStatus
-from omac.pipeline.decide_worker import control_matches_handoff_candidate, handoff_has_new_delivery
+from omac.pipeline.decide_worker import (
+    EnvironmentFailure, EnvironmentFailureObservation, control_matches_handoff_candidate, decide_environment_failure,
+    handoff_has_new_delivery, next_worker_retry_command,
+)
 
 PR = "https://example.test/pr/1"
 
@@ -106,3 +109,27 @@ def test_the_sealed_delivery_is_still_the_one_the_item_shows(change, expected):
 ])
 def test_handoffs_from_before_the_baseline_head_existed_are_judged_by_their_verdict(item, handoff, expected):
     assert handoff_has_new_delivery(item, handoff) is expected
+
+
+# ---- environment failure (S8): one automatic retry of the same Worker, then a person with the next Worker's command ---------
+
+@pytest.mark.parametrize(("consumed", "limit", "expected"), [
+    (0, 1, EnvironmentFailure.RETRY),        # the first report is retried
+    (1, 1, EnvironmentFailure.ESCALATE),     # the second report goes to a person
+    (0, 0, EnvironmentFailure.ESCALATE),     # retry.environment: 0 turns the automatic retry off
+    (1, 2, EnvironmentFailure.RETRY),
+    (5, 2, EnvironmentFailure.ESCALATE),
+])
+def test_s8_an_environment_failure_is_retried_only_while_the_budget_lasts(consumed, limit, expected):
+    assert decide_environment_failure(EnvironmentFailureObservation(consumed=consumed, limit=limit)) is expected
+
+
+@pytest.mark.parametrize(("current", "workers", "command"), [
+    ("alice", ["alice", "bob", "carol"], "omac node retry m.yaml n --worker bob"),
+    ("carol", ["alice", "bob", "carol"], "omac node retry m.yaml n --worker alice"),      # wraps around
+    ("dave", ["alice", "bob"], "omac node retry m.yaml n --worker alice"),               # not in the pool: the first one
+    ("alice", ["alice"], "omac node retry m.yaml n"),                                    # nobody else: the operator chooses
+    ("alice", [], "omac node retry m.yaml n"),
+])
+def test_s8_the_escalation_names_the_next_worker_in_a_command_that_can_be_copied(current, workers, command):
+    assert next_worker_retry_command("m.yaml", "n", current, workers) == command

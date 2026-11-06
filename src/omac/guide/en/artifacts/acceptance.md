@@ -42,7 +42,7 @@ flows:
 
 | Field | Meaning |
 |---|---|
-| `schema` | New artifacts use `omac.acceptance/v2`; v1 is read-only compatibility. |
+| `schema` | New artifacts use `omac.acceptance/v2` or `omac.acceptance/v3` (v3 whenever `requirements` is needed, see below); v1 is read-only compatibility. |
 | `flows` | Non-empty list of independently acceptable end-to-end paths. |
 | `flow.id` | Unique stable ID referenced by manifest claims, contributions, refs, and final results. |
 | `flow.name` | Non-empty human-readable user outcome. |
@@ -66,6 +66,31 @@ guesses. Use an implementation prerequisite only when the design has no unique
 execution surface. If a user action still depends on that prerequisite, the flow
 is not executable and review must reject it; bulk prerequisites cannot make an
 acceptance document complete.
+
+## v3: `requirements` and `action.requirement_ids`
+
+`omac.acceptance/v3` adds a top-level `requirements` list and an optional `action.requirement_ids` to v2:
+
+```yaml
+schema: omac.acceptance/v3
+requirements:
+  - id: REQ-012                    # unique, [A-Za-z0-9._-]
+    source: "docs/design.md#4.2"   # design anchor, non-empty
+    summary: "…"                   # at most 200 characters
+    disposition: in-scope          # in-scope | out-of-scope | deferred
+    verification: action           # action | technical (technical = no acceptance action; nodes claim it with requirement_refs)
+    reason: "…"                    # required when disposition is not in-scope
+flows:
+  - id: flow-x
+    name: …
+    actions:
+      - {id: ACT-1, kind: business-action, step: …, how: …, expected: …, requirement_ids: [REQ-012]}
+```
+
+The machine gate checks: requirement ids are unique; `requirement_ids` only name known in-scope `verification: action`
+requirements; every such requirement is referenced by at least one action. Whether `requirements` is required depends on
+size: required when the business-action count exceeds `plan.light_max_business_actions` (default 20); smaller documents
+may omit it (checked when present). `requirements` and `requirement_ids` are valid only in v3.
 
 ## Validation gates
 

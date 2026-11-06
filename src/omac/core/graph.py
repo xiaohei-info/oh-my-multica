@@ -8,6 +8,8 @@
 挂起(held)不是状态而是 todo 节点上的标记:不就绪、不满足下游;只剩挂起节点时 tick 不算收敛(decide_tick_state)。
 """
 
+from .acceptance_responsibility import full_claims
+
 RUNNING = frozenset({"in_progress", "ci_check", "in_review", "merging"})
 NEEDS_DECISION = frozenset({"blocked", "failed"})
 SATISFIED = frozenset({"done", "abandoned"})
@@ -32,6 +34,31 @@ def ready_nodes(issues: dict) -> list:
         if all(issues.get(b, {}).get("status") in SATISFIED for b in it["blocked_by"]):
             out.append(key)
     return out
+
+
+def prioritize_ready(ready: list, nodes: dict) -> list:
+    """就绪节点的派发顺序(纯函数,只在 max_parallel 不够全派时有意义):
+
+    完整 flow 的 owner(声明了 acceptance_claims 的节点,端到端验收就绪即应尽早暴露问题)优先,
+    其次传递下游节点数多的优先(先放开更多后续工作),最后保持 manifest 顺序。nodes: key -> 带 blocked_by/contract 的节点。
+    """
+    dependents: dict = {}
+    for key, node in nodes.items():
+        for blocker in node.blocked_by:
+            dependents.setdefault(blocker, []).append(key)
+
+    def downstream(key: str) -> int:
+        seen, stack = set(), list(dependents.get(key, ()))
+        while stack:
+            current = stack.pop()
+            if current not in seen:
+                seen.add(current)
+                stack.extend(dependents.get(current, ()))
+        return len(seen)
+
+    order = {key: index for index, key in enumerate(nodes)}
+    rank = {key: (not full_claims(nodes[key].contract), -downstream(key), order[key]) for key in ready}
+    return sorted(ready, key=rank.__getitem__)
 
 
 def held_nodes(issues: dict) -> list:

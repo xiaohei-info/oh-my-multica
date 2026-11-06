@@ -17,7 +17,8 @@
 2. 对每个未决节点运行 `omac node show <manifest> <key>`，读取验证输出、reviewer report、
    PR、平台 issue 链接和回退计数。
 3. 选择一个显式动作：
-   - `omac node retry <manifest> <key> [--worker 换人]`：重置为 todo。
+   - `omac node retry <manifest> <key> [--worker 换人] [--note 文本]`：重置为 todo；`--note`（≤2000 字符）写进 issue 正文
+     的“本次重试的操作员说明”，下一次派发的 Worker 能读到；不带 `--note` 的重试会清掉上一次的说明。
    - `omac node accept <manifest> <key>`：人工接受已知风险并标记 done。
    - `omac node abandon <manifest> <key>`：放弃该节点，解锁非硬依赖下游。
    - `omac node hold <manifest> <key> [--reason 文本]`：挂起尚未派发（`todo`）的节点，例如需要先人工准备外部账号。
@@ -30,6 +31,44 @@
    - 若 DAG 已开始执行且问题属于 contract、验收映射或拓扑定义，使用受控
      `omac dag amend propose`，禁止直接覆盖运行中 manifest。
 4. 重新运行 `omac dag run <manifest>`。已 done 节点会复用，其余节点续跑。
+
+### 等待决策、决策清单与建议项
+
+- `omac dag decisions <manifest> [--output json]`：只读，列出 DAG 在等的决策（`blocked`/`failed` 的源头节点、被挂起的节点），
+  每条带稳定的 `decision_key`（`节点:状态:work_item_id`）和可复制命令。证据链再用 `omac node show`。
+- `omac dag run <manifest> --wait-decisions [--max-minutes N]`：没有进行中节点且有待决策项时放开写锁等待
+  （这时 `omac node retry|release` 等写命令不会 exit 5），每个新决策发一次 `decision_pending` 事件（stderr，按 `decision_key`
+  去重，已处理的决策再出现会重新通知）；决策集合变化后自动续跑，收敛 exit 0，到 `--max-minutes` 仍未收敛 exit 10。
+  不带该开关时行为不变：exit 20。
+- `omac dag followups <manifest> [--output json]`：只读，聚合各已合并节点 `pass-with-nits` 的建议项（`<节点>#<序号>`）。
+  收尾节点（`meta.closeout_node`）的评审要求每条都被处置为 `fix` / `defer` / `drop`。
+- `dispatch.hold_live: true`：就绪的 `contract.evidence_mode: live` 节点由代码自动挂起（每个节点只挂一次），
+  tick 报告 `held` 并给出 `omac node release` 命令；准备好真实环境后 release，之后与普通节点相同。
+
+### 上游缺陷回流
+
+Worker（或所有 blocker 的 `owner` 都指向已完成上游的 Reviewer）上报 `upstream-defect` 后，持锁的 `omac dag run|tick`
+在两轮 tick 之间路由它：`defects.auto_fix: design-gap`（默认；`off` 关闭）下，`design-gap` 类缺陷会插入一个 `fix.*` 修复节点，
+报告者的 `blocked_by` 加上它，修复合并后报告者自然就绪；这是一次由代码生成的系统 amendment，不经 Agent 评审也不需要人确认。
+预算：`defects.per_reporter`（默认 2）、`defects.max_auto_fixes`（默认 `auto` = max(5, ⌈0.15×节点数⌉)）。
+
+无法自动处理时 `dag run` 以 exit 20 停下，报告的 `next_actions` 给出可复制的放行命令。停止原因：
+
+| 原因 | 含义 | 处理 |
+|---|---|---|
+| `defect-needs-owner` | 取舍或合同缺口，或 `defects.auto_fix` 为 `off` | `omac dag amend propose <manifest> --report-file <report.md> --docs <design.md> --blocked-node <节点>`，或 `node abandon|accept|retry` |
+| `defect-unroutable` | 报告无法落到已完成的上游节点或锚点 | 同上；先核对报告里的 `suspected_node` 与 `anchors` |
+| `defect-fix-generation-cap` | 修复节点自己又上报了缺陷；修复节点不会被自动再修 | 同上 |
+| `defect-recurred` | 同一缺陷（疑似节点 + 锚点）在修复合并后再次出现 | 先 `dag amend propose` 或 `node retry`，或 `abandon|accept` |
+| `defect-budget-exhausted` | 报告者或整个 DAG 的自动修复预算用完 | `omac defect grant <manifest> --reporter <节点> --count 1` 追加后继续，或同上 |
+
+- `omac defect list <manifest> [--output json]`：只读，缺陷账本（指纹状态 `queued → applying → fixing → fixed → recurred | needs-owner`）、
+  预算使用、待路由报告和 `pending_human_amendment`。
+- `omac defect report <manifest> --before <节点> --report-file <缺陷.yaml>`：人工上报（最多 5 条排队），与 Worker 的 `defects` 同形，`repro` 可省略。
+- `omac defect grant <manifest> --reporter <节点> [--count N]`：追加报告者的自动修复次数并重新路由其停止的报告。
+- 有待确认的人工 amendment 时，缺陷只排队（`queued`），不改 DAG；先 `dag amend accept` 或丢弃该提案。
+- 最终验收失败的 flow 的增量拆解也走系统 amendment；同一 flow 修过后再失败会停止循环，列出未通过项。
+- 已知限制：验收外层循环的内层 tick 不路由缺陷，增量节点上的上报会 exit 20，下一次 `omac dag run` 才路由；系统 amendment 文件只在本机。
 
 ### `pass-with-nits` 接受决策
 
@@ -111,6 +150,8 @@ develop 节点仍使用独立的 `omac node accept-nits`，两条路径不会互
 | `review-budget-exhausted` | reject 次数用尽 | `omac plan continue-review --dag-key <stage-key>` |
 | `review-convergence-*` | 同一根因 blocker 连续不收敛 | `omac plan continue-review --dag-key <stage-key>`（人工授权再试一轮）；或重新划定任务边界后重新 `plan create` |
 | `guard-budget-exhausted` | machine gate（lint/预检）用尽 | `omac plan resume --plan-id <id>`（显式再给一轮机器门预算） |
+| `guard-non-reducing` | 连续两轮机器门错误数没有减少，继续返工不会收敛；报告里有完整错误清单 | 先按清单修正（或调整 `plan.profile`/输入），再 `omac plan resume --plan-id <id>` |
+| `review-evidence-invalid` | 同一评审对象上 Reviewer 的评审证据连续无效，超过 `review.invalid_evidence_restarts`（默认 2） | `omac plan resume --plan-id <id>`（解除停止并重新评审） |
 | `completed-without-submit`、`unsafe-authoring-resume` | 作者 Run 已结束但没有可用交付 | `omac plan resume --plan-id <id> --restart-active` |
 | `reviewer-completed-without-verdict` | Reviewer Run 结束但没有 verdict | `omac plan resume --plan-id <id>` |
 
@@ -464,11 +505,15 @@ work item ID、contract digest 和原始 worker/review/merge baseline；不复�
 当前 develop/authoring Worker 遇到合同规定的失败停止条件或需要 owner
 决定时，先重新运行 `omac work show <issue-id> --output json`，复制
 `control.blocker_report_template`，通过返回的 `report_blocker` 命令提交
-`omac.worker-blocker/v2` 报告。普通 Reviewer reject 仍须正常返工；不能仅因
+`omac.worker-blocker/v3` 报告（v2 仍被接受；原因码另有 `upstream-defect`、`environment-failure`，见 worker 指南）。普通 Reviewer reject 仍须正常返工；不能仅因
 被 reject 就报告需要决定，也不能将已结束的旧 Run 追溯补报。
 
 - `quality-gate-failed`：evidence 至少一项包含真实执行的 command、非零整数
   exit_code、ref 和 observation。不要为了提交报告继续执行合同已禁止的后续验证。
+- `environment-failure`：环境而非任务阻止了 Worker（推送/网络/依赖下载超时等）。规则同 `quality-gate-failed`：
+  evidence 至少一项含真实执行的 command 与非零 exit_code。OMAC 在 `retry.environment`（默认 1）内自动让同一个
+  Worker 重试一次，不消耗 `retry.worker`；用完后停在 exit 20，报告的 `next_actions` 给出
+  `omac node retry <manifest> <key> --worker <roles.workers 中的下一个>`。
 - `owner-decision-required`：保留 evidence 的 ref/observation，并明确
   decision_needed。contract_ref 必须是当前 context.contract 中实际存在的顶层字段；
   summary 说明该字段与停止条件的关系，不创造新的合同授权。
@@ -487,7 +532,7 @@ work item ID、contract digest 和原始 worker/review/merge baseline；不复�
 恢复许可。Worker block/submit/重派共享本机锁并在写入前重读控制事实；这不是跨机器
 CAS。保持现有单 Runner 管理约束，不允许多个控制器同时替换同一节点的 generation。
 
-报告最多 2048 UTF-8 JSON 字节，含 1–4 条证据；完整日志留在引用位置，不内嵌。
+报告最多 6144 UTF-8 JSON 字节，含 1–4 条证据；完整日志留在引用位置，不内嵌。
 
 新建 Worker handoff 时，OMAC 必须先读取标记为 deferred 的 Store contract，
 再计算绑定；未下载的 `None` 不能作为真实空合同。若附件读取失败，停止派发，

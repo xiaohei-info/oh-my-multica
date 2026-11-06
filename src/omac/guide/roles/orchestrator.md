@@ -55,6 +55,14 @@
   `omac work show <issue-id> --output json`，读取 `context.machine_feedback`，逐条修完后再提交。
 - 验收责任是显式结构，不依赖 Action 前缀或节点名字：machine gate 会检查每个 flow 的唯一完整 owner、
   所有 `business-action` 的 contribution 闭包，以及 full owner 的传递依赖是否覆盖全部贡献节点。
+- 计划档位由代码按规模判定（节点数 ≤ `plan.light_max_nodes` 且验收 business-action 数 ≤
+  `plan.light_max_business_actions` 为 light，否则 standard；模型不能选）。light 不增加任何新门。standard 额外要求：
+  每条非空 `consumes` 都写 `requires`（producer 该制品 `provides` 的 id，被要求的项须带设计 `ref`）；
+  `meta.closeout_node` 指向全图汇点（依赖其余所有节点）；验收文档带 `requirements` 时，每条 `verification: technical`
+  的需求由某节点的 `contract.requirement_refs` 认领（`requirement_refs` 只能写 technical 需求 id）。
+  错误一次给全，附可粘贴的 YAML。
+- 有 `requires` 时，Reviewer 有一条 `interface:matrix` 义务一次看完整张接口矩阵：producer 声明的 `provides`
+  是否足以支撑每个消费者的目标。写 `requires` 前读设计，只列消费者真需要的项。
 - `review_state.mode=normal` 时按 `required_closures` 逐项关闭并对完整 manifest
   做影响分析。
 - `review_state.mode=convergence-audit` 直接投影权威
@@ -93,7 +101,9 @@
     必须锚到包含数据结构和边界条件的细粒度章节而不是整篇文档，`non_goals` 必须写清
     相邻模块、旧逻辑和禁止重构范围以消除隐含上下文，`verification_commands` 和
     `integration_gates` 必须可直接复制运行。
-11. 增量拆解只包含针对失败 flow 的新增 fix 节点，不复制或重写原有 done 节点；提交前让增量
+11. 增量拆解的 `blocked_by` 只能引用已完成（done/abandoned）的节点或本增量内新增的节点；OMAC 用系统
+    amendment 并入，并给每个新增节点补上 `contract.defect_refs`。同一 flow 修过后再次失败时不再增补节点。
+    增量拆解只包含针对失败 flow 的新增 fix 节点，不复制或重写原有 done 节点；提交前让增量
     manifest 通过 OMAC 的 manifest lint，需要本地检查时运行 `omac dag check <manifest>`。
 
 ## 完成条件

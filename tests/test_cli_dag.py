@@ -224,3 +224,165 @@ def test_build_needs_decision_none_observation_equals_legacy_tolerance(tmp_path)
     assert node["evidence_summary"] is None
     # 无精确原因且无 item 时回退 node.status,与旧 _fetch_items 宽容路径一致
     assert node["reason"] == "failed"
+
+
+# ---- dag run --wait-decisions (S20) and dag decisions ------------------------------------------------------------------
+
+class Events:
+    def __init__(self):
+        self.seen = []
+
+    def info(self, event, **fields):
+        self.seen.append((event, fields))
+
+    def named(self, event):
+        return [fields for name, fields in self.seen if name == event]
+
+
+class WaitingRun:
+    """`dag run --wait-decisions` over a two-node DAG whose first node is blocked; the platform is a scripted tick."""
+
+    def __init__(self, tmp_path, monkeypatch, **args):
+        from omac.cli.commands import dag as dag_cmd
+        from omac.core.manifest import manifest_write_lock
+        from omac.core.manifest import save_manifest
+        from omac.pipeline.loop import TickResult
+
+        monkeypatch.chdir(tmp_path)
+        self.dag_cmd, self.lock = dag_cmd, manifest_write_lock
+        self.path = _manifest_yaml(tmp_path, [
+            {"id": "a", "worker": "alice", "status": "blocked", "work_item_id": "wi-a"},
+            {"id": "b", "worker": "bob", "status": "todo", "blocked_by": ["a"]}])
+        self.events, self.sleeps, self.ticks, self.acts = Events(), [], 0, {}
+        self.now = 0.0
+        self.args = SimpleNamespace(
+            manifest=self.path, engine=None, workspace=None, project=None, max_parallel=None, max_rounds=None,
+            max_minutes=None, wait_decisions=True, output="json", **args)
+
+        def tick(_engine, manifest, path, **_kw):
+            self.ticks += 1
+            waiting = [key for key, node in manifest.nodes.items() if node.status in ("blocked", "failed")]
+            if waiting:
+                return TickResult(state="needs_decision", failed=waiting, report={"next_actions": []})
+            for node in manifest.nodes.values():
+                node.status = "done"
+            save_manifest(manifest, path)                 # like the real tick
+            return TickResult(state="converged", done=list(manifest.nodes))
+
+        def sleep(seconds):
+            self.sleeps.append(seconds)
+            with self.lock(self.path):                       # the write lock is free while the run waits
+                pass
+            if len(self.sleeps) in self.acts:
+                self.acts[len(self.sleeps)](self)
+            self.now += 60
+
+        engine = SimpleNamespace(store=SimpleNamespace(config=SimpleNamespace(engine_type="multica")))
+        monkeypatch.setattr(dag_cmd, "_assemble_engine", lambda _args: (engine, None))
+        monkeypatch.setattr(dag_cmd, "ensure_config_synced", lambda *_a, **_k: None)
+        monkeypatch.setattr(dag_cmd, "_scheduled_tick", tick)
+        monkeypatch.setattr(dag_cmd, "_emit", lambda *_a, **_k: None)
+        monkeypatch.setattr(dag_cmd, "log", self.events)
+        monkeypatch.setattr(dag_cmd, "time", SimpleNamespace(sleep=sleep, monotonic=lambda: self.now))
+
+    def person_retries(self, _self=None):
+        from omac.core.manifest import save_manifest
+
+        manifest = load_manifest(self.path)
+        manifest.nodes["a"].status = "todo"
+        save_manifest(manifest, self.path)
+
+    def run(self):
+        return self.dag_cmd._loop_or_single(self.args, single_round=False)
+
+
+def test_s20_a_waiting_run_announces_each_decision_once_resumes_after_the_person_acts_and_converges(tmp_path, monkeypatch):
+    run = WaitingRun(tmp_path, monkeypatch)
+    run.acts[3] = WaitingRun.person_retries           # nobody does anything for two polls, then `node retry`
+
+    assert run.run() == exit_codes.OK
+
+    announced = run.events.named("decision_pending")
+    assert [(e["decision_key"], e["node"], e["kind"]) for e in announced] == [("a:blocked:wi-a", "a", "blocked")]
+    assert announced[0]["next_actions"] == [f"omac node retry {run.path} a", f"omac node abandon {run.path} a"]
+    assert len(run.sleeps) == 3 and run.ticks == 2    # one tick that found the decision, one after the retry
+    assert {node.status for node in load_manifest(run.path).nodes.values()} == {"done"}
+
+
+def test_s20_a_decision_that_comes_back_after_it_was_resolved_is_announced_again(tmp_path, monkeypatch):
+    run = WaitingRun(tmp_path, monkeypatch)
+    seen_ticks = []
+    original = run.dag_cmd._scheduled_tick
+
+    def block_the_first_retry_again(engine, manifest, path, **kw):
+        seen_ticks.append(1)
+        if len(seen_ticks) == 2:                       # the retried node stops again on the same work item
+            manifest.nodes["a"].status = "blocked"
+        return original(engine, manifest, path, **kw)
+
+    monkeypatch.setattr(run.dag_cmd, "_scheduled_tick", block_the_first_retry_again)
+    run.acts[1] = WaitingRun.person_retries
+    run.acts[2] = WaitingRun.person_retries
+
+    assert run.run() == exit_codes.OK
+
+    assert [e["decision_key"] for e in run.events.named("decision_pending")] == ["a:blocked:wi-a", "a:blocked:wi-a"]
+
+
+def test_s20_the_wall_clock_ends_the_wait_with_exit_10_not_20(tmp_path, monkeypatch):
+    run = WaitingRun(tmp_path, monkeypatch)
+    run.args.max_minutes = 3
+
+    assert run.run() == exit_codes.IN_PROGRESS
+
+    assert len(run.events.named("decision_pending")) == 1 and run.ticks == 1 and len(run.sleeps) == 3
+
+
+def test_without_wait_decisions_a_pending_decision_still_exits_20(tmp_path, monkeypatch):
+    from omac.errors import NeedsDecision
+
+    run = WaitingRun(tmp_path, monkeypatch)
+    run.args.wait_decisions = False
+
+    with pytest.raises(NeedsDecision):
+        run.run()
+    assert not run.sleeps and not run.events.named("decision_pending")
+
+
+def test_dag_decisions_lists_each_stop_once_with_a_stable_key_and_the_commands(tmp_path, capsys):
+    path = _manifest_yaml(tmp_path, [
+        {"id": "a", "worker": "alice", "status": "blocked", "work_item_id": "wi-a"},
+        {"id": "b", "worker": "bob", "status": "blocked", "blocked_by": ["a"]},        # only waits for a
+        {"id": "c", "worker": "bob", "status": "todo", "held": True, "hold_reason": "needs the test account"},
+        {"id": "d", "worker": "bob", "status": "done", "work_item_id": "wi-d"}])
+
+    assert main(["dag", "decisions", path, "--output", "json"]) == exit_codes.OK
+
+    rows = json.loads(capsys.readouterr().out)["decisions"]
+    assert [(r["decision_key"], r["kind"], r["next_actions"][0]) for r in rows] == [
+        ("a:blocked:wi-a", "blocked", f"omac node retry {path} a"),
+        ("c:held:-", "held", f"omac node release {path} c")]
+    assert rows[1]["reason"] == "needs the test account"
+
+
+def test_s17_with_hold_live_a_ready_live_node_is_held_once_and_the_report_names_the_release_command(tmp_path):
+    from omac.core import graph
+    from omac.pipeline import loop
+
+    path = _manifest_yaml(tmp_path, [
+        {"id": "a", "worker": "alice", "contract": {"objective": "check against the real service", "evidence_mode": "live"}},
+        {"id": "b", "worker": "bob", "blocked_by": ["a"]},
+        {"id": "c", "worker": "bob"}])
+    manifest = load_manifest(path)
+
+    assert loop._auto_hold_live(manifest, path, graph.ready_nodes(loop._build_snapshot(manifest))) == ["c"]
+
+    reloaded = load_manifest(path)
+    assert (reloaded.nodes["a"].held, reloaded.dag_state["auto_held"]) == (True, ["a"])
+    report = build_held_report(reloaded, path, graph.held_nodes(loop._build_snapshot(reloaded)))
+    assert report["next_actions"] == [f"omac node release {path} a"] and report["blocked_downstream"] == ["b"]
+    assert "live" in report["held_nodes"][0]["reason"]
+
+    assert main(["node", "release", path, "a"]) == exit_codes.OK
+    released = load_manifest(path)
+    assert loop._auto_hold_live(released, path, graph.ready_nodes(loop._build_snapshot(released))) == ["a", "c"]   # not held again

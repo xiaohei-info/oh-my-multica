@@ -175,8 +175,14 @@ nodes:
 | `acceptance_doc` | 可选的验收文档结构上下文；仅在实例 contract 需要时填充。 |
 | `scope_paths` | 运行中旧 manifest 可选；新的 plan decomposition 必须给出一个主要代码归属范围，配套文件仍可在 PR/verification 中说明。 |
 | `evidence_mode` | 运行中旧 manifest 可选；新的 plan decomposition 必须显式选择 `fixture`、`artifact` 或 `live`。 |
-| `produces` | 当前节点唯一生产的稳定制品 id 列表，形状为 `{artifact_id}`；同一 id 只能有一个 producer。 |
-| `consumes` | 三态输入策略：省略时，旧运行 manifest 过渡期仅允许传递上游输入；`[]` 表示无外部输入；非空列表是严格 `{artifact_id, producer, evidence_mode}` allowlist；显式 `null` 非法。新完整 DAG 使用显式 `[]` 或非空列表。 |
+| `produces` | 当前节点唯一生产的稳定制品 id 列表，形状为 `{artifact_id}`；同一 id 只能有一个 producer。可选 `provides: [{id, ref}]` 列出该制品可被检查的接口项（`ref` 为设计锚点），每项成为 producer 的一条评审义务 `interface:<artifact>:<id>`。 |
+| `consumes` | 三态输入策略：省略时，旧运行 manifest 过渡期仅允许传递上游输入；`[]` 表示无外部输入；非空列表是严格 `{artifact_id, producer, evidence_mode}` allowlist；显式 `null` 非法。新完整 DAG 使用显式 `[]` 或非空列表。条目可选 `requires: [<provides id>]`，必须是 producer 该制品 `provides` 的子集，否则 lint 报错并给出可粘贴的 YAML 片段。 |
+| `registers` | 可选。本节点向哪些 `meta.registries` 登记点添加条目（id 列表）；每项成为一条评审义务 `registry:<id>`。登记点在 `meta.registries: [{id, ref, guard}]` 声明，`guard` 节点必须在所有登记者的下游。 |
+| `requirement_refs` | 可选。节点认领的 technical 需求 id（验收文档 v3 中 `verification: technical` 的 in-scope 需求）；只能写这类 id，每条 technical 需求在新 plan 中必须被某节点认领。有验收动作的需求不在此认领，经 `acceptance_contributions` 传递覆盖。 |
+| `defect_refs` | 可选 id 列表，只解析与往返；供缺陷回流使用。 |
+
+新 plan 的档位（`meta.plan_scale: light|standard`，代码按规模判定并记入）：light 不增加新门；standard 要求每条非空
+`consumes` 带 `requires`、被要求的 `provides` 项带 `ref`，且 `meta.closeout_node` 是全图汇点（依赖其余所有节点）。
 
 每个 `integration_gates` 条目必须给出 `name`、`layer`、`delivery_goal`，以及非空的
 `source_of_truth`、`covers`、`acceptance_refs`、`commands`。`required_metrics` 若出现必须是

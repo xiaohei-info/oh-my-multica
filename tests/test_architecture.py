@@ -36,7 +36,6 @@ TRANSITIONAL: dict[str, set[str]] = {
 MANIFEST_WRITE_BASELINE: dict[str, int] = {
     "src/omac/cli/commands/node.py": 5,
     "src/omac/core/amendment.py": 2,
-    "src/omac/pipeline/acceptance.py": 1,
     "src/omac/pipeline/loop.py": 51,
     "src/omac/pipeline/plan.py": 1,
 }

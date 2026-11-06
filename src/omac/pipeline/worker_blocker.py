@@ -3,6 +3,7 @@
 from copy import deepcopy
 import json
 
+from ..core.defects import UPSTREAM_DEFECT, defect_errors
 from ..core.taskmeta import (
     DECISION_REQUIRED_SCHEMA,
     TaskKind,
@@ -14,9 +15,13 @@ from ..core.workitem import WorkItemStatus, WorkItemPayload
 from ..errors import NeedsDecision, PlatformError, ValidationError
 from .apply import Ports, apply
 from .decide_effects import UpdateMetadata, UpdateStatus
+from .decide_worker import ENVIRONMENT_FAILURE
 
-SCHEMA = "omac.worker-blocker/v2"
-REASONS = {"quality-gate-failed", "owner-decision-required"}
+SCHEMA = "omac.worker-blocker/v3"
+REASONS = {"quality-gate-failed", "owner-decision-required", UPSTREAM_DEFECT, ENVIRONMENT_FAILURE}
+# These two must show a command that really failed: the report is a claim, the non-zero exit is the evidence.
+FAILED_COMMAND_REASONS = {"quality-gate-failed", ENVIRONMENT_FAILURE}
+MAX_REPORT_BYTES = 6 * 1024     # the persisted decision (this report plus its envelope) stays under the 8 KiB metadata limit
 FIELDS = {
     "schema",
     "reason_code",
@@ -65,23 +70,28 @@ def _text(value, limit=4096):
 
 
 def _validate(report, issue_id):
-    def invalid():
+    def invalid(detail=""):
         raise ValidationError(
-            f"Invalid worker decision report (maximum 2048 UTF-8 JSON bytes, 1-4 evidence entries); read `omac work show {issue_id} --output json` and copy control.blocker_report_template, then run `omac work block {issue_id} --report-file <blocker.yaml>`"
+            f"Invalid worker decision report (maximum {MAX_REPORT_BYTES} UTF-8 JSON bytes, 1-4 evidence entries){detail}; read `omac work show {issue_id} --output json` and copy control.blocker_report_template, then run `omac work block {issue_id} --report-file <blocker.yaml>`"
         )
 
+    reason = report.get("reason_code")
     if (
-        set(report) != FIELDS
-        or not isinstance(report.get("reason_code"), str)
-        or report["reason_code"] not in REASONS
+        not isinstance(reason, str)
+        or reason not in REASONS
+        or set(report) != FIELDS | ({"defects"} if reason == UPSTREAM_DEFECT else set())
     ):
         invalid()
     try:
         size = len(json.dumps(report, ensure_ascii=False).encode("utf-8"))
     except (TypeError, ValueError):
         invalid()
-    if size > 2048:
+    if size > MAX_REPORT_BYTES:
         invalid()
+    if reason == UPSTREAM_DEFECT:
+        problems = defect_errors(report["defects"])
+        if problems:
+            invalid(": " + "; ".join(problems[:3]))
     if any(
         not _text(report.get(key))
         for key in FIELDS - {"schema", "review_context_binding", "evidence"}
@@ -106,7 +116,7 @@ def _validate(report, issue_id):
             not _text(fact["command"]) or type(fact["exit_code"]) is not int
         ):
             invalid()
-    if report["reason_code"] == "quality-gate-failed" and not any(
+    if report["reason_code"] in FAILED_COMMAND_REASONS and not any(
         "command" in fact and fact["exit_code"] != 0 for fact in evidence
     ):
         invalid()

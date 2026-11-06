@@ -16,8 +16,10 @@ from typing import Any, Callable
 import yaml
 
 from .lint import lint
+from .graph import SATISFIED
+from .defects import UPSTREAM_DEFECT
 from .manifest import (
-    Manifest, Node, _dump_contract, _load_contract, load_manifest, save_manifest,
+    Manifest, Node, RUNTIME_META_KEYS, _dump_contract, _load_contract, load_manifest, save_manifest,
 )
 from .retry_budget import amendment_bounce_baseline, carry_forward_bounce_baselines, preserved_amendment_budget
 from .taskmeta import review_context_binding
@@ -39,6 +41,17 @@ from ..i18n import ui
 
 SCHEMA = "omac.dag-amendment/v1"
 AMENDMENT_IDENTITY_SCHEMA = "omac.dag-amendment-identity/v2"
+# A system amendment is built by code, not reviewed by an Agent or confirmed by a person: its trust is a fixed operation
+# whitelist (``system_proposal_errors``), the budgets of the caller, and the fix node's own review. ``policy_sha256``
+# binds the whitelist version into the identity so a file built under another policy is refused.
+SYSTEM_IDENTITY_SCHEMA = "omac.dag-amendment-identity/v3-system"
+SYSTEM_POLICY_NAME = "defects"
+SYSTEM_POLICY_RULES = {
+    "add": "node carries contract.defect_refs, no registers/requirement_refs, blocked_by only satisfied or added nodes",
+    "update": "set.blocked_by only, append-only, on a reporter or an unstarted closeout node",
+    "resume": "stage authoring on a reporter",
+}
+SYSTEM_POLICY_SHA256 = hashlib.sha256(json.dumps(SYSTEM_POLICY_RULES, sort_keys=True).encode()).hexdigest()
 APPLY_LEDGER_SCHEMA = "omac.amendment-apply/v1"
 _COMPLETE_APPLY_STATES = {"synced", "observed_progress"}
 _APPLY_STAGES = {
@@ -111,7 +124,8 @@ def _node_dict(node: Node, *, include_runtime: bool) -> dict[str, Any]:
 def _manifest_payload(manifest: Manifest, *, include_runtime: bool) -> dict[str, Any]:
     meta = copy.deepcopy(manifest.meta)
     if not include_runtime:
-        meta.pop("amendment_apply", None)
+        for key in RUNTIME_META_KEYS:
+            meta.pop(key, None)
     return {
         "meta": meta,
         "nodes": [
@@ -252,12 +266,14 @@ def amendment_apply_blocker(
 
     amendment_file = str(
         ledger.get("amendment_file") or "<reviewed-amendment.yaml>")
-    resume_command = " ".join((
+    system = ledger.get("system") is True  # code-built: `dag run` finishes it by itself, no human accept exists
+    resume_command = " ".join(("omac dag run", shlex.quote(manifest_path)) if system else (
         "omac dag amend accept",
         shlex.quote(manifest_path),
         shlex.quote(amendment_file),
     ))
     return {
+        "system": system,
         "reason": "amendment_apply_incomplete",
         "amendment_id": amendment_id or None,
         "last_amendment_id": manifest.meta.get("last_amendment_id"),
@@ -760,6 +776,39 @@ def _validate_operation(manifest: Manifest, operation: Any, prefix: str, seen: s
         _validate_update_operation(node, node_id, operation, prefix, acceptance, errors)
 
 
+def system_proposal_errors(manifest: Manifest, proposal: dict[str, Any], reporters: list[str]) -> list[str]:
+    """Violations of the system-amendment whitelist (empty = allowed). Everything else needs a reviewed amendment."""
+    errors: list[str] = []
+    added = {str((op.get("value") or {}).get("id")) for op in proposal.get("operations") or [] if op.get("op") == "add"}
+    satisfied = {key for key, node in manifest.nodes.items() if node.status in SATISFIED}
+    for index, op in enumerate(proposal.get("operations") or []):
+        prefix = f"operations[{index}]"
+        kind = op.get("op")
+        if kind == "add":
+            value = op.get("value") or {}
+            contract = value.get("contract") or {}
+            if not contract.get("defect_refs"):
+                errors.append(f"{prefix}: a system-added node must carry contract.defect_refs")
+            if contract.get("registers") or contract.get("requirement_refs"):
+                errors.append(f"{prefix}: a system-added node may not declare registers or requirement_refs")
+            loose = [b for b in value.get("blocked_by") or [] if b not in satisfied | added]
+            if loose:
+                errors.append(f"{prefix}: blocked_by {loose} is neither finished nor added by this proposal")
+        elif kind == "update":
+            node = manifest.nodes.get(str(op.get("node")))
+            closeout = manifest.meta.get("closeout_node")
+            allowed = node is not None and (node.id in reporters or (node.id == closeout and not _node_started(node)))
+            changes = op.get("set") or {}
+            if not allowed or set(changes) != {"blocked_by"} or not set(node.blocked_by) <= set(changes["blocked_by"] or []):
+                errors.append(f"{prefix}: a system update may only append to blocked_by of a reporter or the unstarted closeout node")
+        elif kind == "resume":
+            if op.get("node") not in reporters or op.get("stage") != "authoring" or set(op) - {"op", "node", "stage"}:
+                errors.append(f"{prefix}: a system resume may only restart authoring of a reporter")
+        else:
+            errors.append(f"{prefix}: operation {kind!r} is not allowed in a system amendment")
+    return errors
+
+
 def validate_proposal(
     manifest: Manifest,
     proposal_source: str | dict[str, Any],
@@ -984,18 +1033,22 @@ def build_reviewed_amendment(
     agent_pool: set[str] | None = None,
     acceptance: Any = None,
     runtime: Any = None,
+    system: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Build the amendment file. ``system`` (see ``build_system_amendment``) replaces the reviewer and human by the whitelist."""
     proposal = parse_proposal(proposal_source)
     pool = agent_pool or set(store.list_members(store.config.workspace_id))
-    errors = validate_proposal(
+    errors = (system_proposal_errors(manifest, proposal, system["reporter_items"]) if system else []) + validate_proposal(
         manifest, proposal, pool, acceptance=acceptance)
     if errors:
         raise ValidationError("Amendment validation failed:\n  - " + "\n  - ".join(errors))
-    if reviewer_verdict not in {"pass", "pass-with-nits"}:
+    if system:
+        issue_id, reviewer_verdict = f"system:{system['policy']}", "system"
+    elif reviewer_verdict not in {"pass", "pass-with-nits"}:
         raise ValidationError(
             "Only a reviewer pass or pass-with-nits can enter human confirmation")
 
-    validate_affected(manifest, proposal, store)
+    validate_affected(manifest, proposal, store, consume_defects=bool(system))
     minimal, derived, immutable = _minimal_rerun(manifest, proposal)
     if immutable:
         raise ValidationError(
@@ -1047,7 +1100,7 @@ def build_reviewed_amendment(
         reviewer_verdict=reviewer_verdict,
         budget_bindings=budget_bindings,
     )
-    review = {"issue_id": issue_id, "verdict": reviewer_verdict}
+    review = dict(system) if system else {"issue_id": issue_id, "verdict": reviewer_verdict}
     # Keep the Reviewer verdict untouched while carrying a read-only snapshot of
     # the facts the operator must accept for a pass-with-nits amendment.  The
     # marker is checked again against Store facts before either acceptance or
@@ -1056,11 +1109,11 @@ def build_reviewed_amendment(
         review.update(amendment_review_binding(store.get_work_item(issue_id)))
     return {
         **proposal,
-        "identity_schema": AMENDMENT_IDENTITY_SCHEMA,
+        "identity_schema": SYSTEM_IDENTITY_SCHEMA if system else AMENDMENT_IDENTITY_SCHEMA,
         "amendment_id": amendment_id,
         "base": base,
         "review": review,
-        "human_confirmation": "pending",
+        "human_confirmation": "not-required" if system else "pending",
         "analysis": {
             "changed_nodes": _changed_node_ids(proposal),
             "derived_started_downstream": derived,
@@ -1072,6 +1125,18 @@ def build_reviewed_amendment(
             ),
         },
     }
+
+
+def build_system_amendment(
+    manifest: Manifest, proposal: str | dict[str, Any], store: Any, *, defect_fps: list[str], reporters: list[str],
+    agent_pool: set[str] | None = None, acceptance: Any = None,
+) -> dict[str, Any]:
+    """An amendment built by code under the system whitelist: no reviewer verdict, no human confirmation."""
+    system = {"kind": "system", "policy": SYSTEM_POLICY_NAME, "policy_sha256": SYSTEM_POLICY_SHA256,
+              "defect_fps": sorted(defect_fps), "reporter_items": sorted(reporters)}
+    return build_reviewed_amendment(
+        manifest, proposal, store, issue_id=None, reviewer_verdict=None, agent_pool=agent_pool,
+        acceptance=acceptance, system=system)
 
 
 def _verify_base(current: Manifest, amendment: dict[str, Any]) -> bool:
@@ -1339,7 +1404,7 @@ def _normalize_recovered_authoring_node(
     return True
 
 
-def validate_affected(manifest: Manifest, proposal: dict[str, Any], store: Any) -> None:
+def validate_affected(manifest: Manifest, proposal: dict[str, Any], store: Any, *, consume_defects: bool = False) -> None:
     """Fail closed when the derived affected set touches a vanished WorkItem or an unresolved held decision.
 
     The affected set is derived from the operations and the minimal re-run, never from a caller-chosen
@@ -1357,7 +1422,10 @@ def validate_affected(manifest: Manifest, proposal: dict[str, Any], store: Any) 
             raise ValidationError(
                 f"Affected node {node_id!r} lost its work item on the platform; inspect it with "
                 f"`omac node show <manifest> {node_id}` before proposing or accepting this amendment") from exc
-        if isinstance(decision, dict) and decision.get("reason_code") == "worker-decision-required":
+        # A system amendment is exactly what consumes an upstream-defect report; every other worker decision still needs a person.
+        blocker = decision.get("blocker") if isinstance(decision, dict) else None
+        consumable = consume_defects and isinstance(blocker, dict) and blocker.get("reason_code") == UPSTREAM_DEFECT
+        if isinstance(decision, dict) and decision.get("reason_code") == "worker-decision-required" and not consumable:
             raise ValidationError(
                 f"Affected node {node_id!r} holds an unresolved worker decision; resolve it first "
                 f"(`omac work show {node.work_item_id}`), then propose the amendment again")
@@ -1592,17 +1660,23 @@ def _validate_stage_preconditions(
 def _amendment_identity(amendment: dict) -> tuple[dict, dict, dict, Any]:
     """Validate the reviewed envelope; returns (review, base, identity kwargs for _amendment_id, budget_bindings)."""
     review = amendment.get("review")
-    if not isinstance(review, dict) or review.get("verdict") not in {
+    identity_schema = amendment.get("identity_schema")
+    system = identity_schema == SYSTEM_IDENTITY_SCHEMA
+    if system:
+        if not (isinstance(review, dict) and review.get("kind") == "system" and review.get("policy") == SYSTEM_POLICY_NAME
+                and review.get("policy_sha256") == SYSTEM_POLICY_SHA256
+                and amendment.get("human_confirmation") in {"not-required", "applied"}):
+            raise ValidationError("System amendment does not carry the current system policy identity")
+    elif not isinstance(review, dict) or review.get("verdict") not in {
         "pass", "pass-with-nits",
     }:
         raise ValidationError("Amendment has not passed Reviewer review")
-    if amendment.get("human_confirmation") not in {"pending", "accepted", "applied"}:
+    elif amendment.get("human_confirmation") not in {"pending", "accepted", "applied"}:
         raise ValidationError("Amendment is not waiting for human confirmation")
     base = amendment.get("base")
     if not isinstance(base, dict):
         raise ValidationError("Amendment base must be an object")
-    identity_schema = amendment.get("identity_schema")
-    if identity_schema not in {None, AMENDMENT_IDENTITY_SCHEMA}:
+    if identity_schema not in {None, AMENDMENT_IDENTITY_SCHEMA, SYSTEM_IDENTITY_SCHEMA}:
         raise ValidationError(
             f"Amendment identity schema is unsupported: {identity_schema!r}")
     if amendment.get("analysis") is not None and not isinstance(amendment.get("analysis"), dict):
@@ -1610,20 +1684,21 @@ def _amendment_identity(amendment: dict) -> tuple[dict, dict, dict, Any]:
     if amendment.get("analysis") is None and identity_schema is not None:
         raise ValidationError("Amendment analysis must be an object")
     identity_kwargs = {}
-    if identity_schema == AMENDMENT_IDENTITY_SCHEMA:
+    if identity_schema in {AMENDMENT_IDENTITY_SCHEMA, SYSTEM_IDENTITY_SCHEMA}:
+        issue_id, verdict = (f"system:{review['policy']}", "system") if system else (review.get("issue_id"), review.get("verdict"))
         for field, value in (
             ("base.manifest_sha256", base.get("manifest_sha256")),
             ("base.definition_sha256", base.get("definition_sha256")),
-            ("review.issue_id", review.get("issue_id")),
-            ("review.verdict", review.get("verdict")),
+            ("review.issue_id", issue_id),
+            ("review.verdict", verdict),
         ):
             if not isinstance(value, str) or not value.strip():
                 raise ValidationError(f"Amendment {field} is required")
         identity_kwargs = {
             "manifest_digest_value": base.get("manifest_sha256"),
             "acceptance_digest": base.get("acceptance_sha256"),
-            "issue_id": review.get("issue_id"),
-            "reviewer_verdict": review.get("verdict"),
+            "issue_id": issue_id,
+            "reviewer_verdict": verdict,
         }
     budget_bindings = base.get("budget_bindings")
     if amendment.get("budget_policy") == "preserve":
@@ -1685,7 +1760,12 @@ def _verify_nits_acceptance(store: Any, review: dict, amendment: dict) -> None:
 def _verify_amendment_applicable(current: Manifest, amendment: dict, store: Any, agent_pool: set[str],
                                  acceptance: Any, budget_bindings: Any):
     """Re-check every reviewed fact against the current manifest. Returns (minimal rerun, corrections, runtime_rebased)."""
-    validate_affected(current, amendment, store)
+    system = amendment.get("identity_schema") == SYSTEM_IDENTITY_SCHEMA
+    if system:
+        errors = system_proposal_errors(current, amendment, (amendment.get("review") or {}).get("reporter_items") or [])
+        if errors:
+            raise ValidationError("System amendment validation failed:\n  - " + "\n  - ".join(errors))
+    validate_affected(current, amendment, store, consume_defects=system)
     runtime_rebased = _verify_base(current, amendment)
     expected_acceptance = (amendment.get("base") or {}).get("acceptance_sha256")
     if expected_acceptance and _acceptance_digest(acceptance) != expected_acceptance:
@@ -1747,6 +1827,8 @@ def _apply_new_amendment(current: Manifest, manifest_path: str, amendment: dict,
     amended.meta["amendment_apply"] = _prepare_apply_ledger(
         amended, amendment["amendment_id"], minimal, corrections, store, amendment_file,
         merging_responsibility_nodes, budget_bindings=budget_bindings)
+    if amendment.get("identity_schema") == SYSTEM_IDENTITY_SCHEMA:
+        amended.meta["amendment_apply"]["system"] = True
     amended.meta["last_amendment_id"] = amendment.get("amendment_id")
     save_manifest(amended, manifest_path)
     return amended, minimal, runtime_rebased

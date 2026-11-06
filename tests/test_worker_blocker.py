@@ -3,6 +3,7 @@
 The persistence side (idempotent stop, interrupted writes, stale projections, collection) runs on Docker Multica:
 tests/it/test_it_worker_blocker.py.
 """
+import json
 from dataclasses import replace
 
 import pytest
@@ -145,9 +146,64 @@ def test_a_quality_gate_stop_needs_a_failing_command_among_its_evidence(case):
         worker_blocker._validate(report, item.id)
 
 
+def defect_report(item, **over):
+    report = {**make_report(item), "reason_code": "upstream-defect", "defects": [{
+        "class": "design-gap", "suspected_node": "lib", "anchors": ["FLOW-1/ACT-1"], "design_ref": "docs/design.md#4",
+        "expected": "GET /items returns views", "observed": "views missing", "locations": ["lib/items.py:list_items"],
+        "repro": {"command": "pytest -q tests/e2e", "exit_code": 1}}]}
+    report["evidence"] = [{"ref": "artifacts/e2e.log", "observation": "e2e fails on the missing field"}]
+    return {**report, **over}
+
+
+def test_an_upstream_defect_report_carries_a_defects_list_checked_at_submit_time(case):
+    item, _ = case
+
+    worker_blocker._validate(defect_report(item), item.id)
+    for broken in (
+        {"defects": []},
+        {"defects": [{**defect_report(item)["defects"][0], "class": "bug"}]},
+        {"defects": [{**defect_report(item)["defects"][0], "repro": {"command": "x", "exit_code": 0}}]},
+    ):
+        with pytest.raises(ValidationError):
+            worker_blocker._validate(defect_report(item, **broken), item.id)
+
+
+def test_only_an_upstream_defect_may_carry_defects_and_it_must(case):
+    item, report = case
+    with pytest.raises(ValidationError):
+        worker_blocker._validate({**report, "defects": defect_report(item)["defects"]}, item.id)
+    missing = defect_report(item)
+    del missing["defects"]
+    with pytest.raises(ValidationError):
+        worker_blocker._validate(missing, item.id)
+
+
+def test_an_environment_failure_needs_a_failing_command_like_a_quality_gate(case):
+    item, report = case
+
+    worker_blocker._validate({**report, "reason_code": "environment-failure"}, item.id)
+    ok_only = [{"ref": "artifacts/ok.log", "command": "git push", "exit_code": 0, "observation": "pushed"}]
+    with pytest.raises(ValidationError):
+        worker_blocker._validate({**report, "reason_code": "environment-failure", "evidence": ok_only}, item.id)
+
+
+def test_a_v3_report_may_be_up_to_six_kib_and_the_persisted_decision_stays_under_the_metadata_limit(case):
+    item, _ = case
+    big = defect_report(item)
+    big["defects"] = [{**big["defects"][0], "anchors": [f"FLOW-{n}/ACT-1"], "expected": "e" * 250, "observed": "o" * 250,
+                       "locations": ["l" * 100] * 2} for n in range(5)]
+    assert 4000 < len(json.dumps(big)) <= 6144
+
+    worker_blocker._validate(big, item.id)
+    decision = worker_blocker.decision_record(item, review_context_binding(item), big)
+    assert len(json.dumps(decision)) < 8 * 1024
+    assert_metadata_write_allowed("decision_required", decision)
+
+
 def test_an_oversized_report_is_refused_before_the_store_is_touched(case):
     item, report = case
-    report["summary"] = "x" * 2048
+    report["summary"] = "x" * 4000
+    report["decision_needed"] = "y" * 4000
 
     with pytest.raises(ValidationError):
         worker_blocker.report_decision(None, None, item.id, report)       # no store and no runtime: nothing could have been read or written
@@ -169,3 +225,16 @@ def test_work_show_exposes_the_exact_binding_without_claiming_to_authenticate_th
 
     assert template["issue_id"] == item.id and template["handoff_generation"] == "generation" and template["run_id"] == "run"
     assert template["review_context_binding"] == review_context_binding(item)
+
+
+def test_an_environment_failure_report_needs_a_command_that_failed(case):
+    item, report = case
+    report["reason_code"] = "environment-failure"
+    worker_blocker._validate(report, item.id)               # the evidence of the fixture has a failing command
+
+    report["evidence"] = [{"ref": "artifacts/push.log", "observation": "git push timed out"}]
+    with pytest.raises(ValidationError):
+        worker_blocker._validate(report, item.id)
+    report["evidence"] = [{"ref": "artifacts/push.log", "command": "git push", "exit_code": 0, "observation": "ok"}]
+    with pytest.raises(ValidationError):
+        worker_blocker._validate(report, item.id)

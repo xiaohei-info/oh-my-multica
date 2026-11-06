@@ -58,6 +58,11 @@ conflict or cannot be reproduced, do not infer pass.
   its `evidence_mode`, `consumes`, and `produces`. A fixture node proves itself
   with complete executable fixtures; it must not be required to wait for an
   undeclared live environment or downstream output.
+- A node with `evidence_mode: live`: the reviewer host usually has no live environment. Do not reject because a live
+  command cannot be rerun, and never make rerunning one an obligation. Review the PR diff and the live evidence the Worker
+  submitted in verification instead: commands, real exit codes, artifact paths, and run times must be complete,
+  consistent with each other, and map to the contract's verification and integration gates. Only missing or unmappable
+  live evidence is a blocker; commands that need no live environment (unit tests, lint, build) are still rerun independently.
 
 ## Finite coverage and regression
 
@@ -75,6 +80,10 @@ conflict or cannot be reproduced, do not infer pass.
   not `fixed` must remain in `blockers` with the same root and a classification
   matching `prior_blocker_results`; a root declared fixed cannot also remain a
   current blocker.
+- Write a **node id** as a blocker `owner`. When the root cause of a blocker sits in a finished upstream node, set
+  `owner` to that node id: if every open blocker of the round is owned by a finished upstream node, OMAC does not bounce
+  the node back for rework but handles it as an upstream defect (no review bounce is spent). One blocker without an
+  `owner`, or owned by this node, keeps the ordinary rework.
 - When a cycle may qualify as `scope-expanding`, add a stable `owner` to every
   open blocker. Multiple blockers may share an owner, but at least two distinct
   owners and two consecutive non-reducing blocker transitions are required before
@@ -103,7 +112,9 @@ conflict or cannot be reproduced, do not infer pass.
    and submission command.
 2. Open the actual artifact or PR diff. An author narrative is not evidence.
 3. Build an independent environment from `env_setup`, rerun verification and
-   integration commands, and record real exit codes and results.
+   integration commands, and record real exit codes and results. Exception: a
+   `evidence_mode: live` node; do not rerun commands that need the live environment,
+   review the Worker's submitted live evidence as described above.
 4. Check requested behavior is present and non-goals and adjacent scope are
    respected.
 5. Check source-of-truth alignment and shared contracts; imports are permitted,
@@ -123,7 +134,17 @@ conflict or cannot be reproduced, do not infer pass.
    In develop review, require the complete end-to-end flow only for
    `acceptance_claims`; check only declared Actions and the node contract for
    `acceptance_contributions`; `acceptance_refs` are trace-only and create no
-   full-journey or business-test obligation.
+   full-journey or business-test obligation. They are summarized in one
+   `trace:refs` obligation: check whether those flows contain business behavior
+   this node is responsible for but did not declare as a contribution.
+   When an `acceptance-action:*`, `interface:*` or `registry:*` obligation is a
+   `pass`, its evidence must contain a locator: a repository path with a file
+   extension (such as `src/api/packs.py:build_view`) or a test name (such as
+   `test_pack_views`); otherwise the submission is rejected.
+   The closeout node's review has one more obligation, `followups:triage`: run
+   `omac dag followups <manifest>`; every follow-up (`<node>#<n>`) must be disposed of in this delivery
+   as `fix`, `defer` or `drop`. A `pass` lists each follow-up on its own line with the id, the disposition and
+   where (for example `api-core#1: defer - docs/followups.md`); a missing one is rejected.
 9. Reject coverage below its gate.
 10. Treat `scope_paths` as primary ownership. Required supporting files are valid
    when they serve the contract and are explained; unrelated scope growth,
@@ -133,6 +154,12 @@ conflict or cannot be reproduced, do not infer pass.
     Also read the compact responsibility matrix and find all missing or duplicate
     owners, business-Action gaps, unknown Actions, and contribution owners outside
     the full-owner dependency closure in the same round instead of sampling.
+    The `interface:matrix` obligation (generated when any `requires` exists) gives the whole interface matrix
+    (consumer, producer, `requires`, the producer's `provides`): judge from each consumer's seat whether what the
+    producer declares carries its objective; write each gap as a blocker naming the id to add to `provides`/`requires`;
+    disposition every row, do not sample. In `acceptance review`, the `requirements:extraction` obligation (generated when
+    the document has `requirements`): check against the design that the extraction is complete (nothing dropped, nothing
+    invented), that each non-in-scope `reason` holds, and that each `source` anchor points at the text it claims.
     In `amendment review`, disposition the before/after responsibility obligation
     and its historical-correction audit. A done/merged correction may change only
     acceptance responsibility and named gate `acceptance_refs`; it must not demand

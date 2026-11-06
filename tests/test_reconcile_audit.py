@@ -78,7 +78,7 @@ def test_old_or_invalid_audit_meta_requires_first_full_scan():
 
     for meta in cases:
         assert reconcile_audit.should_full_scan(
-            Manifest(meta=meta, nodes={}), config, now=NOW)
+            Manifest(meta={}, nodes={}, dag_state=meta), config, now=NOW)
 
 
 def test_successful_full_scan_resets_persisted_audit_state(tmp_path):
@@ -89,7 +89,7 @@ def test_successful_full_scan_resets_persisted_audit_state(tmp_path):
     save_manifest(manifest, path)
 
     reloaded = load_manifest(path)
-    assert reloaded.meta["reconcile_audit"] == {
+    assert reloaded.dag_state["reconcile_audit"] == {
         "schema": "omac.reconcile-audit/v1",
         "last_full_scan_at": "2026-08-11T12:00:00Z",
         "completed_interval_ticks": 0,
@@ -109,7 +109,7 @@ def test_successful_interval_tick_persists_counter_across_reload(tmp_path):
     save_manifest(restarted, path)
 
     reloaded = load_manifest(path)
-    assert reloaded.meta["reconcile_audit"]["completed_interval_ticks"] == 1
+    assert reloaded.dag_state["reconcile_audit"]["completed_interval_ticks"] == 1
     assert not reconcile_audit.should_full_scan(
         reloaded, _config(), now=NOW + timedelta(seconds=1))
 
@@ -142,7 +142,7 @@ def test_cli_schedule_persists_first_full_scan_and_skips_static_after_reload(
         config={"reconcile": _config()})
 
     assert scans == [True, False]
-    assert load_manifest(path).meta["reconcile_audit"]["completed_interval_ticks"] == 1
+    assert load_manifest(path).dag_state["reconcile_audit"]["completed_interval_ticks"] == 1
 
 
 def test_interval_and_age_thresholds_each_force_full_scan():
@@ -176,10 +176,10 @@ def test_interval_and_age_thresholds_each_force_full_scan():
 def test_future_or_unsupported_audit_state_forces_full_without_mutation(
         audit_state):
     manifest = Manifest(
-        meta={"reconcile_audit": dict(audit_state)}, nodes={})
+        meta={}, nodes={}, dag_state={"reconcile_audit": dict(audit_state)})
     before = {"reconcile_audit": dict(audit_state)}
 
     assert reconcile_audit.should_full_scan(manifest, _config(), now=NOW)
-    assert manifest.meta == before
+    assert manifest.dag_state == before
 
 

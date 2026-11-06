@@ -41,7 +41,7 @@ flows:
 
 | 字段 | 语义 |
 |---|---|
-| `schema` | 新产物固定为 `omac.acceptance/v2`；v1 仅用于读取历史产物。 |
+| `schema` | 新产物用 `omac.acceptance/v2` 或 `omac.acceptance/v3`（需要 `requirements` 时必须 v3，见下）；v1 仅用于读取历史产物。 |
 | `flows` | 非空 flow 列表；每个 flow 是一个可独立验收的端到端路径。 |
 | `flow.id` | 唯一、稳定的标识，供 manifest claim/contribution/ref 和最终验收结果引用。 |
 | `flow.name` | 非空的人类可读名称，说明被验收的用户结果。 |
@@ -51,6 +51,30 @@ flows:
 | `step` | 用户或系统正在执行的动作。 |
 | `how` | 可复制的入口、命令、页面、参数或测试数据。 |
 | `expected` | 可观察结果以及据此判断失败的标准。 |
+
+## v3：`requirements` 与 `action.requirement_ids`
+
+`omac.acceptance/v3` 在 v2 之上增加顶层 `requirements` 与可选的 `action.requirement_ids`：
+
+```yaml
+schema: omac.acceptance/v3
+requirements:
+  - id: REQ-012                    # 唯一，[A-Za-z0-9._-]
+    source: "docs/design.md#4.2"   # 设计锚点，非空
+    summary: "…"                   # ≤ 200 字符
+    disposition: in-scope          # in-scope | out-of-scope | deferred
+    verification: action           # action | technical（technical = 无验收动作，由节点 requirement_refs 认领）
+    reason: "…"                    # disposition ≠ in-scope 时必填
+flows:
+  - id: flow-x
+    name: …
+    actions:
+      - {id: ACT-1, kind: business-action, step: …, how: …, expected: …, requirement_ids: [REQ-012]}
+```
+
+机器门检查：需求 id 唯一；`requirement_ids` 只能引用已知的 in-scope、`verification: action` 的需求；每条这样的需求
+至少被一个 action 引用。`requirements` 必需与否按规模：business-action 数超过 `plan.light_max_business_actions`
+（默认 20）时必需，更小的文档可省略（有就检查）。`requirements` 与 `requirement_ids` 只在 v3 合法。
 
 结构化 YAML 是唯一权威；说明性正文不能成为第二套事实源。当前 submit validator 直接把
 提交文件解析为 YAML mapping，因此不要在 YAML 文档后追加无法解析的 Markdown 正文。

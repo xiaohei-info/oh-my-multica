@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
 from ..core import logsetup
+from ..core.config import DEFAULT_REVIEW
 from ..core.evidence import validate_review_evidence
 from ..core.manifest import Contract, _dump_contract, _load_contract
 from ..core.machine_feedback import (
@@ -1006,6 +1007,7 @@ class _TaskRun:
         self, engine, kind, payload, assignee, *, reviewers, max_revisions, poll, guard, confirm,
         pause_at_confirmation, source_refs, dag_key, resume_item_id, amendment_attempt,
         reuse_dag_key, review_acceptance_doc, review_amendment_manifest, restart_active, refresh_source,
+        invalid_evidence_restarts,
     ):
         self.engine = engine
         self.store = engine.store
@@ -1059,6 +1061,9 @@ class _TaskRun:
         self.review_limit = 0
         self.gate_round = 0
         self.gate_errors: List[str] = []
+        self.gate_error_counts: List[int] = []       # errors per gate round: a round that does not lower it stops the gate
+        self.invalid_evidence_restarts = invalid_evidence_restarts
+        self.invalid_restarts: Dict[str, int] = {}   # review subject digest -> restarts spent on invalid evidence
         self.last_opinion: Optional[str] = None
         self.stop: Optional[_Stop] = None
         self.finish_args: tuple[str, int, bool] = ("pass", 0, True)
@@ -1601,6 +1606,14 @@ class _TaskRun:
                 return Fact.GATE_CLEAR, self._obs()
             self.gate_round += 1
             self.gate_errors = errors
+            self.gate_error_counts.append(len(errors))
+            if len(self.gate_error_counts) > 1 and self.gate_error_counts[-1] >= self.gate_error_counts[-2]:
+                log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id,
+                         gate="guard", rounds=self.gate_round, errors=self.gate_error_counts[-1])
+                self.stop = _Stop(StopReason.GUARD_NON_REDUCING, "guard", self.gate_round, "\n".join(errors), logged=True)
+                feedback = build_machine_feedback("machine-gate", errors)
+                return Fact.GATE_NON_REDUCING, self._obs(
+                    feedback=feedback, feedback_summary=machine_feedback_summary(self.item_id, feedback))
             log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
                      gate="guard", round=self.gate_round, max=self.max_revisions)
             return Fact.GATE_RETRY, self._obs()
@@ -1692,12 +1705,33 @@ class _TaskRun:
         evidence_errors = _review_evidence_errors(self.contract, self.reviewed)
         if not evidence_errors:
             return Fact.VERDICT_READY, self._obs()
+        spent = self.invalid_restarts.get(self.subject_digest, 0)
+        if spent >= self.invalid_evidence_restarts:
+            return self._evidence_invalid_stop(evidence_errors)
+        self.invalid_restarts[self.subject_digest] = spent + 1
         log.info(logsetup.EVT_REVISION, kind=self.kind.value, id=self.item_id,
                  gate="review-evidence", round=self.round_index, max=self.review_limit)
         feedback = build_machine_feedback("review-evidence", evidence_errors)
         return Fact.EVIDENCE_INVALID, self._obs(
             subject_digest=self.subject_digest, feedback=feedback,
             feedback_summary=machine_feedback_summary(self.item_id, feedback))
+
+    def _evidence_invalid_stop(self, errors: List[str]):
+        """The Reviewer filed invalid evidence on this subject more often than the restart budget allows: a person decides."""
+        reviewed = self.reviewed
+        decision = build_stop(
+            StopReason.REVIEW_EVIDENCE_INVALID, kind=self.kind, item_id=self.item_id, dag_key=reviewed.dag_key,
+            gate="review-evidence", rounds=self.round_index, extra={
+                "restarts": self.invalid_evidence_restarts, "review_subject_digest": self.subject_digest,
+                "errors": [error[:300] for error in errors[:5]]})
+        log.info(logsetup.EVT_NEEDS_DECISION, kind=self.kind.value, id=self.item_id, gate="review-evidence",
+                 rounds=self.round_index)
+        self.stop = _Stop(StopReason.REVIEW_EVIDENCE_INVALID, "review-evidence", self.round_index, "\n".join(errors),
+                          logged=True, decision=decision)
+        return Fact.EVIDENCE_INVALID_EXHAUSTED, self._obs(
+            decision=decision,
+            decision_current=reviewed.decision_required == decision and reviewed.phase == TaskPhase.REVIEW,
+            already_blocked=reviewed.status == WorkItemStatus.BLOCKED)
 
     def _wait_for_prior_runs(self) -> None:
         """The producer's Run ends some time after its submit; no end is promised here beyond the Run's own."""
@@ -1846,6 +1880,22 @@ class _TaskRun:
                    f"{self.kind.value} 评审结论为 pass-with-nits（第 {stop.rounds} 轮）；未做任何修改。"
                    f"用 `{action}` 接受建议项" + (f"，或用 `{decline}` 退回作者返工。" if decline else "。")),
                 report=report)
+        if stop.reason is StopReason.REVIEW_EVIDENCE_INVALID:
+            return NeedsDecision(
+                ui(f"{self.kind.value} review evidence was invalid {self.invalid_evidence_restarts + 1} times on the same "
+                   f"delivery; the Reviewer was not asked again."
+                   + (f" Run `{action}` to clear this stop and review again." if action else ""),
+                   f"{self.kind.value} 评审证据在同一交付上连续 {self.invalid_evidence_restarts + 1} 次无效；"
+                   f"未再次派发 Reviewer。" + (f"运行 `{action}` 解除停止并重新评审。" if action else "")),
+                report=report)
+        if stop.reason is StopReason.GUARD_NON_REDUCING:
+            return NeedsDecision(
+                ui(f"{self.kind.value} machine gate stopped at round {stop.rounds}: the error count did not fall from the "
+                   f"previous round, so more revisions would not converge."
+                   + (f" Fix the listed errors, then run `{action}`." if action else ""),
+                   f"{self.kind.value} 任务 machine-gate 在第 {stop.rounds} 轮停止：错误数较上一轮没有减少，继续返工不会收敛。"
+                   + (f"请先处理报告中的完整错误清单，再运行 `{action}`。" if action else "")),
+                report=report)
         if stop.reason is StopReason.GUARD_BUDGET:
             return NeedsDecision(
                 ui(f"{self.kind.value} did not pass the machine gate after {self.max_revisions} revisions"
@@ -1913,6 +1963,7 @@ def run_task(
     review_amendment_manifest: Any = None,
     restart_active: bool = False,
     refresh_source: bool = False,
+    invalid_evidence_restarts: int = DEFAULT_REVIEW["invalid_evidence_restarts"],
 ) -> Dict[str, Any]:
     """派任务→等终态→取交付→有界修订循环。
 
@@ -1929,4 +1980,5 @@ def run_task(
         amendment_attempt=amendment_attempt, reuse_dag_key=reuse_dag_key,
         review_acceptance_doc=review_acceptance_doc,
         review_amendment_manifest=review_amendment_manifest, restart_active=restart_active, refresh_source=refresh_source,
+        invalid_evidence_restarts=invalid_evidence_restarts,
     ).run()

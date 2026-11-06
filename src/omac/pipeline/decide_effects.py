@@ -41,6 +41,13 @@ class SetNode(Effect):
 
 
 @dataclass(frozen=True)
+class SetDagFact(Effect):
+    """Set one DAG-level runtime fact (``_dag.yaml``: ``reconcile_audit``...) in memory; ``SaveState`` makes it durable."""
+    key: str
+    value: Any
+
+
+@dataclass(frozen=True)
 class SaveState(Effect):
     """Persist the manifest (atomic, incremental). Everything before it in the plan is durable after it."""
 

@@ -26,12 +26,25 @@ docs/design/README.md §6:配置与状态一律 YAML 进 git,不用 SQLite。
       ci: 3                                    # CI 失败 → worker 重修(0 = 立即 blocked,不回退)
       review: 3                                # reviewer reject → worker 重修(节点开发与 plan 流水线共用)
       merge: 3                                 # 合并冲突 → worker 重解
+      environment: 1                           # Worker 报 environment-failure(推送/网络等环境故障)→ 同一 worker 自动重试次数;
+                                               # 用尽后 exit 20,报告给出可复制的 `node retry --worker <下一个>`
       no_submit_runs: 2                        # reviewer 连续结束 Run 未提交裁决的续跑预算(须 ≥ 1;
                                                # 不含基础设施瞬时失败预算,后者固定为 2)
     review:
       node_nits: accept                        # DAG develop 节点 pass-with-nits:accept(默认)= 视为通过并合并,
                                                # nits 留在评审报告;decide = 停在 exit 20 等 `omac node accept-nits`。
                                                # 不影响 plan 各阶段与 amendment(它们始终等人)
+      invalid_evidence_restarts: 2             # 同一评审对象上，评审证据无效后重派 Reviewer 的上限（超出停在 review-evidence-invalid）
+    plan:                                      # plan 档位（代码按规模判定，模型不能选）
+      profile: auto                            # auto | light | standard；只允许人强制
+      light_max_nodes: 12                      # light 档：拆解节点数上限
+      light_max_business_actions: 20           # light 档：验收 business-action 数上限
+    dispatch:
+      hold_live: false                         # true = 就绪的 contract.evidence_mode: live 节点由代码自动挂起(等人 release)
+    defects:                                   # 上游缺陷回流(WP3):报告者给出结构化缺陷,代码校验后自动插入修复节点
+      auto_fix: design-gap                     # off | design-gap;off = 一律停在 exit 20 等人
+      per_reporter: 2                          # 每个报告者可自动修复的次数(`omac defect grant` 补充)
+      max_auto_fixes: auto                     # 全局自动修复次数;auto = max(5, ceil(0.15 × 节点数))
     reconcile:                                 # P3 低频全量审计调度
       full_scan_interval_ticks: 20             # 成功 active tick 数达到此值后，下轮全量读取
       full_scan_max_age_seconds: 1800          # 距上次成功全量读取的最长秒数
@@ -68,6 +81,7 @@ DEFAULT_RETRY = {
     "ci": 3,
     "review": 3,
     "merge": 3,
+    "environment": 1,
 }
 
 # 总控验收外层循环上限(docs/design/README.md §6;与 retry 正交)
@@ -82,14 +96,21 @@ DEFAULT_MAX_ROUNDS = 3
 DEFAULT_NO_SUBMIT_RUNS = 2
 
 # DAG develop 节点的 pass-with-nits:accept = 视为通过(nits 原文留在评审报告);decide = 停下等 `omac node accept-nits`。
-DEFAULT_REVIEW = {"node_nits": "accept"}
+DEFAULT_REVIEW = {"node_nits": "accept", "invalid_evidence_restarts": 2}
 NODE_NITS_MODES = ("accept", "decide")
+
+# plan 档位：light（小 DAG，不加新门）/ standard（接口与收尾门）。profile 只允许人强制，默认 auto 由代码按规模判定。
+PLAN_PROFILES = ("auto", "light", "standard")
+DEFAULT_PLAN = {"profile": "auto", "light_max_nodes": 12, "light_max_business_actions": 20}
 
 # P3: successful active ticks allowed between persisted full reconcile audits.
 DEFAULT_RECONCILE = {
     "full_scan_interval_ticks": 20,
     "full_scan_max_age_seconds": 1800,
 }
+
+DEFAULT_DEFECTS = {"auto_fix": "design-gap", "per_reporter": 2, "max_auto_fixes": "auto"}
+DEFECT_AUTO_FIX_MODES = ("off", "design-gap")
 
 DEFAULT_GITHUB_CHECK_COMMAND = "gh pr checks {pr_url} --watch --fail-fast"
 DEFAULT_GITHUB_MERGE_COMMAND = "gh pr merge {pr_url} --squash --delete-branch"
@@ -227,6 +248,42 @@ def resolve_node_nits(config: dict) -> str:
     return validate_node_nits(raw.get("node_nits", DEFAULT_REVIEW["node_nits"]))
 
 
+def _non_negative_int(section: str, key: str, value, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValidationError(ui(
+            f"{section}.{key} must be an integer >= {minimum}; got {value!r}",
+            f"{section}.{key} 必须是 >= {minimum} 的整数(非法值 {value!r})"))
+    return value
+
+
+def resolve_invalid_evidence_restarts(config: dict) -> int:
+    """review.invalid_evidence_restarts:同一评审对象上评审证据无效后重派 Reviewer 的上限（0 = 首次无效即停）。"""
+    raw = get_value(config, "review")
+    if not isinstance(raw, dict):
+        return DEFAULT_REVIEW["invalid_evidence_restarts"]
+    return _non_negative_int("review", "invalid_evidence_restarts",
+                             raw.get("invalid_evidence_restarts", DEFAULT_REVIEW["invalid_evidence_restarts"]), 0)
+
+
+def resolve_plan(config: dict) -> dict:
+    """解析 plan.profile / light_max_nodes / light_max_business_actions；非法值 fail-closed。"""
+    raw = get_value(config, "plan")
+    if raw is None:
+        return dict(DEFAULT_PLAN)
+    if not isinstance(raw, dict):
+        raise ValidationError(ui(
+            f"plan must be a YAML mapping; got {type(raw).__name__}",
+            f"plan 配置应为 YAML 映射,got {type(raw).__name__}"))
+    profile = raw.get("profile", DEFAULT_PLAN["profile"])
+    if profile not in PLAN_PROFILES:
+        raise ValidationError(ui(
+            f"plan.profile must be one of {', '.join(PLAN_PROFILES)}; got {profile!r}",
+            f"plan.profile 必须是 {' / '.join(PLAN_PROFILES)} 之一(非法值 {profile!r})"))
+    return {"profile": profile, **{
+        key: _non_negative_int("plan", key, raw.get(key, DEFAULT_PLAN[key]), 1)
+        for key in ("light_max_nodes", "light_max_business_actions")}}
+
+
 def validate_node_nits(value) -> str:
     if value not in NODE_NITS_MODES:
         raise ValidationError(ui(
@@ -235,6 +292,47 @@ def validate_node_nits(value) -> str:
             f"review.node_nits 必须是 {' / '.join(NODE_NITS_MODES)} 之一(非法值 {value!r})。"
             "accept 让带 nits 通过的 develop 节点直接合并;decide 则停下等 `omac node accept-nits`。"))
     return value
+
+
+def resolve_hold_live(config: dict) -> bool:
+    """解析 dispatch.hold_live(布尔,缺省 false);非法值 fail-closed。"""
+    raw = get_value(config, "dispatch")
+    if raw is None:
+        return False
+    if not isinstance(raw, dict):
+        raise ValidationError(ui(
+            f"dispatch must be a YAML mapping; got {type(raw).__name__}",
+            f"dispatch 配置应为 YAML 映射,got {type(raw).__name__}"))
+    return validate_hold_live(raw.get("hold_live", False))
+
+
+def validate_hold_live(value) -> bool:
+    if not isinstance(value, bool):
+        raise ValidationError(ui(
+            f"dispatch.hold_live must be true or false; got {type(value).__name__}({value!r})",
+            f"dispatch.hold_live 必须为布尔值 true/false,got {type(value).__name__}({value!r})"))
+    return value
+def resolve_defects(config: dict, node_count: int) -> dict:
+    """解析 defects 块(auto_fix / per_reporter / max_auto_fixes);``auto`` 的全局上限按节点数折算成整数;非法值 fail-closed。"""
+    raw = get_value(config, "defects")
+    if raw is not None and not isinstance(raw, dict):
+        raise ValidationError(ui(
+            f"defects must be a YAML mapping; got {type(raw).__name__}",
+            f"defects 配置应为 YAML 映射,got {type(raw).__name__}"))
+    resolved = {**DEFAULT_DEFECTS, **(raw or {})}
+    if resolved["auto_fix"] not in DEFECT_AUTO_FIX_MODES:
+        raise ValidationError(ui(
+            f"defects.auto_fix must be one of {', '.join(DEFECT_AUTO_FIX_MODES)}; got {resolved['auto_fix']!r}",
+            f"defects.auto_fix 必须是 {' / '.join(DEFECT_AUTO_FIX_MODES)} 之一(非法值 {resolved['auto_fix']!r})"))
+    if resolved["max_auto_fixes"] == "auto":
+        resolved["max_auto_fixes"] = max(5, -(-node_count * 15 // 100))
+    for key in ("per_reporter", "max_auto_fixes"):
+        value = resolved[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValidationError(ui(
+                f"defects.{key} must be an integer >= 0{' or auto' if key == 'max_auto_fixes' else ''}; got {value!r}",
+                f"defects.{key} 必须是 >= 0 的整数{'(或 auto)' if key == 'max_auto_fixes' else ''},非法值 {value!r}"))
+    return resolved
 
 
 def resolve_reconcile(config: dict) -> dict:
