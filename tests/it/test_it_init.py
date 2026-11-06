@@ -39,7 +39,7 @@ def test_flags_write_a_valid_config_and_the_check_passes(here, stack, capsys):
     assert code == exit_codes.OK and (cfg["engine"], cfg["workspace"], cfg["project"]) == ("multica", stack.workspace_id, stack.project_id)
     assert (cfg["roles"]["planner"], cfg["roles"]["orchestrator"], cfg["roles"]["workers"], cfg["roles"]["reviewers"]) == (
         "alice", "bob", ["charlie"], ["alice", "bob"])
-    assert "acceptor" not in cfg["roles"] and cfg["defaults"]["max_parallel"] == 7 and cfg["retry"] == {"worker": 3, "ci": 1, "review": 2, "merge": 0}
+    assert "acceptor" not in cfg["roles"] and cfg["defaults"]["max_parallel"] == 7 and cfg["retry"] == {"worker": 3, "ci": 1, "review": 2, "merge": 0, "environment": 1}
     capsys.readouterr()
     assert main(["init", "--check"]) == exit_codes.OK
 
@@ -104,7 +104,7 @@ def test_the_wizard_defaults_make_a_config_the_check_accepts(here, stack, store,
 
     cfg = config_of(here)
     assert (cfg["engine"], cfg["language"], cfg["roles"]["planner"], cfg["roles"]["workers"]) == ("multica", "en", first, [first])
-    assert "acceptor" not in cfg["roles"] and cfg["defaults"]["max_parallel"] == 6 and cfg["retry"] == {"worker": 3, "ci": 1, "review": 2, "merge": 0}
+    assert "acceptor" not in cfg["roles"] and cfg["defaults"]["max_parallel"] == 6 and cfg["retry"] == {"worker": 3, "ci": 1, "review": 2, "merge": 0, "environment": 1}
     assert cfg["workflow"] == {"human_in_loop": True, "review": True, "acceptance_doc": True, "goal_required": False}
     capsys.readouterr()
     assert main(["init", "--check"]) == exit_codes.OK
@@ -154,6 +154,6 @@ def test_init_writes_the_retry_acceptance_workflow_and_reconcile_defaults(here, 
     assert main(flags(stack)) == exit_codes.OK
 
     cfg = config_of(here)
-    assert cfg["retry"] == {"worker": 3, "ci": 3, "review": 3, "merge": 3}
+    assert cfg["retry"] == {"worker": 3, "ci": 3, "review": 3, "merge": 3, "environment": 1}
     assert cfg["acceptance"] == {"max_rounds": config_mod.DEFAULT_MAX_ROUNDS} and cfg["acceptance"]["max_rounds"] == 3
     assert cfg["workflow"] == config_mod.DEFAULT_WORKFLOW and cfg["reconcile"] == config_mod.DEFAULT_RECONCILE
