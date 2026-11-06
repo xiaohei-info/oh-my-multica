@@ -40,7 +40,9 @@ artifact boundary:
   executable deterministic fixtures owned by this node. Do not wait for an
   undeclared production environment or downstream artifact.
 - `evidence_mode: artifact|live` uses declared artifacts or real runtime facts
-  as the primary evidence class.
+  as the primary evidence class. The Reviewer of a `live` node does not rerun live
+  commands; it reviews the live evidence you submit, so put the live commands, real exit
+  codes, artifact paths, and run times in verification.
 - Follow `work show.context.responsibility.input_policy`: `allowlist` permits
   only typed `consumes`, `none` permits no external inputs, and
   `transitional-upstream` permits legacy inputs only from transitive

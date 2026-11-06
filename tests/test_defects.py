@@ -278,6 +278,19 @@ def test_a_report_that_cannot_be_fixed_by_code_stops_with_a_reason_and_commands(
     assert load_manifest(world.path).nodes["api"].status == "blocked"
 
 
+def test_an_environment_failure_report_is_never_routed_as_a_defect_even_if_the_flag_is_stale(world):
+    decision = blocker_decision([defect()])
+    decision["blocker"] = {"schema": "omac.worker-blocker/v3", "reason_code": "environment-failure"}
+    world.store.items["w-api"].decision_required = decision
+
+    advance(world)
+
+    on_disk = load_manifest(world.path)
+    carried = {reporter for entry in ledger(world)["entries"].values() for reporter in entry["reporters"]}
+    assert carried == {"web"} and on_disk.nodes["api"].blocked_by == ["lib"]            # only the real defect report (web) was routed
+    assert not load_manifest(world.path).nodes["api"].defect_pending and decision_of(world, "w-api") == decision
+
+
 def test_a_fix_node_that_reports_a_defect_is_never_fixed_automatically(world):
     advance(world)
     fix = fix_nodes(world)[0]

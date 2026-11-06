@@ -23,7 +23,7 @@ from ..core.amendment import _node_dict, build_system_amendment
 from ..core.config import resolve_defects
 from ..core.graph import SATISFIED
 from ..core.defects import (
-    INBOX_MAX, LEDGER_MAX_ENTRIES, build_fix_node, build_system_proposal, defect_errors, fingerprint, anchor_ids,
+    INBOX_MAX, LEDGER_MAX_ENTRIES, UPSTREAM_DEFECT, build_fix_node, build_system_proposal, defect_errors, fingerprint, anchor_ids,
     new_ledger, reporter_left, routing_problem,
 )
 from ..core.manifest import Manifest, adopt_disk
@@ -106,7 +106,7 @@ def _pending_reports(store, manifest: Manifest, ledger: dict) -> tuple[list[_Rep
         item = store.get_work_item(node.work_item_id) if node.status == "blocked" and node.work_item_id else None
         decision = item.decision_required if item is not None and isinstance(item.decision_required, dict) else {}
         blocker = decision.get("blocker") if isinstance(decision.get("blocker"), dict) else {}
-        if blocker.get("reason_code") != "upstream-defect":
+        if blocker.get("reason_code") != UPSTREAM_DEFECT:
             stale[key] = False
             continue
         source = "review" if decision.get("gate") == "review" else "worker"

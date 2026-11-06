@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, List, Set, Tuple
 import yaml
 
 from ..core import graph, logsetup
-from ..core.defects import defect_errors, review_origin_defects
+from ..core.defects import UPSTREAM_DEFECT, defect_errors, review_origin_defects
 from ..core.amendment import ensure_amendment_apply_complete
 from ..core.config import DEFAULT_RETRY, resolve_defects, resolve_hold_live, resolve_no_submit_runs, resolve_node_nits
 from ..core.contract_boundaries import (
@@ -63,6 +63,7 @@ from ..errors import AuthError, ObservationConflict, PlatformError, WorkItemNotF
 from ..i18n import current_language, ui
 from .decide_review import VerdictObservation, VerdictPath, decide_verdict_path
 from .decide_hold import AUTO_HELD_KEY, plan_auto_hold_live
+from . import worker_blocker
 from .followups import review_obligations_for
 from .decide_worker import (
     control_matches_handoff_candidate, handoff_has_new_delivery,
@@ -2940,7 +2941,7 @@ def _collect_worker_blocker(c: _Collect, n: _Node) -> bool:
         plan = plan_block(
             key, n.item.id, decision=escalation, write_decision=escalation is not None and escalation != decision,
             write_status=n.item.status != WorkItemStatus.BLOCKED)
-        if _blocker_reason(decision) == "upstream-defect":   # environment-failure never gets here: only this reason is routed
+        if _blocker_reason(decision) == UPSTREAM_DEFECT:   # environment-failure never gets here: only this reason is routed
             plan = Plan(plan.effects + (SetNode(key, {"defect_pending": True}),), plan.outcome)   # `dag run` routes it next
         _apply_plan(Ports(store=c.store), c.manifest, plan)
         c.failures[key] = str(decision.get("reason_code", "worker-decision-required"))
@@ -3641,11 +3642,11 @@ def _route_review_to_defect(c: _Collect, n: _Node) -> bool:
     if not defects or defect_errors(defects, repro_required=False):
         return False
     decision = {
-        "schema": DECISION_REQUIRED_SCHEMA, "reason_code": "upstream-defect", "kind": TaskKind.DEVELOP.value,
+        "schema": DECISION_REQUIRED_SCHEMA, "reason_code": UPSTREAM_DEFECT, "kind": TaskKind.DEVELOP.value,
         "phase": TaskPhase.REVIEW.value, "gate": "review", "resume_issue_id": n.item.id, "node_id": n.key,
-        "blocker": {"schema": "omac.worker-blocker/v3", "reason_code": "upstream-defect", "defects": defects},
+        "blocker": {"schema": worker_blocker.SCHEMA, "reason_code": UPSTREAM_DEFECT, "defects": defects},
         "next_action": f"omac node retry {c.manifest_path} {n.key}"}
-    if len(json.dumps(decision, ensure_ascii=False).encode("utf-8")) > 6 * 1024:     # would not fit the 8 KiB metadata limit once stopped
+    if len(json.dumps(decision, ensure_ascii=False).encode("utf-8")) > worker_blocker.MAX_REPORT_BYTES:     # would not fit the 8 KiB metadata limit once stopped
         return False
     plan = plan_block(n.key, n.node.work_item_id, decision=decision, phase=TaskPhase.REVIEW, mark=True,
                       persist_marker=_recovery_path(c.manifest) is not None)

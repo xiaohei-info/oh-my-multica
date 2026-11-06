@@ -18,6 +18,8 @@ This file records public changes to oh-my-multica. The format follows
   with exit 20 and a copyable `omac node retry … --worker <next worker>`.
 - New: `dispatch.hold_live` (default false) holds a ready node whose `contract.evidence_mode` is `live` until `omac node release`.
 - New: `omac node retry --note <text>` puts an operator note into the Worker's issue body for that retry.
+- Change: the Reviewer of a node with `contract.evidence_mode: live` does not rerun commands that need the live environment (its
+  integration-gate obligations say so); it reviews the PR diff and the live evidence the Worker submitted.
 
 ## [2.4.0] — 2026-11-06
 

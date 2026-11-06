@@ -32,6 +32,7 @@
 - `evidence_mode: fixture` 表示用当前节点自带、完整可执行的确定性 fixture 证明工具或行为，
   不得自行等待未声明的生产环境或下游制品。
 - `evidence_mode: artifact|live` 分别表示以已声明制品或真实运行事实为主要证据。
+  `live` 节点的 Reviewer 不会复跑 live 命令，只审你提交的 live 证据：把 live 命令、真实退出码、产物路径和运行时间写进 verification。
 - 按 `work show.context.responsibility.input_policy` 判断输入：`allowlist` 只允许 typed
   `consumes`，`none` 不允许外部输入，`transitional-upstream` 仅在迁移旧运行 manifest 时
   允许传递上游输入；任何模式都不允许非上游或下游输入。当前节点只负责交付 `produces`。

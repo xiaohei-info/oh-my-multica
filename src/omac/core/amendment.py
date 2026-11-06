@@ -17,6 +17,7 @@ import yaml
 
 from .lint import lint
 from .graph import SATISFIED
+from .defects import UPSTREAM_DEFECT
 from .manifest import (
     Manifest, Node, RUNTIME_META_KEYS, _dump_contract, _load_contract, load_manifest, save_manifest,
 )
@@ -1423,7 +1424,7 @@ def validate_affected(manifest: Manifest, proposal: dict[str, Any], store: Any, 
                 f"`omac node show <manifest> {node_id}` before proposing or accepting this amendment") from exc
         # A system amendment is exactly what consumes an upstream-defect report; every other worker decision still needs a person.
         blocker = decision.get("blocker") if isinstance(decision, dict) else None
-        consumable = consume_defects and isinstance(blocker, dict) and blocker.get("reason_code") == "upstream-defect"
+        consumable = consume_defects and isinstance(blocker, dict) and blocker.get("reason_code") == UPSTREAM_DEFECT
         if isinstance(decision, dict) and decision.get("reason_code") == "worker-decision-required" and not consumable:
             raise ValidationError(
                 f"Affected node {node_id!r} holds an unresolved worker decision; resolve it first "

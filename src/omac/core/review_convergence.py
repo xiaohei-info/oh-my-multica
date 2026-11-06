@@ -533,6 +533,14 @@ def validate_review_ledger(
     return ledger
 
 
+def _integration_requirement(gate_name: str, live: bool) -> str:
+    """A live node's gate is judged from the live evidence the Worker submitted: the reviewer host rarely has that environment."""
+    if live:
+        return (f"Verify integration gate {gate_name} from the live evidence the Worker submitted (commands, exit codes, "
+                "artifacts) and the PR diff; this node's evidence_mode is live, so do not rerun commands that need the live environment")
+    return f"Independently verify integration gate {gate_name}"
+
+
 def _contract_value(contract: Any, name: str, default):
     if isinstance(contract, dict):
         return contract.get(name, default)
@@ -972,6 +980,8 @@ def build_review_obligations(
             "subject": {"flow_id": flow_id, "action_id": action_id},
         })
     gates = _contract_value(contract, "integration_gates", [])
+    mode = _contract_value(contract, "evidence_mode", None)
+    live = getattr(mode, "value", mode) == "live"
     gate_names = sorted({
         gate.get("name") for gate in gates
         if isinstance(gate, dict) and isinstance(gate.get("name"), str)
@@ -981,7 +991,7 @@ def build_review_obligations(
         obligations.append({
             "obligation_id": f"integration:{gate_name}",
             "category": "integration",
-            "requirement": f"Independently verify integration gate {gate_name}",
+            "requirement": _integration_requirement(gate_name, live),
             "subject": gate_name,
         })
     obligations.extend(_interface_chain_obligations(contract))

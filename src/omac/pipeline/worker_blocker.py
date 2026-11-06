@@ -3,7 +3,7 @@
 from copy import deepcopy
 import json
 
-from ..core.defects import defect_errors
+from ..core.defects import UPSTREAM_DEFECT, defect_errors
 from ..core.taskmeta import (
     DECISION_REQUIRED_SCHEMA,
     TaskKind,
@@ -18,7 +18,7 @@ from .decide_effects import UpdateMetadata, UpdateStatus
 from .decide_worker import ENVIRONMENT_FAILURE
 
 SCHEMA = "omac.worker-blocker/v3"
-REASONS = {"quality-gate-failed", "owner-decision-required", "upstream-defect", ENVIRONMENT_FAILURE}
+REASONS = {"quality-gate-failed", "owner-decision-required", UPSTREAM_DEFECT, ENVIRONMENT_FAILURE}
 # These two must show a command that really failed: the report is a claim, the non-zero exit is the evidence.
 FAILED_COMMAND_REASONS = {"quality-gate-failed", ENVIRONMENT_FAILURE}
 MAX_REPORT_BYTES = 6 * 1024     # the persisted decision (this report plus its envelope) stays under the 8 KiB metadata limit
@@ -79,7 +79,7 @@ def _validate(report, issue_id):
     if (
         not isinstance(reason, str)
         or reason not in REASONS
-        or set(report) != FIELDS | ({"defects"} if reason == "upstream-defect" else set())
+        or set(report) != FIELDS | ({"defects"} if reason == UPSTREAM_DEFECT else set())
     ):
         invalid()
     try:
@@ -88,7 +88,7 @@ def _validate(report, issue_id):
         invalid()
     if size > MAX_REPORT_BYTES:
         invalid()
-    if reason == "upstream-defect":
+    if reason == UPSTREAM_DEFECT:
         problems = defect_errors(report["defects"])
         if problems:
             invalid(": " + "; ".join(problems[:3]))

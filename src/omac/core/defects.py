@@ -16,6 +16,7 @@ from .acceptance_responsibility import dependency_closure
 from .manifest import Manifest, _dump_contract
 
 SYSTEM_POLICY = "defects"
+UPSTREAM_DEFECT = "upstream-defect"          # the worker-blocker reason code that carries a defect report
 CLASSES = ("design-gap", "contract-gap", "tradeoff")
 MAX_DEFECTS = 6
 FP_PREFIX = "dfx-"

@@ -308,3 +308,4 @@ def test_s8_an_environment_failure_goes_back_to_the_same_worker_once_then_stops_
     assert stopped.status == WorkItemStatus.BLOCKED and stopped.bounces.environment == 1
     assert stopped.decision_required["next_action"] == f"omac node retry {case.path} a --worker bob"
     assert stopped.decision_required["blocker"]["reason_code"] == "environment-failure"
+    assert not case.manifest.nodes["a"].defect_pending                  # an environment failure is never a defect report
