@@ -123,7 +123,13 @@ conflict or cannot be reproduced, do not infer pass.
    In develop review, require the complete end-to-end flow only for
    `acceptance_claims`; check only declared Actions and the node contract for
    `acceptance_contributions`; `acceptance_refs` are trace-only and create no
-   full-journey or business-test obligation.
+   full-journey or business-test obligation. They are summarized in one
+   `trace:refs` obligation: check whether those flows contain business behavior
+   this node is responsible for but did not declare as a contribution.
+   When an `acceptance-action:*`, `interface:*` or `registry:*` obligation is a
+   `pass`, its evidence must contain a locator: a repository path with a file
+   extension (such as `src/api/packs.py:build_view`) or a test name (such as
+   `test_pack_views`); otherwise the submission is rejected.
 9. Reject coverage below its gate.
 10. Treat `scope_paths` as primary ownership. Required supporting files are valid
    when they serve the contract and are explained; unrelated scope growth,

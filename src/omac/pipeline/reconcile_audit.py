@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..core.manifest import Manifest
+from .apply import ManifestState, Ports, apply_one
+from .decide_effects import SetDagFact
 
 
 META_KEY = "reconcile_audit"
@@ -31,7 +33,7 @@ def should_full_scan(
     write from silently delaying an audit.
     """
     current = _utc_now(now)
-    state = _load_state(manifest.meta.get(META_KEY))
+    state = _load_state(manifest.dag_state.get(META_KEY))
     if state is None or state.last_full_scan_at > current:
         return True
     if state.completed_interval_ticks >= config["full_scan_interval_ticks"]:
@@ -49,23 +51,20 @@ def record_successful_tick(
     """Record a completed runner tick after every tick phase has succeeded."""
     current = _utc_now(now)
     if full_scan:
-        manifest.meta[META_KEY] = {
-            "schema": SCHEMA,
-            "last_full_scan_at": _format_utc(current),
-            "completed_interval_ticks": 0,
-        }
+        _record(manifest, _format_utc(current), 0)
         return
 
-    state = _load_state(manifest.meta.get(META_KEY))
+    state = _load_state(manifest.dag_state.get(META_KEY))
     if state is None:
         # The caller should have selected a full scan. Retain the bad state so
         # a restart fails closed and schedules one instead of inventing facts.
         return
-    manifest.meta[META_KEY] = {
-        "schema": SCHEMA,
-        "last_full_scan_at": _format_utc(state.last_full_scan_at),
-        "completed_interval_ticks": state.completed_interval_ticks + 1,
-    }
+    _record(manifest, _format_utc(state.last_full_scan_at), state.completed_interval_ticks + 1)
+
+
+def _record(manifest: Manifest, last_full_scan_at: str, completed_interval_ticks: int) -> None:
+    fact = {"schema": SCHEMA, "last_full_scan_at": last_full_scan_at, "completed_interval_ticks": completed_interval_ticks}
+    apply_one(SetDagFact(META_KEY, fact), Ports(), ManifestState(manifest, None))
 
 
 def _load_state(raw: Any) -> AuditState | None:

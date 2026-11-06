@@ -187,8 +187,10 @@ must be acyclic.
 | `acceptance_doc` | Optional structured acceptance context when the instance contract needs it. |
 | `scope_paths` | Optional for running legacy manifests; new plan decomposition must declare exactly one primary code-ownership path. Supporting files remain explainable in the PR/verification. |
 | `evidence_mode` | Optional for running legacy manifests; new plan decomposition must explicitly choose `fixture`, `artifact`, or `live`. |
-| `produces` | Stable artifact IDs uniquely produced by this node, shaped as `{artifact_id}`. One artifact ID has one canonical producer. |
-| `consumes` | Tri-state input policy. Omitted permits transitional legacy inputs only from transitive upstream dependencies; `[]` permits no external input; a non-empty list is a strict `{artifact_id, producer, evidence_mode}` allowlist. Explicit `null` is invalid. New complete DAGs use explicit `[]` or a non-empty list. |
+| `produces` | Stable artifact IDs uniquely produced by this node, shaped as `{artifact_id}`. One artifact ID has one canonical producer. Optional `provides: [{id, ref}]` lists the checkable interface items of the artifact (`ref` is a design anchor); each becomes a producer review obligation `interface:<artifact>:<id>`. |
+| `consumes` | Tri-state input policy. Omitted permits transitional legacy inputs only from transitive upstream dependencies; `[]` permits no external input; a non-empty list is a strict `{artifact_id, producer, evidence_mode}` allowlist. Explicit `null` is invalid. New complete DAGs use explicit `[]` or a non-empty list. An entry may carry `requires: [<provides id>]`, which must be a subset of the producer artifact's `provides`; otherwise lint fails with a YAML snippet to paste. |
+| `registers` | Optional. The `meta.registries` entries this node adds to (a list of ids); each becomes a review obligation `registry:<id>`. Registries are declared in `meta.registries: [{id, ref, guard}]`; the `guard` node must run after every registrant. |
+| `requirement_refs`, `defect_refs` | Optional id lists, parsed and round-tripped only; used by the acceptance requirement list and defect feedback. |
 
 Each integration gate has `name`, `layer`, `delivery_goal`, and non-empty
 `source_of_truth`, `covers`, `acceptance_refs`, and `commands`. If present,

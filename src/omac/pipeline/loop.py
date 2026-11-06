@@ -36,7 +36,7 @@ from ..core.retry_budget import (
 from ..core.stage_recovery import stage_recovery_subject
 from ..core.gitsync import commit_manifest
 from ..core.manifest import (
-    Manifest, confirmed_merge_is_closed, save_manifest,
+    Manifest, confirmed_merge_is_closed, reload_if_definition_changed, save_manifest,
     set_node,
 )
 from ..pipeline.delivery import (
@@ -2636,6 +2636,7 @@ def reconcile_with_observations(
         save_manifest(candidate, manifest_path)
         manifest.meta = candidate.meta
         manifest.nodes = candidate.nodes
+        manifest._disk = candidate._disk
     return ReconcileResult(
         changed=changed,
         observations={
@@ -4293,6 +4294,9 @@ def tick(
     与「自动重试」不同 —— tick 不会把已 blocked 节点重置为 todo
     (必须经 `omac node retry` 显式决策);retry_limits 是节点内的有界往返。
     """
+    # 定义文件被外部改动(如 `node retry --worker`)时先重载,否则本轮的保存会把旧定义写回去。
+    if reload_if_definition_changed(manifest, manifest_path):
+        log.info(logsetup.EVT_DEFINITION_RELOADED, kind=_DAG_KIND, path=manifest_path)
     ensure_amendment_apply_complete(manifest, manifest_path)
     manifest._recovery_manifest_path = manifest_path
 

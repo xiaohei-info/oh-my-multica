@@ -17,7 +17,7 @@ import yaml
 
 from .lint import lint
 from .manifest import (
-    Manifest, Node, _dump_contract, _load_contract, load_manifest, save_manifest,
+    Manifest, Node, RUNTIME_META_KEYS, _dump_contract, _load_contract, load_manifest, save_manifest,
 )
 from .retry_budget import amendment_bounce_baseline, carry_forward_bounce_baselines, preserved_amendment_budget
 from .taskmeta import review_context_binding
@@ -111,7 +111,8 @@ def _node_dict(node: Node, *, include_runtime: bool) -> dict[str, Any]:
 def _manifest_payload(manifest: Manifest, *, include_runtime: bool) -> dict[str, Any]:
     meta = copy.deepcopy(manifest.meta)
     if not include_runtime:
-        meta.pop("amendment_apply", None)
+        for key in RUNTIME_META_KEYS:
+            meta.pop(key, None)
     return {
         "meta": meta,
         "nodes": [

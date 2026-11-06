@@ -2,6 +2,7 @@
 import os
 from .manifest import Manifest
 from .contract_boundaries import manifest_boundary_errors
+from .interfaces import interface_errors
 from .acceptance_responsibility import (
     contract_shape_errors,
     full_claims,
@@ -153,6 +154,7 @@ def lint(
         ):
             errs.extend(matrix_errors(m, acceptance))
     errs.extend(manifest_boundary_errors(m))
+    errs.extend(interface_errors(m))
     if _has_cycle(m.nodes):
         errs.append("manifest DAG has a cycle")
     return errs
@@ -193,6 +195,7 @@ def lint_increment(increment: Manifest, existing: Manifest, pool: set) -> list:
     combined = Manifest(meta=existing.meta, nodes=combined_nodes)
     errs.extend(manifest_boundary_errors(
         combined, node_ids=set(increment.nodes)))
+    errs.extend(interface_errors(combined, node_ids=set(increment.nodes)))
     if _has_cycle(combined_nodes):
         errs.append("increment introduces a cycle in the manifest DAG")
 

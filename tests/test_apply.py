@@ -6,7 +6,7 @@ from omac.core.workitem import WorkItemStatus
 from omac.pipeline.apply import ManifestState, Ports, apply
 from omac.pipeline.decide_effects import (
     AcknowledgeAssignment, AddComment, Assign, CancelRun, ClearAssignment, CreateWorkItem, DispatchReviewer, NormalizeConfirmedMerge,
-    Plan, PlanError, PrepareReviewCycle, RequestMerge, ResetReview, RestoreAuthoringGeneration, SaveState, SetAuthoringIdentity, SetNode,
+    Plan, PlanError, PrepareReviewCycle, RequestMerge, ResetReview, RestoreAuthoringGeneration, SaveState, SetAuthoringIdentity, SetDagFact, SetNode,
     SetNodeContract, UpdateMetadata, UpdateStatus, Wake, validate_plan,
 )
 
@@ -31,7 +31,7 @@ class Node:
 
 class Manifest:
     def __init__(self):
-        self.nodes = {"a": Node()}
+        self.nodes, self.dag_state = {"a": Node()}, {}
 
 
 def _ports(log):
@@ -99,6 +99,12 @@ def test_set_node_and_save_state_go_through_the_state_sink(monkeypatch):
     manifest = Manifest()
     apply([SetNode("a", {"status": "blocked"}), SaveState()], Ports(), ManifestState(manifest, "p.yaml"))
     assert manifest.nodes["a"].status == "blocked" and saved == [(manifest, "p.yaml")]
+
+
+def test_set_dag_fact_changes_dag_state_in_memory_until_save_state():
+    manifest = Manifest()
+    apply([SetDagFact("reconcile_audit", {"n": 1})], Ports(), ManifestState(manifest, None))
+    assert manifest.dag_state == {"reconcile_audit": {"n": 1}}
 
 
 INTENT = SetNode("a", {"merge_request_state": "intent"})
