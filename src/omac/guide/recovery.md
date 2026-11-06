@@ -111,6 +111,8 @@ develop 节点仍使用独立的 `omac node accept-nits`，两条路径不会互
 | `review-budget-exhausted` | reject 次数用尽 | `omac plan continue-review --dag-key <stage-key>` |
 | `review-convergence-*` | 同一根因 blocker 连续不收敛 | `omac plan continue-review --dag-key <stage-key>`（人工授权再试一轮）；或重新划定任务边界后重新 `plan create` |
 | `guard-budget-exhausted` | machine gate（lint/预检）用尽 | `omac plan resume --plan-id <id>`（显式再给一轮机器门预算） |
+| `guard-non-reducing` | 连续两轮机器门错误数没有减少，继续返工不会收敛；报告里有完整错误清单 | 先按清单修正（或调整 `plan.profile`/输入），再 `omac plan resume --plan-id <id>` |
+| `review-evidence-invalid` | 同一评审对象上 Reviewer 的评审证据连续无效，超过 `review.invalid_evidence_restarts`（默认 2） | `omac plan resume --plan-id <id>`（解除停止并重新评审） |
 | `completed-without-submit`、`unsafe-authoring-resume` | 作者 Run 已结束但没有可用交付 | `omac plan resume --plan-id <id> --restart-active` |
 | `reviewer-completed-without-verdict` | Reviewer Run 结束但没有 verdict | `omac plan resume --plan-id <id>` |
 

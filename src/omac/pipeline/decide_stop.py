@@ -28,6 +28,7 @@ CONVERGENCE_PREFIX = "review-convergence-"
 
 class StopReason(str, Enum):
     GUARD_BUDGET = "guard-budget-exhausted"
+    GUARD_NON_REDUCING = "guard-non-reducing"                       # two gate rounds in a row did not lower the error count
     REVIEW_BUDGET = "review-budget-exhausted"                       # a reject at the review limit
     REVIEW_NITS_BUDGET = "review-nits-budget-exhausted"             # recorded by versions before 2.1 (a delivery left unreviewed)
     REVIEW_NITS_ACCEPTANCE = "review-nits-acceptance-required"
@@ -35,6 +36,7 @@ class StopReason(str, Enum):
     COMPLETED_WITHOUT_SUBMIT = "completed-without-submit"
     UNSAFE_AUTHORING_RESUME = "unsafe-authoring-resume"
     REVIEWER_COMPLETED_WITHOUT_VERDICT = "reviewer-completed-without-verdict"
+    REVIEW_EVIDENCE_INVALID = "review-evidence-invalid"             # the Reviewer's report kept failing the evidence gate
     CONFIRMATION_REQUIRED = "confirmation-required"                 # the human gate: a passed delivery awaits a person
 
 
@@ -50,6 +52,7 @@ class Release(str, Enum):
 # The first release is the stop's next_action; the others are alternatives it lists.
 STOP_RELEASES: dict[StopReason, tuple[Release, ...]] = {
     StopReason.GUARD_BUDGET: (Release.RESUME,),
+    StopReason.GUARD_NON_REDUCING: (Release.RESUME,),
     StopReason.REVIEW_BUDGET: (Release.CONTINUE_REVIEW,),
     StopReason.REVIEW_NITS_BUDGET: (Release.CONTINUE_REVIEW,),
     StopReason.REVIEW_NITS_ACCEPTANCE: (Release.ACCEPT_NITS, Release.CONTINUE_REVIEW),
@@ -57,6 +60,7 @@ STOP_RELEASES: dict[StopReason, tuple[Release, ...]] = {
     StopReason.COMPLETED_WITHOUT_SUBMIT: (Release.RESTART_ACTIVE,),
     StopReason.UNSAFE_AUTHORING_RESUME: (Release.RESTART_ACTIVE,),
     StopReason.REVIEWER_COMPLETED_WITHOUT_VERDICT: (Release.RESUME,),
+    StopReason.REVIEW_EVIDENCE_INVALID: (Release.RESUME,),
     StopReason.CONFIRMATION_REQUIRED: (Release.CONFIRM, Release.REJECT_CONFIRMATION),
 }
 # Releases that do not continue the pipeline themselves: the stop's report names `plan resume` as the step after them.
@@ -261,9 +265,13 @@ class ResumeFacts:
     latest_run_terminal: bool = False
 
 
+_REVIEWER_STOPS = frozenset({StopReason.REVIEWER_COMPLETED_WITHOUT_VERDICT.value, StopReason.REVIEW_EVIDENCE_INVALID.value})
+
+
 def _reviewer_stop(facts: ResumeFacts) -> bool:
+    """A review-phase stop that only needs the Reviewer asked again: resuming clears it once no Run is live."""
     return (facts.phase == TaskPhase.REVIEW and facts.status == WorkItemStatus.BLOCKED
-            and facts.decision_reason == StopReason.REVIEWER_COMPLETED_WITHOUT_VERDICT.value)
+            and facts.decision_reason in _REVIEWER_STOPS)
 
 
 def _author_in_progress(facts: ResumeFacts) -> bool:

@@ -111,6 +111,14 @@ def _validate_set_value(key: str, value):
         config_mod.validate_node_nits(value)
         return
 
+    if key == "review.invalid_evidence_restarts":
+        config_mod.resolve_invalid_evidence_restarts({"review": {"invalid_evidence_restarts": value}})
+        return
+
+    if key.startswith("plan.") and key.split(".", 1)[1] in config_mod.DEFAULT_PLAN:
+        config_mod.resolve_plan({"plan": {key.split(".", 1)[1]: value}})
+        return
+
     if key.startswith("reconcile."):
         sub = key.split(".", 1)[1]
         if sub not in config_mod.DEFAULT_RECONCILE:

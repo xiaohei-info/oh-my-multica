@@ -32,6 +32,11 @@ docs/design/README.md §6:配置与状态一律 YAML 进 git,不用 SQLite。
       node_nits: accept                        # DAG develop 节点 pass-with-nits:accept(默认)= 视为通过并合并,
                                                # nits 留在评审报告;decide = 停在 exit 20 等 `omac node accept-nits`。
                                                # 不影响 plan 各阶段与 amendment(它们始终等人)
+      invalid_evidence_restarts: 2             # 同一评审对象上，评审证据无效后重派 Reviewer 的上限（超出停在 review-evidence-invalid）
+    plan:                                      # plan 档位（代码按规模判定，模型不能选）
+      profile: auto                            # auto | light | standard；只允许人强制
+      light_max_nodes: 12                      # light 档：拆解节点数上限
+      light_max_business_actions: 20           # light 档：验收 business-action 数上限
     reconcile:                                 # P3 低频全量审计调度
       full_scan_interval_ticks: 20             # 成功 active tick 数达到此值后，下轮全量读取
       full_scan_max_age_seconds: 1800          # 距上次成功全量读取的最长秒数
@@ -82,8 +87,12 @@ DEFAULT_MAX_ROUNDS = 3
 DEFAULT_NO_SUBMIT_RUNS = 2
 
 # DAG develop 节点的 pass-with-nits:accept = 视为通过(nits 原文留在评审报告);decide = 停下等 `omac node accept-nits`。
-DEFAULT_REVIEW = {"node_nits": "accept"}
+DEFAULT_REVIEW = {"node_nits": "accept", "invalid_evidence_restarts": 2}
 NODE_NITS_MODES = ("accept", "decide")
+
+# plan 档位：light（小 DAG，不加新门）/ standard（接口与收尾门）。profile 只允许人强制，默认 auto 由代码按规模判定。
+PLAN_PROFILES = ("auto", "light", "standard")
+DEFAULT_PLAN = {"profile": "auto", "light_max_nodes": 12, "light_max_business_actions": 20}
 
 # P3: successful active ticks allowed between persisted full reconcile audits.
 DEFAULT_RECONCILE = {
@@ -225,6 +234,42 @@ def resolve_node_nits(config: dict) -> str:
             f"review must be a YAML mapping; got {type(raw).__name__}",
             f"review 配置应为 YAML 映射,got {type(raw).__name__}"))
     return validate_node_nits(raw.get("node_nits", DEFAULT_REVIEW["node_nits"]))
+
+
+def _non_negative_int(section: str, key: str, value, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValidationError(ui(
+            f"{section}.{key} must be an integer >= {minimum}; got {value!r}",
+            f"{section}.{key} 必须是 >= {minimum} 的整数(非法值 {value!r})"))
+    return value
+
+
+def resolve_invalid_evidence_restarts(config: dict) -> int:
+    """review.invalid_evidence_restarts:同一评审对象上评审证据无效后重派 Reviewer 的上限（0 = 首次无效即停）。"""
+    raw = get_value(config, "review")
+    if not isinstance(raw, dict):
+        return DEFAULT_REVIEW["invalid_evidence_restarts"]
+    return _non_negative_int("review", "invalid_evidence_restarts",
+                             raw.get("invalid_evidence_restarts", DEFAULT_REVIEW["invalid_evidence_restarts"]), 0)
+
+
+def resolve_plan(config: dict) -> dict:
+    """解析 plan.profile / light_max_nodes / light_max_business_actions；非法值 fail-closed。"""
+    raw = get_value(config, "plan")
+    if raw is None:
+        return dict(DEFAULT_PLAN)
+    if not isinstance(raw, dict):
+        raise ValidationError(ui(
+            f"plan must be a YAML mapping; got {type(raw).__name__}",
+            f"plan 配置应为 YAML 映射,got {type(raw).__name__}"))
+    profile = raw.get("profile", DEFAULT_PLAN["profile"])
+    if profile not in PLAN_PROFILES:
+        raise ValidationError(ui(
+            f"plan.profile must be one of {', '.join(PLAN_PROFILES)}; got {profile!r}",
+            f"plan.profile 必须是 {' / '.join(PLAN_PROFILES)} 之一(非法值 {profile!r})"))
+    return {"profile": profile, **{
+        key: _non_negative_int("plan", key, raw.get(key, DEFAULT_PLAN[key]), 1)
+        for key in ("light_max_nodes", "light_max_business_actions")}}
 
 
 def validate_node_nits(value) -> str:

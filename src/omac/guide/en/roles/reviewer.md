@@ -139,6 +139,12 @@ conflict or cannot be reproduced, do not infer pass.
     Also read the compact responsibility matrix and find all missing or duplicate
     owners, business-Action gaps, unknown Actions, and contribution owners outside
     the full-owner dependency closure in the same round instead of sampling.
+    The `interface:matrix` obligation (generated when any `requires` exists) gives the whole interface matrix
+    (consumer, producer, `requires`, the producer's `provides`): judge from each consumer's seat whether what the
+    producer declares carries its objective; write each gap as a blocker naming the id to add to `provides`/`requires`;
+    disposition every row, do not sample. In `acceptance review`, the `requirements:extraction` obligation (generated when
+    the document has `requirements`): check against the design that the extraction is complete (nothing dropped, nothing
+    invented), that each non-in-scope `reason` holds, and that each `source` anchor points at the text it claims.
     In `amendment review`, disposition the before/after responsibility obligation
     and its historical-correction audit. A done/merged correction may change only
     acceptance responsibility and named gate `acceptance_refs`; it must not demand

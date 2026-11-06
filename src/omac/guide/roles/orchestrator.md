@@ -55,6 +55,14 @@
   `omac work show <issue-id> --output json`，读取 `context.machine_feedback`，逐条修完后再提交。
 - 验收责任是显式结构，不依赖 Action 前缀或节点名字：machine gate 会检查每个 flow 的唯一完整 owner、
   所有 `business-action` 的 contribution 闭包，以及 full owner 的传递依赖是否覆盖全部贡献节点。
+- 计划档位由代码按规模判定（节点数 ≤ `plan.light_max_nodes` 且验收 business-action 数 ≤
+  `plan.light_max_business_actions` 为 light，否则 standard；模型不能选）。light 不增加任何新门。standard 额外要求：
+  每条非空 `consumes` 都写 `requires`（producer 该制品 `provides` 的 id，被要求的项须带设计 `ref`）；
+  `meta.closeout_node` 指向全图汇点（依赖其余所有节点）；验收文档带 `requirements` 时，每条 `verification: technical`
+  的需求由某节点的 `contract.requirement_refs` 认领（`requirement_refs` 只能写 technical 需求 id）。
+  错误一次给全，附可粘贴的 YAML。
+- 有 `requires` 时，Reviewer 有一条 `interface:matrix` 义务一次看完整张接口矩阵：producer 声明的 `provides`
+  是否足以支撑每个消费者的目标。写 `requires` 前读设计，只列消费者真需要的项。
 - `review_state.mode=normal` 时按 `required_closures` 逐项关闭并对完整 manifest
   做影响分析。
 - `review_state.mode=convergence-audit` 直接投影权威

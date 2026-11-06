@@ -4339,7 +4339,7 @@ def tick(
 
     # 4. DECIDE: 计算就绪节点
     snapshot = _build_snapshot(manifest)
-    ready = graph.ready_nodes(snapshot)
+    ready = graph.prioritize_ready(graph.ready_nodes(snapshot), manifest.nodes)
 
     # 5. DISPATCH: 派发就绪节点(受 max_parallel 约束)
     dispatched = _dispatch(store, runtime, code_host, manifest, manifest_path, ready, max_parallel)

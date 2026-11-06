@@ -31,12 +31,13 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import yaml
 
 from ..core import acceptance as acceptance_mod
-from ..core.config import CONFIG_DIR, CONFIG_PATH
+from ..core.config import CONFIG_DIR, CONFIG_PATH, DEFAULT_PLAN, DEFAULT_REVIEW
 from ..core.gitsync import commit_files, ensure_config_synced, ensure_files_clean
 from ..core.lint import lint
 from ..core.manifest import SCHEMA_VERSION, load_manifest, loads_manifest, manifest_files, save_manifest
 from ..core.project_rules import read_agents_snapshot, write_project_rules
-from ..core.review_preflight import plan_manifest_preflight
+from ..core.requirements import requirement_errors
+from ..core.review_preflight import SCALE_LIGHT, SCALE_STANDARD, plan_manifest_preflight, plan_scale
 from ..core.taskmeta import (
     TaskKind, TaskPhase, build_plan_profile, make_dag_key, make_plan_id, plan_id_of,
 )
@@ -70,6 +71,11 @@ class PlanContext:
     members: set
     confirm: bool = True
     language: str = CN
+    # plan 档位与评审证据重派上限（core/config.py 的 plan.* / review.*）；档位由代码按规模判定，profile 只来自人的配置
+    profile: str = DEFAULT_PLAN["profile"]
+    light_max_nodes: int = DEFAULT_PLAN["light_max_nodes"]
+    light_max_business_actions: int = DEFAULT_PLAN["light_max_business_actions"]
+    invalid_evidence_restarts: int = DEFAULT_REVIEW["invalid_evidence_restarts"]
 
     def poll(self, interval: Optional[float] = None) -> Callable[[], None]:
         """构造一个阻塞轮询闭包(真实场景用,测试注入 no-op)。"""
@@ -118,19 +124,35 @@ def _validate_acceptance(text: str) -> acceptance_mod.AcceptanceDoc:
     return acceptance_mod.load_acceptance_doc(raw)
 
 
-def _acceptance_guard(item: WorkItem) -> List[str]:
-    """acceptance authoring 左移质量门；错误作为返工上下文交回 planner。"""
+def _acceptance_guard(
+    item: WorkItem, *, profile: str = DEFAULT_PLAN["profile"],
+    light_max_business_actions: int = DEFAULT_PLAN["light_max_business_actions"],
+) -> List[str]:
+    """acceptance authoring 左移质量门；错误作为返工上下文交回 planner。
+
+    需求段（omac.acceptance/v3 requirements）在此处只能按验收规模判定是否必需：节点数要到拆解后才知道，
+    所以只有 business-action 数已超过 light 上限（或人强制 standard）时才要求 v3 与非空 requirements；
+    其余情况有就检查覆盖。
+    """
     try:
         acceptance_doc = _validate_acceptance(item.deliverable or "")
     except (ValueError, yaml.YAMLError) as exc:
         return [f"acceptance quality gate: {exc}"]
-    if acceptance_doc.schema != "omac.acceptance/v2":
+    if acceptance_doc.schema not in acceptance_mod.EXPLICIT_ID_SCHEMAS:
         return [
             "acceptance quality gate: new acceptance authoring must use "
-            "omac.acceptance/v2 with explicit action.id; v1 remains readable "
+            "omac.acceptance/v2 (or v3) with explicit action.id; v1 remains readable "
             "for existing plans and active manifests"
         ]
-    return []
+    standard = profile == SCALE_STANDARD or (
+        profile != SCALE_LIGHT and acceptance_doc.business_action_count > light_max_business_actions)
+    if standard and not acceptance_doc.requirements:
+        return [
+            f"acceptance quality gate: this acceptance document is standard scale "
+            f"({acceptance_doc.business_action_count} business actions); use schema "
+            f"{acceptance_mod.SCHEMA_V3} with a `requirements` list extracted from the design (id, source, summary, "
+            "disposition, verification) and `requirement_ids` on the actions that prove them"]
+    return [f"acceptance quality gate: {error}" for error in requirement_errors(acceptance_doc)]
 
 
 def _find_by_dag_key(ctx: PlanContext, kind: TaskKind, dag_key: str) -> Optional[WorkItem]:
@@ -324,6 +346,9 @@ def _compose_guard(
     acceptance_doc: Optional[acceptance_mod.AcceptanceDoc] = None,
     *,
     strict_plan: bool = False,
+    profile: str = DEFAULT_PLAN["profile"],
+    light_max_nodes: int = DEFAULT_PLAN["light_max_nodes"],
+    light_max_business_actions: int = DEFAULT_PLAN["light_max_business_actions"],
 ) -> Callable[[WorkItem], List[str]]:
     """造 decompose 的 lint 机器门(零 token,≤ max_revisions 轮)。
 
@@ -349,12 +374,14 @@ def _compose_guard(
             acceptance=acceptance_doc,
             require_explicit_responsibility=(
                 acceptance_doc is not None
-                and acceptance_doc.schema == "omac.acceptance/v2"
+                and acceptance_doc.schema in acceptance_mod.EXPLICIT_ID_SCHEMAS
             ),
         )
         if strict_plan:
             errors.extend(plan_manifest_preflight(
-                manifest, acceptance_doc=acceptance_doc))
+                manifest, acceptance_doc=acceptance_doc,
+                scale=plan_scale(manifest, acceptance_doc, profile=profile, light_max_nodes=light_max_nodes,
+                                 light_max_business_actions=light_max_business_actions)))
         return list(dict.fromkeys(errors))
 
     return guard
@@ -438,6 +465,7 @@ def _run_plan_stage(ctx: PlanContext, name: str, *, goal_text: Optional[str], ag
         max_revisions=ctx.max_revisions,
         poll=poll_cb,
         confirm=ctx.confirm,
+        invalid_evidence_restarts=ctx.invalid_evidence_restarts,
         dag_key=dag_key,
         resume_item_id=resume_item_id,
         restart_active=restart_active,
@@ -463,8 +491,10 @@ def _run_acceptance_stage(
         reviewers=reviewers,
         max_revisions=ctx.max_revisions,
         poll=poll_cb,
-        guard=_acceptance_guard,
+        guard=lambda item: _acceptance_guard(
+            item, profile=ctx.profile, light_max_business_actions=ctx.light_max_business_actions),
         confirm=ctx.confirm,
+        invalid_evidence_restarts=ctx.invalid_evidence_restarts,
         source_refs=_stage_source_refs(plan_item_id),
         dag_key=dag_key,
         resume_item_id=resume_item_id,
@@ -494,7 +524,10 @@ def _run_decompose_stage(
         reviewers=reviewers,
         max_revisions=ctx.max_revisions,
         poll=poll_cb,
-        guard=_compose_guard(ctx.members, acceptance_doc=acceptance_doc, strict_plan=True),
+        guard=_compose_guard(
+            ctx.members, acceptance_doc=acceptance_doc, strict_plan=True, profile=ctx.profile,
+            light_max_nodes=ctx.light_max_nodes, light_max_business_actions=ctx.light_max_business_actions),
+        invalid_evidence_restarts=ctx.invalid_evidence_restarts,
         source_refs=_stage_source_refs(plan_item_id, acceptance_item_id),
         dag_key=dag_key,
         resume_item_id=resume_item_id,
@@ -525,7 +558,7 @@ def _materialized(manifest_path: str, plan_id: str) -> bool:
 def _write_plan_outputs(
     ctx: PlanContext, *, plan_id: str, name: str, manifest_text: str, acceptance_text: Optional[str],
     source_issues: List[str], manifest_path: str, acceptance_path: str, project_rules_text: Optional[str],
-    agents_snapshot,
+    agents_snapshot, acceptance_doc: Optional[acceptance_mod.AcceptanceDoc] = None,
 ) -> None:
     """Materialize the reviewed outputs. A manifest that already is this plan's is never rewritten:
     its node state belongs to the running DAG; only a missing acceptance document is restored."""
@@ -542,6 +575,9 @@ def _write_plan_outputs(
         manifest.meta["plan_id"] = plan_id
         manifest.meta.setdefault("name", name)
         manifest.meta["acceptance_required"] = not ctx.no_acceptance
+        manifest.meta["plan_scale"] = plan_scale(
+            manifest, acceptance_doc, profile=ctx.profile, light_max_nodes=ctx.light_max_nodes,
+            light_max_business_actions=ctx.light_max_business_actions)
         if not ctx.no_acceptance:
             manifest.meta["acceptance_file"] = os.path.basename(acceptance_path)
         else:
@@ -625,7 +661,7 @@ def plan_create(
         ctx, plan_id=plan_id, name=name, manifest_text=manifest_text, acceptance_text=acceptance_text,
         source_issues=[r for r in [plan_item_id, acceptance_item_id, decompose_item_id] if r],
         manifest_path=manifest_path, acceptance_path=acceptance_path,
-        project_rules_text=project_rules_text, agents_snapshot=agents_snapshot)
+        project_rules_text=project_rules_text, agents_snapshot=agents_snapshot, acceptance_doc=acceptance_doc)
     return 0
 
 
@@ -815,5 +851,5 @@ def plan_resume(
         acceptance_text=acceptance_text,
         source_issues=[r for r in [source.item_id, acceptance_item_id, decompose_item_id] if r],
         manifest_path=manifest_path, acceptance_path=acceptance_path,
-        project_rules_text=source.project_rules, agents_snapshot=agents_snapshot)
+        project_rules_text=source.project_rules, agents_snapshot=agents_snapshot, acceptance_doc=acceptance_doc)
     return 0

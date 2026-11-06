@@ -6,10 +6,12 @@ import subprocess
 from typing import Any
 
 from .acceptance_responsibility import (
-    contributions, full_claims, matrix_errors, trace_refs,
+    contributions, dependency_closure, full_claims, matrix_errors, trace_refs,
 )
+from .config import DEFAULT_PLAN
 from .contract_boundaries import manifest_boundary_errors
-from .manifest import EvidenceMode, MISSING_CONSUMES, loads_manifest
+from .manifest import ConsumedArtifact, EvidenceMode, MISSING_CONSUMES, loads_manifest
+from .requirements import technical_claim_errors
 from .taskmeta import TaskKind
 
 
@@ -98,13 +100,80 @@ def _manifest_preflight(text: str) -> list[str]:
     return errors
 
 
-def plan_manifest_preflight(manifest: Any, *, acceptance_doc: Any = None) -> list[str]:
+SCALE_LIGHT, SCALE_STANDARD = "light", "standard"
+
+
+def plan_scale(
+    manifest: Any, acceptance_doc: Any = None, *, profile: str = "auto",
+    light_max_nodes: int = DEFAULT_PLAN["light_max_nodes"],
+    light_max_business_actions: int = DEFAULT_PLAN["light_max_business_actions"],
+) -> str:
+    """light or standard, decided by code from the plan's size. ``profile`` is the operator's override (``plan.profile``)."""
+    if profile in (SCALE_LIGHT, SCALE_STANDARD):
+        return profile
+    actions = acceptance_doc.business_action_count if acceptance_doc is not None else 0
+    small = len(manifest.nodes) <= light_max_nodes and actions <= light_max_business_actions
+    return SCALE_LIGHT if small else SCALE_STANDARD
+
+
+def _consumes_requires_errors(node: Any, producers: dict[str, set[str]]) -> list[str]:
+    errors = []
+    consumes = getattr(node.contract, "consumes", None)
+    for index, consumed in enumerate(consumes if isinstance(consumes, list) else []):
+        if not isinstance(consumed, ConsumedArtifact):
+            continue
+        if not consumed.requires:
+            errors.append(
+                f"node {node.id}: contract.consumes[{index}] ({consumed.artifact_id} from {consumed.producer}) must "
+                f"declare `requires`, the provided ids this node needs (standard plan). Add "
+                f"`requires: [<id>]` and declare each id under {consumed.producer}'s "
+                f"`produces[artifact_id={consumed.artifact_id}].provides`")
+            continue
+        for requirement in consumed.requires:
+            if requirement in producers.get((consumed.producer, consumed.artifact_id), ()):
+                errors.append(
+                    f"node {consumed.producer}: provides {requirement!r} of {consumed.artifact_id} needs a design "
+                    f"`ref` (standard plan), e.g. {{id: {requirement!r}, ref: \"docs/design.md#section\"}}")
+    return errors
+
+
+def _standard_errors(manifest: Any) -> list[str]:
+    """What a standard-scale plan adds: every consumed interface is named, and one node closes the whole graph."""
+    unanchored: dict[tuple[str, str], set[str]] = {}
+    for node in manifest.nodes.values():
+        for artifact in getattr(node.contract, "produces", None) or []:
+            for item in getattr(artifact, "provides", ()) or ():
+                if getattr(item, "ref", None) is None or not str(item.ref).strip():
+                    unanchored.setdefault((node.id, artifact.artifact_id), set()).add(item.id)
+    errors = []
+    for node in manifest.nodes.values():
+        if node.contract is not None:
+            errors.extend(dict.fromkeys(_consumes_requires_errors(node, unanchored)))
+    closeout = manifest.meta.get("closeout_node")
+    if closeout not in manifest.nodes:
+        errors.append(
+            "standard plan: meta.closeout_node must name the node that closes the whole graph (it depends, "
+            "directly or not, on every other node), e.g. `meta: {closeout_node: closeout}`")
+        return errors
+    missing = sorted(set(manifest.nodes) - {closeout} - dependency_closure(manifest, closeout))
+    if missing:
+        errors.append(
+            f"standard plan: closeout node {closeout} must be the sink of the whole graph, but it does not depend on "
+            f"{', '.join(missing)}. Edit node {closeout}: blocked_by: "
+            f"[{', '.join(sorted({*manifest.nodes[closeout].blocked_by, *missing}))}]")
+    return errors
+
+
+def plan_manifest_preflight(manifest: Any, *, acceptance_doc: Any = None, scale: str | None = None) -> list[str]:
     """Validate greenfield decomposition boundaries before Reviewer dispatch.
 
     Existing manifests remain readable through :func:`run_review_preflight`.
     The plan pipeline opts into this stricter gate so a new DAG cannot silently
     publish anonymous, multi-scope, or untyped nodes.  Checks are deliberately
     structural; semantic completeness still belongs to the independent review.
+
+    ``scale`` is the plan's profile (:func:`plan_scale`; default: decided from this manifest and acceptance document).
+    light adds nothing to the checks below; standard also requires named interfaces and a closeout sink.
     """
     errors: list[str] = []
     scope_owners: dict[str, list[str]] = {}
@@ -197,16 +266,19 @@ def plan_manifest_preflight(manifest: Any, *, acceptance_doc: Any = None) -> lis
     errors.extend(manifest_boundary_errors(manifest))
     if acceptance_doc is not None:
         errors.extend(matrix_errors(manifest, acceptance_doc))
+        errors.extend(technical_claim_errors(manifest, acceptance_doc, require_claimed=True))
+    if (scale or plan_scale(manifest, acceptance_doc)) == SCALE_STANDARD:
+        errors.extend(_standard_errors(manifest))
     return list(dict.fromkeys(errors))
 
 
-def run_plan_preflight(text: str, *, acceptance_doc: Any = None) -> list[str]:
+def run_plan_preflight(text: str, *, acceptance_doc: Any = None, scale: str | None = None) -> list[str]:
     """Parse and run the strict preflight used by a new plan decomposition."""
     try:
         manifest = loads_manifest(text)
     except Exception as exc:
         return [f"plan preflight could not parse manifest: {exc}"]
-    return plan_manifest_preflight(manifest, acceptance_doc=acceptance_doc)
+    return plan_manifest_preflight(manifest, acceptance_doc=acceptance_doc, scale=scale)
 
 
 def run_manifest_preflight(text: str) -> list[str]:

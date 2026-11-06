@@ -98,6 +98,11 @@
 11. `decompose review` 检查是否最大化并行；若节点还能拆出独立 PR/test/review 单元却被合并，应要求拆小。
     同时读取 obligation 中的紧凑责任矩阵，一轮内找全缺失/重复 owner、业务 Action 缺口、
     未知 Action 与完整 owner 无法到达贡献节点的问题，不能只抽查少数节点。
+    `interface:matrix` obligation（有 `requires` 时生成）一次给出完整接口矩阵（消费者、producer、
+    `requires`、producer 的 `provides`）：站在每个消费者的位置判断 producer 声明的接口能否支撑其目标，
+    缺口写成 blocker 并给出应补进 `provides`/`requires` 的 id；逐行 disposition，不抽查。
+    `acceptance review` 的 `requirements:extraction` obligation（验收文档含 `requirements` 时生成）：对照设计核对
+    需求抽取是否完整（无遗漏、无杜撰）、非 in-scope 的 `reason` 是否成立、`source` 锚点是否指向其声称的文字。
     `amendment review` 必须逐项 disposition before/after responsibility obligation 与历史校正审计；
     done/merged correction 只能变 acceptance responsibility 和命名 gate 的 `acceptance_refs`，
     不得要求 Store 恢复、Agent 派发或 merge replay。

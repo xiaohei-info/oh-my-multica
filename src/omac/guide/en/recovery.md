@@ -175,6 +175,8 @@ runs exactly as printed, and the stop reason alone decides which command release
 | `review-budget-exhausted` | rejects used up the review budget | `omac plan continue-review --dag-key <stage-key>` |
 | `review-convergence-*` | the same root-cause blockers keep not converging | `omac plan continue-review --dag-key <stage-key>` (authorize one more round) or redraw the task boundary and run `plan create` again |
 | `guard-budget-exhausted` | the machine gate (lint/preflight) ran out of revisions | `omac plan resume --plan-id <id>` (an explicit new machine-gate budget) |
+| `guard-non-reducing` | two machine-gate rounds in a row did not lower the error count, so more revisions would not converge; the report lists every error | fix the listed errors (or adjust `plan.profile`/the inputs), then `omac plan resume --plan-id <id>` |
+| `review-evidence-invalid` | the Reviewer's evidence on one review subject stayed invalid beyond `review.invalid_evidence_restarts` (default 2) | `omac plan resume --plan-id <id>` (clears the stop and reviews again) |
 | `completed-without-submit`, `unsafe-authoring-resume` | the author's Run ended without a usable delivery | `omac plan resume --plan-id <id> --restart-active` |
 | `reviewer-completed-without-verdict` | the Reviewer's Run ended without a verdict | `omac plan resume --plan-id <id>` |
 

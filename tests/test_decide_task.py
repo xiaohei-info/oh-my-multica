@@ -31,6 +31,7 @@ EXPECTED = {
     (T.MACHINE_GATE, F.GATE_CLEAR): (T.RESUME_REVIEW, ()),
     (T.MACHINE_GATE, F.GATE_RETRY): (T.PRODUCE_HINTED, (ResetReview("i"), TODO)),
     (T.MACHINE_GATE, F.GATE_EXHAUSTED): (T.BLOCK_BUDGET, (FB,)),
+    (T.MACHINE_GATE, F.GATE_NON_REDUCING): (T.BLOCK_BUDGET, (FB,)),
     (T.PRODUCE_HINTED, F.PRODUCED): (T.MACHINE_GATE, ()),
     (T.RESUME_REVIEW, F.FINISH_PASS): (T.FINISH, ()),
     (T.RESUME_REVIEW, F.FINISH_CONFIRMED): (T.FINISH, ()),
@@ -45,6 +46,7 @@ EXPECTED = {
     (T.REVIEW_ROUND, F.PREPARE): (T.REVIEW_CHECK, (PrepareReviewCycle("i", "d"),)),
     (T.REVIEW_CHECK, F.VERDICT_READY): (T.REVIEW_VERDICT, ()),
     (T.REVIEW_CHECK, F.EVIDENCE_INVALID): (T.REVIEW_CHECK, (ResetReview("i"), PrepareReviewCycle("i", "d"), FB)),
+    (T.REVIEW_CHECK, F.EVIDENCE_INVALID_EXHAUSTED): (T.STOPPED, DECISION_WRITE),
     (T.REVIEW_CHECK, F.NEEDS_DISPATCH): (T.REVIEW_DISPATCH, (UpdateStatus("i", S.IN_REVIEW),)),
     (T.REVIEW_DISPATCH, F.REVIEWED): (T.REVIEW_CHECK, ()),
     (T.REVIEW_VERDICT, F.PASS): (T.FINISH, ()),
@@ -139,6 +141,7 @@ from omac.pipeline.decide_stop import (
 
 _STOPPED_ON = {
     StopReason.GUARD_BUDGET: dict(status=S.BLOCKED, verdict=""),
+    StopReason.GUARD_NON_REDUCING: dict(status=S.BLOCKED, verdict=""),
     StopReason.REVIEW_BUDGET: dict(status=S.BLOCKED, verdict="reject", bounce=3, limit=3),
     StopReason.REVIEW_NITS_BUDGET: dict(status=S.BLOCKED, verdict="", bounce=3, limit=3),
     StopReason.REVIEW_NITS_ACCEPTANCE: dict(status=S.BLOCKED, verdict="pass-with-nits", delivery_bound=True),
@@ -146,10 +149,12 @@ _STOPPED_ON = {
     StopReason.COMPLETED_WITHOUT_SUBMIT: dict(status=S.BLOCKED, phase=TaskPhase.AUTHORING),
     StopReason.UNSAFE_AUTHORING_RESUME: dict(status=S.BLOCKED, phase=TaskPhase.AUTHORING),
     StopReason.REVIEWER_COMPLETED_WITHOUT_VERDICT: dict(status=S.BLOCKED),
+    StopReason.REVIEW_EVIDENCE_INVALID: dict(status=S.BLOCKED, verdict="pass"),
     StopReason.CONFIRMATION_REQUIRED: dict(status=S.IN_REVIEW, phase=TaskPhase.CONFIRMATION, verdict="pass"),
 }
 _GATES = {StopReason.CONFIRMATION_REQUIRED: "confirmation", StopReason.REVIEW_NITS_BUDGET: "review-nits", StopReason.REVIEW_NITS_ACCEPTANCE: "review-nits",
-          StopReason.REVIEW_CONVERGENCE: "review-convergence", StopReason.GUARD_BUDGET: "guard"}
+          StopReason.REVIEW_CONVERGENCE: "review-convergence", StopReason.GUARD_BUDGET: "guard",
+          StopReason.GUARD_NON_REDUCING: "guard", StopReason.REVIEW_EVIDENCE_INVALID: "review-evidence"}
 
 
 def test_every_stop_has_releases_and_every_release_is_documented_by_a_stop():
@@ -236,7 +241,48 @@ def _resume(**over):
              decision_reason="reviewer-completed-without-verdict"), Resume.CLEAR_REVIEWER_STOP),
     (_resume(phase=TaskPhase.REVIEW, status=S.BLOCKED, has_deliverable=True,
              decision_reason="reviewer-completed-without-verdict", active_runs=True), Resume.RUN_NOT_TERMINAL),
+    (_resume(phase=TaskPhase.REVIEW, status=S.BLOCKED, has_deliverable=True,
+             decision_reason="review-evidence-invalid"), Resume.CLEAR_REVIEWER_STOP),
     (_resume(phase=TaskPhase.REVIEW, status=S.IN_REVIEW, has_deliverable=True), Resume.PROCEED),
 ])
 def test_a_resumed_issue_is_classified_from_its_facts(facts, expected):
     assert classify_resume(facts) is expected
+
+
+# ── S13: a machine gate whose error count stops falling ends instead of burning its whole budget ────────────────
+
+from types import SimpleNamespace
+
+from omac.pipeline.tasks import _TaskRun
+
+
+def _gate_run(guard, *, max_revisions=5):
+    run = object.__new__(_TaskRun)
+    run.kind, run.item_id, run.round_index, run.max_revisions = TaskKind.DECOMPOSE, "i", 0, max_revisions
+    run.resumed_confirmation, run.reviewers, run.guard = None, [], guard
+    run.delivered, run.gate_round, run.gate_errors, run.gate_error_counts = SimpleNamespace(), 0, [], []
+    return run
+
+
+def test_s13_a_guard_that_returns_the_same_errors_twice_stops_the_gate_on_the_second_round():
+    run = _gate_run(lambda _item: ["cycle in blocked_by", "unknown worker"])
+
+    facts = [run._at_machine_gate()[0], run._at_machine_gate()[0]]
+
+    assert facts == [F.GATE_RETRY, F.GATE_NON_REDUCING]
+    assert run.stop.reason is StopReason.GUARD_NON_REDUCING and run.stop.rounds == 2
+    assert run.stop.opinion == "cycle in blocked_by\nunknown worker"            # the full list reaches the report
+
+
+def test_a_guard_whose_error_count_keeps_falling_runs_until_it_is_clear_or_the_budget_is_spent():
+    rounds = iter((["a", "b", "c"], ["a", "b"], ["a"], []))
+    run = _gate_run(lambda _item: next(rounds))
+
+    assert [run._at_machine_gate()[0] for _ in range(4)] == [F.GATE_RETRY, F.GATE_RETRY, F.GATE_RETRY, F.GATE_CLEAR]
+
+
+def test_a_gate_round_with_different_errors_but_no_fewer_of_them_is_not_progress():
+    rounds = iter((["a", "b"], ["c", "d"]))
+    run = _gate_run(lambda _item: next(rounds))
+
+    assert [run._at_machine_gate()[0] for _ in range(2)] == [F.GATE_RETRY, F.GATE_NON_REDUCING]

@@ -78,6 +78,16 @@ guide does not decide product facts.
   naming convention. The machine gate checks one full owner per flow, complete
   `business-action` coverage, and that the full owner transitively depends on
   every contribution owner.
+- The plan profile is decided by code from size (light when nodes ≤ `plan.light_max_nodes` and acceptance business
+  actions ≤ `plan.light_max_business_actions`, otherwise standard); the model cannot choose. Light adds no new gate.
+  Standard also requires: every non-empty `consumes` entry carries `requires` (ids from the producer artifact's
+  `provides`; a required item needs its design `ref`); `meta.closeout_node` names the sink of the whole graph (it depends
+  on every other node); when the acceptance document has `requirements`, each `verification: technical` requirement is
+  claimed by some node's `contract.requirement_refs` (`requirement_refs` may only name technical requirement ids).
+  Every error is reported at once with a YAML snippet to paste.
+- When any `requires` exists the reviewer has one `interface:matrix` obligation that reads the whole interface matrix in
+  one pass: do the producer's declared `provides` carry what each consumer's objective needs? Read the design before
+  writing `requires`, and list only what the consumer really needs.
 - In `review_state.mode=normal`, close every `required_closures` item and review
   the full manifest impact.
 - `review_state.mode=convergence-audit` directly projects the authoritative

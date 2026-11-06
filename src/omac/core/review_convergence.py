@@ -12,6 +12,9 @@ import json
 from types import MappingProxyType
 from typing import Any, Mapping
 
+import yaml
+
+from .acceptance import load_acceptance_doc
 from .contract_boundaries import review_boundary_report_errors
 
 from .acceptance_responsibility import (
@@ -20,7 +23,7 @@ from .acceptance_responsibility import (
     responsibility_matrix,
     trace_refs,
 )
-from .interfaces import has_evidence_locator, provided_items, registrations
+from .interfaces import has_evidence_locator, interface_matrix, provided_items, registrations
 from .manifest import loads_manifest
 from .taskmeta import (
     DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase, current_review_ledger,
@@ -888,6 +891,42 @@ def _interface_chain_obligations(contract: Any) -> list[dict]:
     return obligations
 
 
+def _plan_stage_obligations(kind: Any, deliverable: Any) -> list[dict]:
+    """Obligations of the plan stages that read a whole document at once: the interface matrix and the requirement list."""
+    if not isinstance(deliverable, str):
+        return []
+    if kind == TaskKind.DECOMPOSE.value:
+        try:
+            matrix = interface_matrix(loads_manifest(deliverable))
+        except (TypeError, ValueError):
+            return []
+        return [{
+            "obligation_id": "interface:matrix",
+            "category": "interface-matrix",
+            "requirement": (
+                "Review the compact interface matrix in one pass, as each consumer: does what its producer provides "
+                "carry everything the consumer's objective needs, and is anything the consumer needs missing from "
+                "`provides`/`requires`? Disposition every row"),
+            "interface_matrix": matrix,
+        }] if matrix else []
+    if kind == TaskKind.ACCEPTANCE.value:
+        try:
+            requirements = load_acceptance_doc(yaml.safe_load(deliverable)).requirements
+        except (TypeError, ValueError, yaml.YAMLError):
+            return []
+        return [{
+            "obligation_id": "requirements:extraction",
+            "category": "requirements",
+            "requirement": (
+                "Verify the requirement list is a complete extraction of the design: every requirement the design "
+                "states appears with a disposition (nothing silently dropped, nothing invented), every non-in-scope "
+                "disposition has a sound reason, and each source anchor points at the text it claims"),
+            "requirements": [{"id": r.id, "source": r.source, "disposition": r.disposition,
+                              "verification": r.verification} for r in requirements],
+        }] if requirements else []
+    return []
+
+
 def build_review_obligations(
     item: Any,
     *,
@@ -947,6 +986,7 @@ def build_review_obligations(
     obligations.extend(_interface_chain_obligations(contract))
     kind = getattr(getattr(item, "kind", None), "value", getattr(item, "kind", None))
     deliverable = getattr(item, "deliverable", None)
+    obligations.extend(_plan_stage_obligations(kind, deliverable))
     if kind == TaskKind.DECOMPOSE.value and isinstance(deliverable, str):
         try:
             matrix = responsibility_matrix(
