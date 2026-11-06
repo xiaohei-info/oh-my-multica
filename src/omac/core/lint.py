@@ -3,6 +3,7 @@ import os
 from .manifest import Manifest
 from .contract_boundaries import manifest_boundary_errors
 from .interfaces import interface_errors
+from .requirements import technical_claim_errors
 from .acceptance_responsibility import (
     contract_shape_errors,
     full_claims,
@@ -153,6 +154,7 @@ def lint(
             for node in m.nodes.values()
         ):
             errs.extend(matrix_errors(m, acceptance))
+        errs.extend(technical_claim_errors(m, acceptance, require_claimed=False))
     errs.extend(manifest_boundary_errors(m))
     errs.extend(interface_errors(m))
     if _has_cycle(m.nodes):

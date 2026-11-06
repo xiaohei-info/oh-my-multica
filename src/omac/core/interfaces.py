@@ -57,6 +57,26 @@ def registrations(contract: Any) -> list[str]:
     return sorted({value for value in values if _non_empty(value)}) if isinstance(values, list) else []
 
 
+def interface_matrix(manifest: Any) -> list[dict]:
+    """The compact interface matrix one review obligation reads in a single pass: who requires what from whom.
+
+    One row per consumed artifact that names ``requires``; ``provides`` is what the producer's artifact declares, so a
+    reviewer sees at once whether the declared interface can carry the consumer's work. Empty without any ``requires``.
+    """
+    rows = []
+    for node in manifest.nodes.values():
+        consumes = _get(node.contract, "consumes", None) if node.contract is not None else None
+        for consumed in consumes if isinstance(consumes, list) else []:
+            if not isinstance(consumed, ConsumedArtifact) or not consumed.requires or not isinstance(consumed.requires, tuple):
+                continue
+            producer = manifest.nodes.get(consumed.producer)
+            offered = sorted(item_id for artifact_id, item_id in provided_items(producer.contract)
+                             if artifact_id == consumed.artifact_id) if producer is not None and producer.contract else []
+            rows.append({"consumer": node.id, "producer": consumed.producer, "artifact_id": consumed.artifact_id,
+                         "requires": sorted(consumed.requires), "provides": offered})
+    return sorted(rows, key=lambda row: (row["consumer"], row["producer"], row["artifact_id"]))
+
+
 def _ref(text: str) -> str:
     return json.dumps(text, ensure_ascii=False)
 

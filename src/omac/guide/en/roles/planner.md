@@ -72,6 +72,14 @@ convenient interpretation.
    URL, selector, or argv. Use an implementation prerequisite only when the
    authoritative design has no unique execution surface, and never use
    prerequisites as a bulk replacement for user actions.
+    Acceptance `requirements` (`omac.acceptance/v3`): extract every requirement from the design as
+    `{id, source, summary (≤200 chars), disposition, verification, reason}`. `source` is the design anchor;
+    `disposition` is `in-scope|out-of-scope|deferred` and the last two need a `reason`. An in-scope
+    `verification: action` requirement must be referenced by at least one action's `requirement_ids`; one with no
+    acceptance action is `verification: technical` (nodes claim it with `requirement_refs`). Out-of-scope or
+    deferred requirements must not be referenced. A document with more business actions than
+    `plan.light_max_business_actions` (default 20) must be v3 with non-empty `requirements`; smaller documents may stay v2.
+    Do not under-extract: the reviewer has a `requirements:extraction` obligation that checks completeness.
 10. Write for low-reasoning-budget executors: make intent, core data, boundary
    cases, failure behavior, verification entry points, and prohibitions explicit.
    Cover null values, duplicates, concurrency, failures, permissions, and old

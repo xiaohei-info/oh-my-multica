@@ -48,6 +48,13 @@
    设计已经唯一命名的页面、产品区域、控件、命令或操作序列可以直接作为 `how`，
    不要求虚构尚未发布的最终 URL、选择器或完整 argv。只有权威设计连唯一执行表面都
    没有定义时，才标记 implementation prerequisite；不得用 prerequisite 批量替代用户动作。
+    验收文档的 `requirements`（`omac.acceptance/v3`）：从设计中抽取全部需求，每条写
+    `{id, source, summary(≤200 字符), disposition, verification, reason}`：`source` 是设计锚点；
+    `disposition` 为 `in-scope|out-of-scope|deferred`，后两者必须写 `reason`；`verification: action` 的
+    in-scope 需求必须被至少一个 action 的 `requirement_ids` 引用，无验收动作的写 `verification: technical`
+    （由 manifest 节点的 `requirement_refs` 认领）。out-of-scope/deferred 不得被引用。业务 action 超过
+    `plan.light_max_business_actions`（默认 20）的验收文档必须是 v3 且 `requirements` 非空；更小的文档可继续用 v2。
+    不要漏抽：Reviewer 有一条 `requirements:extraction` 义务专查抽取是否完整。
 10. 面向低推理预算执行者检查可执行性：显式写出实现意图、核心数据、边界条件、失败处理、
    验证入口和禁止事项，不允许依赖执行者补全隐含上下文。边界条件至少覆盖空值、重复、
    并发、失败、权限和旧数据兼容；模块边界要写明改什么、不改什么，验证入口要给出后续

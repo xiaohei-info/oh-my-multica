@@ -122,7 +122,9 @@ Commands take `--output json|table`; agents and the web use JSON. `dag run --out
 `defaults` (`max_parallel`, `poll_interval`, `coverage_gate`), `workflow` (human-in-the-loop, review, acceptance doc),
 `ci.check_command`, `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
 `retry` (`worker|ci|review|merge`, `no_submit_runs`), `review.node_nits` (`accept` default | `decide`: whether a develop
-node's `pass-with-nits` is a pass or an exit-20 stop; plan stages and amendments always stop), `reconcile`, `acceptance.max_rounds`. `omac init` writes it;
+node's `pass-with-nits` is a pass or an exit-20 stop; plan stages and amendments always stop),
+`review.invalid_evidence_restarts` (default 2: re-dispatches of the Reviewer on one subject after invalid review evidence),
+`plan` (`profile: auto|light|standard`, `light_max_nodes` 12, `light_max_business_actions` 20), `reconcile`, `acceptance.max_rounds`. `omac init` writes it;
 the engine prompt defaults to `multica`.
 
 ## 7. The Loop
@@ -142,6 +144,20 @@ The shape of a pipeline (`--doc` or `--goal`, review, acceptance, human gate) is
 `plan_profile`, so `plan resume --plan-id` takes no shape argument. A `--doc` source is a set: a directory is its
 inventory at one revision; a single file adds its path, the revision and its directory's inventory (links are not parsed);
 it must be committed and pushed. `plan resume` never rewrites a manifest that already is the plan's.
+
+Two bounds keep a plan stage from looping. The machine gate stops when a round does not lower the number of errors
+(`guard-non-reducing`, the report lists every error; the budget `max_revisions` still applies). A Reviewer whose report
+fails the evidence gate is asked again on the same subject at most `review.invalid_evidence_restarts` times, then the stage
+stops with `review-evidence-invalid` (released by `plan resume`). Both stops are rows of `decide_task.TRANSITIONS`.
+
+A plan has a profile, `light` or `standard`, decided by code (`review_preflight.plan_scale`): light when the decomposition has
+at most `plan.light_max_nodes` nodes and the acceptance document at most `plan.light_max_business_actions` business
+actions, otherwise standard; only the operator's `plan.profile` overrides it, the model never chooses. The result is
+recorded in `meta.plan_scale`. Light adds no gate to the 2.4 plan. Standard also requires `requires` on every non-empty
+`consumes` entry (and a `ref` on every required `provides` item) and a `meta.closeout_node` that depends on every other
+node (`plan_manifest_preflight`; amendments are not bound by it). `requirements` (acceptance v3) is required where the
+acceptance alone proves the plan standard, that is by its business-action count; the node count is known only after
+decomposition, so a plan that becomes standard by node count keeps `requirements` optional (checked when present).
 
 Every stop of a stage is built by `decide_stop.build_stop`, so the persisted decision and the exit-20 report are one dict.
 `STOP_RELEASES` says which command releases which stop, `render_release` spells those commands, and `decide_release`
@@ -179,7 +195,8 @@ reconcile → result collection (collect_results) → evidence / CI / merge gate
 * **Merge delivery** is a state machine on `merge_request_state` (`None → intent → requested → observed MERGED`). A marker
   is never followed by a second merge request; after an unknown outcome the node stops (exit 20) and `omac node retry`
   is the explicit decision. Success is concluded only from the *observed* pull request, never from the command's exit code.
-* **ready nodes** (就绪节点) are nodes whose blockers are `done` or `abandoned`.
+* **ready nodes** (就绪节点) are nodes whose blockers are `done` or `abandoned`. When fewer slots than ready nodes remain, `graph.prioritize_ready` orders them: owner of a complete flow
+  (`acceptance_claims`) first, then most transitive downstream nodes, then manifest order.
 * **A stopped node blocks only what depends on it.** `loop._mark_downstream_blocked` marks the transitive downstream
   (`graph.downstream_of`) of needs-decision nodes `blocked`; independent branches keep being dispatched, and the tick
   reports `needs_decision` (exit 20) only when no node is running.
@@ -268,6 +285,13 @@ manifest digest, applied under a ledger so an interrupted apply is resumed and o
 
 `<name>.acceptance.yaml` lists flows and the evidence that proves them; contracts map claims, contributions and refs to
 them (`core/acceptance_responsibility.py`). The Reviewer maps every claim to a concrete business test.
+
+`omac.acceptance/v3` adds `requirements` (`core/requirements.py`: id, design `source`, `summary`, `disposition`
+`in-scope|out-of-scope|deferred`, `verification` `action|technical`) and `action.requirement_ids`. Code checks only ids:
+requirements are unique, `requirement_ids` name known in-scope action requirements, every such requirement is referenced by
+an action, and every `technical` requirement is claimed by a node's `contract.requirement_refs`. Completeness of the
+extraction is the Reviewer's `requirements:extraction` obligation; the interface matrix of a decomposition is its
+`interface:matrix` obligation (generated when any `requires` exists).
 
 ## 9. Knowledge distribution
 
