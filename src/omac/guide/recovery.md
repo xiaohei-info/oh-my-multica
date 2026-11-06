@@ -17,7 +17,8 @@
 2. 对每个未决节点运行 `omac node show <manifest> <key>`，读取验证输出、reviewer report、
    PR、平台 issue 链接和回退计数。
 3. 选择一个显式动作：
-   - `omac node retry <manifest> <key> [--worker 换人]`：重置为 todo。
+   - `omac node retry <manifest> <key> [--worker 换人] [--note 文本]`：重置为 todo；`--note`（≤2000 字符）写进 issue 正文
+     的“本次重试的操作员说明”，下一次派发的 Worker 能读到；不带 `--note` 的重试会清掉上一次的说明。
    - `omac node accept <manifest> <key>`：人工接受已知风险并标记 done。
    - `omac node abandon <manifest> <key>`：放弃该节点，解锁非硬依赖下游。
    - `omac node hold <manifest> <key> [--reason 文本]`：挂起尚未派发（`todo`）的节点，例如需要先人工准备外部账号。
@@ -30,6 +31,19 @@
    - 若 DAG 已开始执行且问题属于 contract、验收映射或拓扑定义，使用受控
      `omac dag amend propose`，禁止直接覆盖运行中 manifest。
 4. 重新运行 `omac dag run <manifest>`。已 done 节点会复用，其余节点续跑。
+
+### 等待决策、决策清单与建议项
+
+- `omac dag decisions <manifest> [--output json]`：只读，列出 DAG 在等的决策（`blocked`/`failed` 的源头节点、被挂起的节点），
+  每条带稳定的 `decision_key`（`节点:状态:work_item_id`）和可复制命令。证据链再用 `omac node show`。
+- `omac dag run <manifest> --wait-decisions [--max-minutes N]`：没有进行中节点且有待决策项时放开写锁等待
+  （这时 `omac node retry|release` 等写命令不会 exit 5），每个新决策发一次 `decision_pending` 事件（stderr，按 `decision_key`
+  去重，已处理的决策再出现会重新通知）；决策集合变化后自动续跑，收敛 exit 0，到 `--max-minutes` 仍未收敛 exit 10。
+  不带该开关时行为不变：exit 20。
+- `omac dag followups <manifest> [--output json]`：只读，聚合各已合并节点 `pass-with-nits` 的建议项（`<节点>#<序号>`）。
+  收尾节点（`meta.closeout_node`）的评审要求每条都被处置为 `fix` / `defer` / `drop`。
+- `dispatch.hold_live: true`：就绪的 `contract.evidence_mode: live` 节点由代码自动挂起（每个节点只挂一次），
+  tick 报告 `held` 并给出 `omac node release` 命令；准备好真实环境后 release，之后与普通节点相同。
 
 ### `pass-with-nits` 接受决策
 
@@ -471,6 +485,10 @@ work item ID、contract digest 和原始 worker/review/merge baseline；不复�
 
 - `quality-gate-failed`：evidence 至少一项包含真实执行的 command、非零整数
   exit_code、ref 和 observation。不要为了提交报告继续执行合同已禁止的后续验证。
+- `environment-failure`：环境而非任务阻止了 Worker（推送/网络/依赖下载超时等）。规则同 `quality-gate-failed`：
+  evidence 至少一项含真实执行的 command 与非零 exit_code。OMAC 在 `retry.environment`（默认 1）内自动让同一个
+  Worker 重试一次，不消耗 `retry.worker`；用完后停在 exit 20，报告的 `next_actions` 给出
+  `omac node retry <manifest> <key> --worker <roles.workers 中的下一个>`。
 - `owner-decision-required`：保留 evidence 的 ref/observation，并明确
   decision_needed。contract_ref 必须是当前 context.contract 中实际存在的顶层字段；
   summary 说明该字段与停止条件的关系，不创造新的合同授权。

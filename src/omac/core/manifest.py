@@ -319,6 +319,8 @@ class Node:
     # 挂起(omac node hold):todo 节点依赖满足也不派发,下游保持未满足;只经 `omac node hold|release` 改变。
     held: bool = False
     hold_reason: str | None = None
+    # `omac node retry --note`: what the operator tells the Worker for the next run; rendered into the issue body.
+    retry_note: str | None = None
 
     def __post_init__(self):
         if isinstance(self.contract, dict):
@@ -383,12 +385,14 @@ def _build_nodes(raw) -> dict:
             recovery_marker=bool(n.get("recovery_marker", False)),
             held=bool(n.get("held", False)),
             hold_reason=n.get("hold_reason"),
+            retry_note=n.get("retry_note"),
         )
     return nodes
 
 
 _RUNTIME_KEYS = (
-    "work_item_id", "status", "merged", "merged_at", "merge_request_state", "recovery_marker", "held", "hold_reason")
+    "work_item_id", "status", "merged", "merged_at", "merge_request_state", "recovery_marker", "held", "hold_reason",
+    "retry_note")
 _NODE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _STATE_HEAD = re.compile(rb"# sha256: ([0-9a-f]{64})")
 _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
@@ -428,6 +432,8 @@ def _runtime_of(n: Node) -> dict:
         state["held"] = True
         if n.hold_reason:
             state["hold_reason"] = n.hold_reason
+    if n.retry_note:
+        state["retry_note"] = n.retry_note
     return state
 
 
@@ -440,6 +446,7 @@ def _apply_runtime(n: Node, state: dict) -> None:
     n.recovery_marker = bool(state.get("recovery_marker", False))
     n.held = bool(state.get("held", False))
     n.hold_reason = state.get("hold_reason")
+    n.retry_note = state.get("retry_note")
 
 
 def _read_state_file(path: str) -> dict:

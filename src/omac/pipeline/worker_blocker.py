@@ -16,7 +16,9 @@ from .apply import Ports, apply
 from .decide_effects import UpdateMetadata, UpdateStatus
 
 SCHEMA = "omac.worker-blocker/v2"
-REASONS = {"quality-gate-failed", "owner-decision-required"}
+REASONS = {"quality-gate-failed", "owner-decision-required", "environment-failure"}
+# These two must show a command that really failed: the report is a claim, the non-zero exit is the evidence.
+FAILED_COMMAND_REASONS = {"quality-gate-failed", "environment-failure"}
 FIELDS = {
     "schema",
     "reason_code",
@@ -106,7 +108,7 @@ def _validate(report, issue_id):
             not _text(fact["command"]) or type(fact["exit_code"]) is not int
         ):
             invalid()
-    if report["reason_code"] == "quality-gate-failed" and not any(
+    if report["reason_code"] in FAILED_COMMAND_REASONS and not any(
         "command" in fact and fact["exit_code"] != 0 for fact in evidence
     ):
         invalid()

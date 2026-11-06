@@ -121,6 +121,7 @@ PHASE_KEY = "phase"
 CI_BOUNCE_KEY = "ci_bounce"
 REVIEW_BOUNCE_KEY = "review_bounce"
 MERGE_BOUNCE_KEY = "merge_bounce"
+ENVIRONMENT_BOUNCE_KEY = "environment_bounce"
 WORKER_BOUNCE_KEY = "worker_bounce"
 BOUNCE_BASELINE_KEY = "bounce_baseline"
 # 旧 inline 交付物 key + 新引用 key。真实平台优先用 *_ref 承载 comment/attachment
@@ -172,11 +173,12 @@ DELIVERY_CONTENT_KEY = {
 
 @dataclass
 class Bounces:
-    """回退计数:worker 未交付 / CI 失败 / 评审 reject / merge 冲突。"""
+    """回退计数:worker 未交付 / CI 失败 / 评审 reject / merge 冲突 / 环境故障自动重试。"""
     worker: int = 0
     ci: int = 0
     review: int = 0
     merge: int = 0
+    environment: int = 0
 
     def as_dict(self) -> dict:
         return {
@@ -184,6 +186,7 @@ class Bounces:
             CI_BOUNCE_KEY: self.ci,
             REVIEW_BOUNCE_KEY: self.review,
             MERGE_BOUNCE_KEY: self.merge,
+            ENVIRONMENT_BOUNCE_KEY: self.environment,
         }
 
     def total(self) -> int:
@@ -621,6 +624,7 @@ def parse_bounces(metadata: dict) -> Bounces:
         ci=parse_bounce(metadata.get(CI_BOUNCE_KEY)),
         review=parse_bounce(metadata.get(REVIEW_BOUNCE_KEY)),
         merge=parse_bounce(metadata.get(MERGE_BOUNCE_KEY)),
+        environment=parse_bounce(metadata.get(ENVIRONMENT_BOUNCE_KEY)),
     )
 
 

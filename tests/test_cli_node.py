@@ -118,6 +118,33 @@ def test_retry_reassign_worker_validated_against_config(tmp_path, capsys):
     assert m.nodes["b"].status == "todo"
 
 
+def test_retry_note_reaches_the_workers_issue_body_and_a_retry_without_one_clears_it(tmp_path, capsys):
+    from omac.core.taskmeta import TaskKind
+    from omac.pipeline.dispatch import render_issue_body
+
+    path = _write_manifest(tmp_path, _basic_nodes())
+
+    assert main(["node", "retry", path, "b", "--note", "  the registry is on the VPN, use mirror.example.test  "]) == exit_codes.OK
+    node = load_manifest(path).nodes["b"]
+    body = render_issue_body(node, node.contract, TaskKind.DEVELOP, "wi-2")
+    assert node.retry_note == "the registry is on the VPN, use mirror.example.test"
+    assert "the registry is on the VPN, use mirror.example.test" in body
+
+    assert main(["node", "retry", path, "b"]) == exit_codes.OK
+    cleared = load_manifest(path).nodes["b"]
+    assert cleared.retry_note is None
+    assert "mirror.example.test" not in render_issue_body(cleared, cleared.contract, TaskKind.DEVELOP, "wi-2")
+
+
+def test_retry_note_is_bounded_and_not_for_a_review_retry(tmp_path, capsys):
+    path = _write_manifest(tmp_path, _basic_nodes())
+
+    assert main(["node", "retry", path, "b", "--note", "x" * 2001]) == exit_codes.VALIDATION
+    assert "2000" in capsys.readouterr().err
+    assert main(["node", "retry", path, "b", "--stage", "review", "--note", "look again"]) == exit_codes.VALIDATION
+    assert load_manifest(path).nodes["b"].status == "blocked"
+
+
 def test_retry_hints_rerun(tmp_path, capsys):
     path = _write_manifest(tmp_path, _basic_nodes())
     main(["node", "retry", path, "b"])

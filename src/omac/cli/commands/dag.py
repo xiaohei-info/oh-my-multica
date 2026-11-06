@@ -4,7 +4,7 @@ from typing import Optional
 
 import argparse
 import os
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 import time
 
 from .. import exit_codes
@@ -12,10 +12,11 @@ from ..output import add_output_flag, hint, print_json, print_table
 from ...core.config import (
     CONFIG_DIR, CONFIG_PATH, DEFAULTS,
     load_config, resolve_no_submit_runs, resolve_node_nits,
-    resolve_reconcile, resolve_retry,
+    resolve_hold_live, resolve_reconcile, resolve_retry,
 )
 from ...core.amendment import ensure_amendment_apply_complete
 from ...core.acceptance import load_acceptance_doc_file
+from ...core import logsetup
 from ...core.graph import node_waves
 from ...core.lint import lint
 from ...core.manifest import load_manifest, manifest_write_lock
@@ -30,9 +31,12 @@ from ...pipeline.review import run_review
 from ...pipeline.acceptance import (
     acceptance_doc_path, run_acceptance_loop,
 )
+from ...pipeline.followups import collect_followups
 from ...pipeline.report import (
-    build_manifest_status_report, build_status_report, render_table,
+    build_manifest_status_report, build_status_report, pending_decisions, render_table,
 )
+
+log = logsetup.get_logger(__name__)
 
 NAME = "dag"
 SUMMARY = "manifest DAG 的检查、摘要、运行与受控修订"
@@ -52,12 +56,17 @@ DESCRIPTION = """manifest DAG 的检查、摘要与确定性执行。
   status   随时查看快照(reconcile + 各节点状态),不推进;正常退出 0，
            平台/网络错误退出 2，认证错误退出 3
   snapshot 只读取 manifest 生成状态快照;不创建 Engine、不 reconcile、不写文件
+  decisions 只读列出 DAG 在等的决策(blocked/failed 节点、被挂起的节点),每条带 decision_key 与可复制命令;
+           `run --wait-decisions` 按同一 decision_key 去重发 decision_pending 事件
+  followups 只读聚合各已合并节点 pass-with-nits 的建议项(`<节点>#<序号>`);收尾节点的评审要求逐条处置(fix/defer/drop)
   tick     单轮推进后立即退出:exit 0 收敛 / 10 推进中 / 20 需决策(调试用)
   amend    对已运行 DAG 发起 Orchestrator→Reviewer→Human 的受控 amendment；
            Reviewer pass 后停在人工确认。accept 原子写 manifest，并用逐节点
            apply ledger 对跨 Store side effect 做 restart-safe 补偿；它不是跨系统事务。
 
 有界运行:--max-rounds N / --max-minutes N(给不想长阻塞的 agent 调用者分段跑)
+等待决策:--wait-decisions 在没有进行中节点且有待决策项时放开写锁等人处理(`node retry|release` 等),
+决策后自动续跑;收敛 exit 0,到 --max-minutes 仍未收敛 exit 10(不再 exit 20)。
 进度事件(走 stderr,不污染 stdout 数据线):默认人类文本,--json-logs /
 --log-format json 出 JSON-lines 供上层机器/CI 解析(也可设 OMAC_LOG_FORMAT 环境变量)。
 事件清单:dispatch / review_dispatch / verdict / revision(gate:worker|ci|review|guard)
@@ -125,6 +134,10 @@ def register(parser):
     run_p.add_argument("--max-parallel", type=int, help="并发上限覆盖")
     run_p.add_argument("--max-rounds", type=int, help="最多跑 N 轮后退出(分段跑)")
     run_p.add_argument("--max-minutes", type=int, help="最多跑 N 分钟后退出(分段跑)")
+    run_p.add_argument("--wait-decisions", action="store_true", help=ui(
+        "When nothing is running and a decision is pending, release the write lock and wait for it "
+        "(exit 0 on convergence, exit 10 at --max-minutes) instead of exiting 20",
+        "没有进行中节点且有待决策项时放开写锁等待人处理(收敛 exit 0,到 --max-minutes exit 10),不再 exit 20"))
     add_output_flag(run_p)
     _add_log_flags(run_p)
 
@@ -135,6 +148,20 @@ def register(parser):
     status.add_argument("--workspace", help="workspace 覆盖(缺省读 config/env)")
     add_output_flag(status)
     _add_log_flags(status)
+
+    decisions_p = sub.add_parser("decisions", help=ui(
+        "List the decisions the DAG waits for (read-only, manifest only)",
+        "列出 DAG 在等的决策(只读,仅读 manifest)"))
+    decisions_p.add_argument("manifest", help="manifest 文件路径")
+    add_output_flag(decisions_p)
+
+    followups_p = sub.add_parser("followups", help=ui(
+        "List the pass-with-nits follow-ups of the merged nodes (read-only)",
+        "列出各已合并节点 pass-with-nits 留下的建议项(只读)"))
+    followups_p.add_argument("manifest", help="manifest 文件路径")
+    followups_p.add_argument("--engine", help="引擎类型覆盖(缺省读 config/env)")
+    followups_p.add_argument("--workspace", help="workspace 覆盖(缺省读 config/env)")
+    add_output_flag(followups_p)
 
     snapshot_p = sub.add_parser(
         "snapshot", help="只读 manifest 快照(不调用 Engine、不 reconcile)")
@@ -488,6 +515,40 @@ def snapshot(args) -> int:
     return exit_codes.OK
 
 
+def decisions(args) -> int:
+    """The decisions the DAG waits for, from the manifest alone; the same records `dag run --wait-decisions` announces."""
+    if not os.path.exists(args.manifest):
+        raise ValidationError(ui(
+            f"Manifest file not found: {args.manifest}. Check the path.",
+            f"manifest 文件不存在: {args.manifest} —— 请确认路径"))
+    rows = pending_decisions(load_manifest(args.manifest), args.manifest)
+    if args.output == "json":
+        print_json({"decisions": rows})
+    else:
+        print_table(["decision_key", "kind", "next action"], [[r["decision_key"], r["kind"], r["next_actions"][0]] for r in rows])
+        if rows:
+            hint(ui(
+                "Look at a node with `omac node show <manifest> <node>`, decide, then rerun `omac dag run`.",
+                "用 `omac node show <manifest> <node>` 查看证据链,决策后重跑 `omac dag run`"))
+    return exit_codes.OK
+
+
+def followups(args) -> int:
+    """The nits of every merged node that passed with nits: what the closeout review must dispose of."""
+    if not os.path.exists(args.manifest):
+        raise ValidationError(ui(
+            f"Manifest file not found: {args.manifest}. Check the path.",
+            f"manifest 文件不存在: {args.manifest} —— 请确认路径"))
+    engine, _ = _assemble_engine(args)
+    manifest = load_manifest(args.manifest)
+    rows = collect_followups(engine.store, manifest, exclude=manifest.meta.get("closeout_node"))
+    if args.output == "json":
+        print_json({"closeout_node": manifest.meta.get("closeout_node"), "followups": rows})
+    else:
+        print_table(["followup_id", "work_item_id", "nit"], [[r["followup_id"], r["work_item_id"], r["nit"]] for r in rows])
+    return exit_codes.OK
+
+
 def list_manifests(args) -> int:
     """DAG manifests under ``--dir`` (config and acceptance files and empty DAGs excluded) with their progress.
 
@@ -717,13 +778,132 @@ def _scheduled_tick(
     )
 
 
+@dataclass
+class _Clock:
+    """Wall clock and round count of one `dag run`, kept across the lock releases of --wait-decisions."""
+    start: float = field(default_factory=lambda: time.monotonic())
+    rounds: int = 0
+
+    def minutes_up(self, max_minutes: Optional[int]) -> bool:
+        return max_minutes is not None and (time.monotonic() - self.start) >= max_minutes * 60
+
+
+@dataclass
+class _Waiting:
+    """The DAG stopped for a person's decision and nothing is running: the lock may go while --wait-decisions waits."""
+    result: object
+    keys: frozenset
+
+
 def _loop_or_single(args, single_round: bool) -> int:
-    with manifest_write_lock(args.manifest):
-        return _loop_or_single_locked(args, single_round)
+    clock, notified = _Clock(), set()
+    while True:
+        with manifest_write_lock(args.manifest):
+            outcome = _loop_or_single_locked(args, single_round, clock, notified)
+        if not isinstance(outcome, _Waiting):
+            return outcome
+        code = _wait_for_decision_change(args, outcome, clock)
+        if code is not None:
+            return code
 
 
-def _loop_or_single_locked(args, single_round: bool) -> int:
-    """共享核心:single_round=True → tick 一次退出;否则跑到收敛/需决策。"""
+def _decision_keys(manifest, manifest_path: str) -> frozenset:
+    return frozenset(d["decision_key"] for d in pending_decisions(manifest, manifest_path))
+
+
+def _notify_decisions(manifest, manifest_path: str, notified: set) -> None:
+    """One `decision_pending` event for each decision not announced before; a resolved decision is forgotten."""
+    current = {d["decision_key"]: d for d in pending_decisions(manifest, manifest_path)}
+    for key, decision in current.items():
+        if key not in notified:
+            log.info(logsetup.EVT_DECISION_PENDING, decision_key=key, node=decision["node"],
+                     kind=decision["kind"], next_actions=decision["next_actions"])
+    notified.clear()
+    notified.update(current)
+
+
+def _wait_for_decision_change(args, waiting: _Waiting, clock: _Clock) -> Optional[int]:
+    """Poll without the lock until the set of decisions changes (a person acted); exit 10 when --max-minutes is up.
+
+    Returns None to resume ticking. A manifest that cannot be read this instant (a writer is mid-save) is not a change.
+    """
+    max_minutes = getattr(args, "max_minutes", None)
+    poll = _load_config_for_manifest(args.manifest).get("defaults", {}).get("poll_interval", DEFAULTS["poll_interval"])
+    while True:
+        if clock.minutes_up(max_minutes):
+            _emit(waiting.result, load_manifest(args.manifest), args)
+            return exit_codes.IN_PROGRESS
+        time.sleep(poll)
+        try:
+            current = load_manifest(args.manifest)
+        except ValidationError:
+            continue
+        if _decision_keys(current, args.manifest) != waiting.keys:
+            return None
+
+
+def _finish_converged(args, engine, config, manifest, retry_limits, max_parallel, last_result) -> int:
+    """The inner loop converged: run the final acceptance loop if there is one, then report."""
+    acceptance = _maybe_acceptance(args, engine, config, manifest)
+    if acceptance is None:
+        _emit(last_result, manifest, args)
+        return exit_codes.OK
+    # 验收外层循环可能已并入 fix 节点并收敛;重新 tick 一次
+    # (幂等:全部 done 时不派发)拿到最新 done 列表再 emit,
+    # 否则 emit 反映的是验收前的 3 节点,用户看不到增量节点。
+    last_result = _scheduled_tick(
+        engine, manifest, args.manifest,
+        max_parallel=max_parallel, retry_limits=retry_limits, config=config)
+    if acceptance.exit_code != exit_codes.OK:
+        # One result document, in the shape of every other needs_decision: the report says which items still fail.
+        report = {"acceptance": {
+            "rounds": acceptance.rounds, "failed_items": acceptance.failed_items,
+            "reports": acceptance.reports}}
+        _emit(replace(last_result, state="needs_decision", report=report), manifest, args)
+        raise NeedsDecision(
+            ui(
+                f"Final acceptance still fails after {acceptance.rounds} round(s): "
+                f"{', '.join(acceptance.failed_items)}. Fix them or raise acceptance.max_rounds, "
+                f"then rerun `omac dag run {args.manifest}`.",
+                f"最终验收经过 {acceptance.rounds} 轮仍未通过: {'、'.join(acceptance.failed_items)}。"
+                f"修复后或调大 acceptance.max_rounds,再运行 `omac dag run {args.manifest}`。"),
+            report=report,
+        )
+    _emit(last_result, manifest, args)
+    return acceptance.exit_code
+
+
+def _stop_for_decision(args, manifest, last_result, wait: bool):
+    """needs_decision / held: exit 20 with the report, or (--wait-decisions) hand the lock back and wait."""
+    if wait:
+        return _Waiting(last_result, _decision_keys(manifest, args.manifest))
+    _emit(last_result, manifest, args)
+    if last_result.state == "needs_decision":
+        raise NeedsDecision(
+            ui(
+                f"Caller decision required: nodes {last_result.failed} failed or are blocked. "
+                "Rerun, retry, or abandon before continuing.",
+                f"需调用者决策:节点 {last_result.failed} 失败/受阻,重跑/重试/abandon 后继续。"),
+            report=last_result.report,
+        )
+    raise NeedsDecision(
+        ui(
+            f"Nothing can advance: nodes {last_result.held} are held (and the nodes behind them wait). "
+            "Prepare what they need, then release each: "
+            f"{'; '.join(last_result.report['next_actions'])}; then rerun `omac dag run {args.manifest}`.",
+            f"没有可推进的节点:节点 {last_result.held} 已挂起(其下游随之等待)。"
+            f"准备好后逐个 release: {'; '.join(last_result.report['next_actions'])};"
+            f"然后重新运行 `omac dag run {args.manifest}`。"),
+        report=last_result.report,
+    )
+
+
+def _loop_or_single_locked(args, single_round: bool, clock: Optional[_Clock] = None, notified: Optional[set] = None):
+    """共享核心:single_round=True → tick 一次退出;否则跑到收敛/需决策。
+
+    Returns an exit code, or a ``_Waiting`` when --wait-decisions parks the run (the caller releases the lock).
+    """
+    clock, notified = clock or _Clock(), set() if notified is None else notified
     if not os.path.exists(args.manifest):
         raise ValidationError(ui(
             f"Manifest file not found: {args.manifest}\n"
@@ -731,9 +911,8 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
             f"manifest 文件不存在: {args.manifest}\n"
             f"  用 omac plan create --name <name> 生成,或检查路径"))
 
-    import time as _time
-
     manifest = load_manifest(args.manifest)
+    notified.intersection_update(_decision_keys(manifest, args.manifest))   # a decision resolved while we waited is forgotten
     try:
         ensure_amendment_apply_complete(manifest, args.manifest)
     except NeedsDecision as exc:
@@ -750,82 +929,33 @@ def _loop_or_single_locked(args, single_round: bool) -> int:
     # fail-closed:非法 retry.no_submit_runs 在进 tick 前报错(exit 5)
     resolve_no_submit_runs(config)
     resolve_node_nits(config)
+    resolve_hold_live(config)
     _validate_execution_invariants(manifest, args.manifest)
     max_parallel = _default_max_parallel(args)
     max_rounds = getattr(args, "max_rounds", None)
     max_minutes = getattr(args, "max_minutes", None)
-
-    start = _time.monotonic()
-    rounds = 0
-    last_result = None
+    wait = bool(getattr(args, "wait_decisions", False)) and not single_round
 
     while True:
         last_result = _scheduled_tick(
             engine, manifest, args.manifest,
             max_parallel=max_parallel, retry_limits=retry_limits, config=config)
-        rounds += 1
+        clock.rounds += 1
+        if wait:
+            _notify_decisions(manifest, args.manifest, notified)
 
         if last_result.state == "converged":
-            acceptance = _maybe_acceptance(
-                args, engine, config, manifest)
-            if acceptance is not None:
-                # 验收外层循环可能已并入 fix 节点并收敛;重新 tick 一次
-                # (幂等:全部 done 时不派发)拿到最新 done 列表再 emit,
-                # 否则 emit 反映的是验收前的 3 节点,用户看不到增量节点。
-                last_result = _scheduled_tick(
-                    engine, manifest, args.manifest,
-                    max_parallel=max_parallel, retry_limits=retry_limits, config=config)
-                if acceptance.exit_code != exit_codes.OK:
-                    # One result document, in the shape of every other needs_decision: the report says which items still fail.
-                    report = {"acceptance": {
-                        "rounds": acceptance.rounds, "failed_items": acceptance.failed_items,
-                        "reports": acceptance.reports}}
-                    _emit(replace(last_result, state="needs_decision", report=report), manifest, args)
-                    raise NeedsDecision(
-                        ui(
-                            f"Final acceptance still fails after {acceptance.rounds} round(s): "
-                            f"{', '.join(acceptance.failed_items)}. Fix them or raise acceptance.max_rounds, "
-                            f"then rerun `omac dag run {args.manifest}`.",
-                            f"最终验收经过 {acceptance.rounds} 轮仍未通过: {'、'.join(acceptance.failed_items)}。"
-                            f"修复后或调大 acceptance.max_rounds,再运行 `omac dag run {args.manifest}`。"),
-                        report=report,
-                    )
-                _emit(last_result, manifest, args)
-                return acceptance.exit_code
-            _emit(last_result, manifest, args)
-            return exit_codes.OK
+            return _finish_converged(
+                args, engine, config, manifest, retry_limits, max_parallel, last_result)
 
-        if last_result.state == "needs_decision":
-            _emit(last_result, manifest, args)
-            raise NeedsDecision(
-                ui(
-                    f"Caller decision required: nodes {last_result.failed} failed or are blocked. "
-                    "Rerun, retry, or abandon before continuing.",
-                    f"需调用者决策:节点 {last_result.failed} 失败/受阻,重跑/重试/abandon 后继续。"),
-                report=last_result.report,
-            )
-
-        if last_result.state == "held":
-            _emit(last_result, manifest, args)
-            raise NeedsDecision(
-                ui(
-                    f"Nothing can advance: nodes {last_result.held} are held (and the nodes behind them wait). "
-                    "Prepare what they need, then release each: "
-                    f"{'; '.join(last_result.report['next_actions'])}; then rerun `omac dag run {args.manifest}`.",
-                    f"没有可推进的节点:节点 {last_result.held} 已挂起(其下游随之等待)。"
-                    f"准备好后逐个 release: {'; '.join(last_result.report['next_actions'])};"
-                    f"然后重新运行 `omac dag run {args.manifest}`。"),
-                report=last_result.report,
-            )
+        if last_result.state in ("needs_decision", "held"):
+            return _stop_for_decision(args, manifest, last_result, wait)
 
         if single_round:
             _emit(last_result, manifest, args)
             return exit_codes.IN_PROGRESS
 
-        if max_rounds is not None and rounds >= max_rounds:
-            _emit(last_result, manifest, args)
-            return exit_codes.IN_PROGRESS
-        if max_minutes is not None and (_time.monotonic() - start) >= max_minutes * 60:
+        if (max_rounds is not None and clock.rounds >= max_rounds) or clock.minutes_up(max_minutes):
             _emit(last_result, manifest, args)
             return exit_codes.IN_PROGRESS
 
@@ -846,6 +976,10 @@ def run(args) -> int:
         return status(args)
     if args.action == "snapshot":
         return snapshot(args)
+    if args.action == "decisions":
+        return decisions(args)
+    if args.action == "followups":
+        return followups(args)
     if args.action == "amend":
         return amend(args)
     if args.action == "tick":

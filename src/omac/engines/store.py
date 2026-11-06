@@ -351,6 +351,7 @@ class WorkItemStore(ABC):
         ci_bounce: Optional[int] = None,
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
+        environment_bounce: Optional[int] = None,
         deliverable: Optional[str] = None,
         project_rules: Optional[str] = None,
         source_refs: Optional[List[Dict[str, Any]]] = None,
@@ -360,7 +361,7 @@ class WorkItemStore(ABC):
 
         phase 流转与回退计数递增由 pipeline 经此方法写入(§7.4):
         - phase:产出(authoring)↔ 评审(review)的阶段切换;
-        - worker_bounce/ci_bounce/review_bounce/merge_bounce:回退的绝对值
+        - worker_bounce/ci_bounce/review_bounce/merge_bounce/environment_bounce:回退的绝对值
           (pipeline 读当前值、+1、写回;Store 只存取不做状态机);
         - review_continuation:operator 明确授权的绝对 review round 上限；
           不清零 review_bounce，也不写项目配置。

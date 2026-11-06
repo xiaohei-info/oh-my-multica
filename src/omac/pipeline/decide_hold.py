@@ -7,9 +7,14 @@ platform side that a manifest flag would not stop.
 """
 from __future__ import annotations
 
+from typing import Iterable, Mapping
+
 from ..core import graph
+from ..core.manifest import EvidenceMode
 from ..i18n import ui
-from .decide_effects import Plan, SaveState, SetNode
+from .decide_effects import Plan, SaveState, SetDagFact, SetNode
+
+AUTO_HELD_KEY = "auto_held"   # _dag.yaml fact: nodes the code has held once; a released node is never held again
 
 
 class HoldRefused(Exception):
@@ -45,3 +50,25 @@ def plan_release(node_key: str, held: bool) -> Plan:
         raise HoldRefused(ui(
             f"Node {node_key} is not held; nothing to release.", f"节点 {node_key} 未被挂起,无需 release。"))
     return Plan((SetNode(node_key, {"held": False, "hold_reason": None}), SaveState()), "released")
+
+
+def plan_auto_hold_live(ready: Iterable[str], nodes: Mapping[str, object], already_held: Iterable[str]) -> Plan | None:
+    """Hold each ready node whose contract needs live evidence, once (``dispatch.hold_live``); None when there is none.
+
+    A live node needs something the code cannot prepare (an account, a running service), so a person releases it. The
+    node is remembered in ``auto_held``: after ``omac node release`` (or a later retry) it dispatches like any other.
+    """
+    seen = set(already_held)
+    live = [
+        key for key in ready
+        if key not in seen and getattr(getattr(nodes[key], "contract", None), "evidence_mode", None) is EvidenceMode.LIVE]
+    if not live:
+        return None
+    reason = ui(
+        "contract.evidence_mode is live: prepare the live environment, then release (dispatch.hold_live)",
+        "contract.evidence_mode 为 live:先准备好真实环境再 release(dispatch.hold_live)")
+    return Plan((
+        *(SetNode(key, {"held": True, "hold_reason": reason}) for key in live),
+        SetDagFact(AUTO_HELD_KEY, sorted(seen | set(live))),
+        SaveState(),
+    ), "auto-held")

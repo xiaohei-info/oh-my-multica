@@ -121,7 +121,9 @@ Commands take `--output json|table`; agents and the web use JSON. `dag run --out
 (required: every issue belongs to a project), `roles` (planner, orchestrator, workers, reviewers, acceptor),
 `defaults` (`max_parallel`, `poll_interval`, `coverage_gate`), `workflow` (human-in-the-loop, review, acceptance doc),
 `ci.check_command`, `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
-`retry` (`worker|ci|review|merge`, `no_submit_runs`), `review.node_nits` (`accept` default | `decide`: whether a develop
+`retry` (`worker|ci|review|merge|environment`, `no_submit_runs`; `environment` is the automatic same-Worker retries of an
+`environment-failure` report, default 1), `dispatch.hold_live` (default false: hold ready `evidence_mode: live` nodes for a person to
+release), `review.node_nits` (`accept` default | `decide`: whether a develop
 node's `pass-with-nits` is a pass or an exit-20 stop; plan stages and amendments always stop),
 `review.invalid_evidence_restarts` (default 2: re-dispatches of the Reviewer on one subject after invalid review evidence),
 `plan` (`profile: auto|light|standard`, `light_max_nodes` 12, `light_max_business_actions` 20), `reconcile`, `acceptance.max_rounds`. `omac init` writes it;

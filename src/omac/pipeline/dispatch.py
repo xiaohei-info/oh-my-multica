@@ -1736,12 +1736,16 @@ def render_issue_body(node, contract, kind, issue_id, source_refs=None, engine_e
         source_refs, engine_env=engine_env, include_commands=False,
         language=language)
 
+    note = (getattr(node, "retry_note", None) or "").strip() if phase == TaskPhase.AUTHORING else ""
+    operator_note = f"## {ui('Operator note for this retry', '本次重试的操作员说明', language=language)}\n{note}" if note else ""
+
     return "\n\n".join(
         p for p in [
             _issue_bootstrap(kind, issue_id, _command_env_prefix(engine_env), language),
             _task_summary(node, contract, kind, role, title, issue_id, language),
             _bullet_section(ui('Completion criteria', '完成标准', language=language), summary("acceptance")),
             detail,
+            operator_note,
             _bullet_section(ui('Non-goals', '非目标', language=language), summary("non_goals")),
             _bullet_section(ui('Primary code ownership', '主要代码归属范围', language=language),
                             summary("scope_paths"), "- `{}`"),
