@@ -22,9 +22,9 @@ from ...errors import NeedsDecision, OmacError, ValidationError, WorkItemNotFoun
 from ...i18n import ui
 from ...pipeline.apply import ManifestState, Ports, apply
 from ...pipeline.decide_hold import HoldRefused, plan_hold, plan_release
-from ...pipeline.decide_transitions import finish_clearing_decision
+from ...pipeline.decide_transitions import finish_clearing_decision, retire_standing_facts
 from ...pipeline.nits_acceptance import nits_marker, persist_nits_acceptance
-from ...pipeline.decide_effects import UpdateMetadata, UpdateStatus
+from ...pipeline.decide_effects import Plan, UpdateMetadata, UpdateStatus
 from ...pipeline.decide_retry import (
     RetryFacts, RetryRefused, needs_review_context, plan_rework_handoff, retry_facts, wants_rework_handoff,
 )
@@ -574,6 +574,8 @@ def _cmd_accept(args) -> int:
         node.merged_at = observation.merged_at
     apply(finish_clearing_decision(node.work_item_id), Ports(store=engine.store))
 
+    # The platform no longer carries a decision or handoff; only now may the active-set hint go (intent first).
+    node.recovery_marker = False
     node.status = "done"
     save_manifest(manifest, args.manifest)
 
@@ -590,11 +592,25 @@ def _cmd_accept(args) -> int:
 
 # ==================== abandon ====================
 
+def _retire_abandoned_facts(node) -> None:
+    """Platform first: an abandoned node must not leave its decision / handoff behind (skipped without an engine)."""
+    engine = _build_engine(load_config()) if node.work_item_id else None
+    if engine is None:
+        return
+    try:
+        item = engine.store.get_work_item(node.work_item_id)
+    except WorkItemNotFoundError:
+        return
+    apply(Plan(retire_standing_facts(item)), Ports(store=engine.store))
+
+
 def _cmd_abandon(args) -> int:
     manifest = _load_or_raise(args.manifest)
     node = _require_node(manifest, args.node_key)
 
+    _retire_abandoned_facts(node)
     node.status = "abandoned"
+    node.recovery_marker = False
     save_manifest(manifest, args.manifest)
 
     # 计算受影响下游(传递依赖),报告中对经过 abandoned 上游的节点加注记。
