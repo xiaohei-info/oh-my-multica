@@ -644,7 +644,8 @@ contract change to compensate for lost budget records.
 
 For an active develop/authoring execution, re-read
 `omac work show <issue-id> --output json`, copy `control.blocker_report_template`,
-and use its `report_blocker` command to submit an `omac.worker-blocker/v2` report.
+and use its `report_blocker` command to submit an `omac.worker-blocker/v3` report (v2 is still accepted; the reason
+codes `upstream-defect` and `environment-failure` are described in the worker guide).
 This is for a contract stop condition or an owner decision, not ordinary Reviewer
 reject rework. Completed old Runs cannot be reported retroactively.
 
@@ -678,7 +679,7 @@ Block, submit and Worker redispatch share a host-local lock and re-read control
 before writes. This is not cross-host CAS: retain the single-Runner control
 boundary and do not concurrently replace a node's generation from multiple hosts.
 
-Reports are limited to 2048 UTF-8 JSON bytes and 1–4 evidence entries; keep full logs at the referenced location.
+Reports are limited to 6144 UTF-8 JSON bytes and 1–4 evidence entries; keep full logs at the referenced location.
 
 Before creating a Worker handoff, OMAC materializes a deferred Store contract
 before hashing it. An unloaded `None` is not an authoritative null contract.

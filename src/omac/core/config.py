@@ -41,6 +41,10 @@ docs/design/README.md §6:配置与状态一律 YAML 进 git,不用 SQLite。
       light_max_business_actions: 20           # light 档：验收 business-action 数上限
     dispatch:
       hold_live: false                         # true = 就绪的 contract.evidence_mode: live 节点由代码自动挂起(等人 release)
+    defects:                                   # 上游缺陷回流(WP3):报告者给出结构化缺陷,代码校验后自动插入修复节点
+      auto_fix: design-gap                     # off | design-gap;off = 一律停在 exit 20 等人
+      per_reporter: 2                          # 每个报告者可自动修复的次数(`omac defect grant` 补充)
+      max_auto_fixes: auto                     # 全局自动修复次数;auto = max(5, ceil(0.15 × 节点数))
     reconcile:                                 # P3 低频全量审计调度
       full_scan_interval_ticks: 20             # 成功 active tick 数达到此值后，下轮全量读取
       full_scan_max_age_seconds: 1800          # 距上次成功全量读取的最长秒数
@@ -104,6 +108,9 @@ DEFAULT_RECONCILE = {
     "full_scan_interval_ticks": 20,
     "full_scan_max_age_seconds": 1800,
 }
+
+DEFAULT_DEFECTS = {"auto_fix": "design-gap", "per_reporter": 2, "max_auto_fixes": "auto"}
+DEFECT_AUTO_FIX_MODES = ("off", "design-gap")
 
 DEFAULT_GITHUB_CHECK_COMMAND = "gh pr checks {pr_url} --watch --fail-fast"
 DEFAULT_GITHUB_MERGE_COMMAND = "gh pr merge {pr_url} --squash --delete-branch"
@@ -305,6 +312,27 @@ def validate_hold_live(value) -> bool:
             f"dispatch.hold_live must be true or false; got {type(value).__name__}({value!r})",
             f"dispatch.hold_live 必须为布尔值 true/false,got {type(value).__name__}({value!r})"))
     return value
+def resolve_defects(config: dict, node_count: int) -> dict:
+    """解析 defects 块(auto_fix / per_reporter / max_auto_fixes);``auto`` 的全局上限按节点数折算成整数;非法值 fail-closed。"""
+    raw = get_value(config, "defects")
+    if raw is not None and not isinstance(raw, dict):
+        raise ValidationError(ui(
+            f"defects must be a YAML mapping; got {type(raw).__name__}",
+            f"defects 配置应为 YAML 映射,got {type(raw).__name__}"))
+    resolved = {**DEFAULT_DEFECTS, **(raw or {})}
+    if resolved["auto_fix"] not in DEFECT_AUTO_FIX_MODES:
+        raise ValidationError(ui(
+            f"defects.auto_fix must be one of {', '.join(DEFECT_AUTO_FIX_MODES)}; got {resolved['auto_fix']!r}",
+            f"defects.auto_fix 必须是 {' / '.join(DEFECT_AUTO_FIX_MODES)} 之一(非法值 {resolved['auto_fix']!r})"))
+    if resolved["max_auto_fixes"] == "auto":
+        resolved["max_auto_fixes"] = max(5, -(-node_count * 15 // 100))
+    for key in ("per_reporter", "max_auto_fixes"):
+        value = resolved[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValidationError(ui(
+                f"defects.{key} must be an integer >= 0{' or auto' if key == 'max_auto_fixes' else ''}; got {value!r}",
+                f"defects.{key} 必须是 >= 0 的整数{'(或 auto)' if key == 'max_auto_fixes' else ''},非法值 {value!r}"))
+    return resolved
 
 
 def resolve_reconcile(config: dict) -> dict:

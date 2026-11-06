@@ -9,6 +9,7 @@ docs/design/README.md §7.3:sync → decide → dispatch,状态全在 manifest +
 from __future__ import annotations
 
 import copy
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -20,8 +21,9 @@ from typing import Any, Callable, Dict, List, Set, Tuple
 import yaml
 
 from ..core import graph, logsetup
+from ..core.defects import defect_errors, review_origin_defects
 from ..core.amendment import ensure_amendment_apply_complete
-from ..core.config import DEFAULT_RETRY, resolve_hold_live, resolve_no_submit_runs, resolve_node_nits
+from ..core.config import DEFAULT_RETRY, resolve_defects, resolve_hold_live, resolve_no_submit_runs, resolve_node_nits
 from ..core.contract_boundaries import (
     build_contract_boundary_decision,
     contract_boundary_conflicts,
@@ -107,6 +109,8 @@ from .decide_runs import (
     observe_direct_run_attempt, parse_baseline_cutoff, parse_platform_time, run_created_within_baseline,
 )
 from .decide_effects import (
+    Plan,
+    SetNode,
     AcknowledgeAssignment,
     Assign,
     ClearAssignment,
@@ -2873,9 +2877,13 @@ class _Node:
     decision_class: str | None = None
 
 
-def _environment_blocker(decision: Any) -> bool:
+def _blocker_reason(decision: Any) -> str | None:
     blocker = decision.get("blocker") if isinstance(decision, dict) else None
-    return isinstance(blocker, dict) and blocker.get("reason_code") == ENVIRONMENT_FAILURE
+    return blocker.get("reason_code") if isinstance(blocker, dict) else None
+
+
+def _environment_blocker(decision: Any) -> bool:
+    return _blocker_reason(decision) == ENVIRONMENT_FAILURE
 
 
 def _retry_environment_failure(c: _Collect, n: _Node) -> bool:
@@ -2929,9 +2937,12 @@ def _collect_worker_blocker(c: _Collect, n: _Node) -> bool:
         if environment and _retry_environment_failure(c, n):
             return True
         escalation = _environment_escalation(c, n) if environment else None
-        _apply_plan(Ports(store=c.store), c.manifest, plan_block(
+        plan = plan_block(
             key, n.item.id, decision=escalation, write_decision=escalation is not None and escalation != decision,
-            write_status=n.item.status != WorkItemStatus.BLOCKED))
+            write_status=n.item.status != WorkItemStatus.BLOCKED)
+        if _blocker_reason(decision) == "upstream-defect":   # environment-failure never gets here: only this reason is routed
+            plan = Plan(plan.effects + (SetNode(key, {"defect_pending": True}),), plan.outcome)   # `dag run` routes it next
+        _apply_plan(Ports(store=c.store), c.manifest, plan)
         c.failures[key] = str(decision.get("reason_code", "worker-decision-required"))
         return True
     return False
@@ -3617,6 +3628,35 @@ def _review_consume_baseline(c: _Collect, n: _Node) -> bool:
     return False
 
 
+def _route_review_to_defect(c: _Collect, n: _Node) -> bool:
+    """A reject whose every open blocker is owned by finished upstream work is a defect of that work, not rework.
+
+    The reviewer's ``owner`` fields are the evidence; the node stops with a defect report and costs no review bounce.
+    """
+    if resolve_defects(c.config or {}, len(c.manifest.nodes))["auto_fix"] == "off":
+        return False
+    report = n.item.review_report
+    blockers = report.get("blockers") if isinstance(report, dict) else None
+    defects = review_origin_defects(blockers, n.key, c.manifest) if isinstance(blockers, list) and blockers else None
+    if not defects or defect_errors(defects, repro_required=False):
+        return False
+    decision = {
+        "schema": DECISION_REQUIRED_SCHEMA, "reason_code": "upstream-defect", "kind": TaskKind.DEVELOP.value,
+        "phase": TaskPhase.REVIEW.value, "gate": "review", "resume_issue_id": n.item.id, "node_id": n.key,
+        "blocker": {"schema": "omac.worker-blocker/v3", "reason_code": "upstream-defect", "defects": defects},
+        "next_action": f"omac node retry {c.manifest_path} {n.key}"}
+    if len(json.dumps(decision, ensure_ascii=False).encode("utf-8")) > 6 * 1024:     # would not fit the 8 KiB metadata limit once stopped
+        return False
+    plan = plan_block(n.key, n.node.work_item_id, decision=decision, phase=TaskPhase.REVIEW, mark=True,
+                      persist_marker=_recovery_path(c.manifest) is not None)
+    _apply_plan(Ports(store=c.store), c.manifest, Plan(plan.effects + (SetNode(n.key, {"defect_pending": True}),), plan.outcome))
+    c.failures[n.key] = ui(
+        "Every open review blocker belongs to finished upstream work; reported as an upstream defect.",
+        "评审的全部未决 blocker 都属于已完成的上游节点;已作为上游缺陷上报。")
+    log.info(logsetup.EVT_NEEDS_DECISION, kind=_DAG_KIND, node=n.key, id=n.node.work_item_id, gate="review-upstream-defect")
+    return True
+
+
 def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
     """Apply a submitted verdict: merge on pass, bounded rework on reject or invalid evidence."""
     key, node = n.key, n.node
@@ -3651,6 +3691,8 @@ def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
                 id=node.work_item_id,
                 gate="review-boundary",
             )
+            return None
+        if _route_review_to_defect(c, n):
             return None
         resolution = resolve_convergence(n.item, node_id=key)
         resolution.raise_if_invalid(PlatformError, n.item.id)

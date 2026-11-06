@@ -121,6 +121,8 @@ def _validate_set_value(key: str, value):
 
     if key.startswith("plan.") and key.split(".", 1)[1] in config_mod.DEFAULT_PLAN:
         config_mod.resolve_plan({"plan": {key.split(".", 1)[1]: value}})
+    if key.startswith("defects.") and key.split(".", 1)[1] in config_mod.DEFAULT_DEFECTS:
+        config_mod.resolve_defects({"defects": {key.split(".", 1)[1]: value}}, 0)
         return
 
     if key.startswith("reconcile."):

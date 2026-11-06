@@ -192,6 +192,9 @@ def _next_actions(failed_nodes: list, manifest_path: str) -> list:
                     else "omac dag amend accept <manifest> <amendment-file>"
                 )
                 continue
+            elif isinstance(reason_code, str) and reason_code.startswith("defect-") and decision.get("next_action"):
+                actions.extend([decision["next_action"], *(decision.get("alternatives") or [])])
+                continue
             elif isinstance(reason_code, str) and reason_code.startswith(
                     "review-convergence-"):
                 next_action = decision.get("next_action")

@@ -321,6 +321,8 @@ class Node:
     hold_reason: str | None = None
     # `omac node retry --note`: what the operator tells the Worker for the next run; rendered into the issue body.
     retry_note: str | None = None
+    # 阻塞中的节点带着一份待路由的上游缺陷报告(平台 decision_required);由缺陷回流消费后清除。
+    defect_pending: bool = False
 
     def __post_init__(self):
         if isinstance(self.contract, dict):
@@ -386,13 +388,14 @@ def _build_nodes(raw) -> dict:
             held=bool(n.get("held", False)),
             hold_reason=n.get("hold_reason"),
             retry_note=n.get("retry_note"),
+            defect_pending=bool(n.get("defect_pending", False)),
         )
     return nodes
 
 
 _RUNTIME_KEYS = (
     "work_item_id", "status", "merged", "merged_at", "merge_request_state", "recovery_marker", "held", "hold_reason",
-    "retry_note")
+    "retry_note", "defect_pending")
 _NODE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _STATE_HEAD = re.compile(rb"# sha256: ([0-9a-f]{64})")
 _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
@@ -434,6 +437,8 @@ def _runtime_of(n: Node) -> dict:
             state["hold_reason"] = n.hold_reason
     if n.retry_note:
         state["retry_note"] = n.retry_note
+    if n.defect_pending:
+        state["defect_pending"] = True
     return state
 
 
@@ -447,6 +452,7 @@ def _apply_runtime(n: Node, state: dict) -> None:
     n.held = bool(state.get("held", False))
     n.hold_reason = state.get("hold_reason")
     n.retry_note = state.get("retry_note")
+    n.defect_pending = bool(state.get("defect_pending", False))
 
 
 def _read_state_file(path: str) -> dict:
@@ -550,10 +556,15 @@ def reload_if_definition_changed(manifest: Manifest, path: str) -> bool:
         return False
     if _read_definition(path, target)[2] == disk["def"]:
         return False
-    fresh = load_manifest(target)
+    adopt_disk(manifest, target)
+    return True
+
+
+def adopt_disk(manifest: Manifest, path: str) -> None:
+    """Replace the in-memory manifest with what is on disk (after another writer, e.g. an amendment, saved it)."""
+    fresh = load_manifest(_canonical_manifest_target(path))
     manifest.meta, manifest.nodes, manifest.dag_state, manifest._disk = (
         fresh.meta, fresh.nodes, fresh.dag_state, fresh._disk)
-    return True
 
 
 def loads_manifest(text: str) -> Manifest:

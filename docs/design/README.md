@@ -59,7 +59,7 @@ A DAG is two things on disk, both plain text, both committed to git:
 ```
 .omac/<name>.yaml            DAG definition: meta + node definitions. Changes only on plan and amendment.
 .omac/<name>.state/<node>.yaml   One file per node: work_item_id, status, merge facts. A few hundred bytes.
-.omac/<name>.state/_dag.yaml     DAG-level runtime facts (the reconcile-audit schedule). Written only by the Loop; absent until there is one.
+.omac/<name>.state/_dag.yaml     DAG-level runtime facts (the reconcile-audit schedule, the defect ledger, a pending human amendment). Written only by the Loop; absent until there is one.
 ```
 
 The definition digest (`core/amendment.py::manifest_definition_digest`) leaves out every runtime `meta` key
@@ -122,7 +122,8 @@ Commands take `--output json|table`; agents and the web use JSON. `dag run --out
 `defaults` (`max_parallel`, `poll_interval`, `coverage_gate`), `workflow` (human-in-the-loop, review, acceptance doc),
 `ci.check_command`, `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
 `retry` (`worker|ci|review|merge|environment`, `no_submit_runs`; `environment` is the automatic same-Worker retries of an
-`environment-failure` report, default 1), `dispatch.hold_live` (default false: hold ready `evidence_mode: live` nodes for a person to
+`environment-failure` report, default 1), `defects` (`auto_fix: off|design-gap`, `per_reporter` 2, `max_auto_fixes: auto` = max(5, ⌈0.15 × nodes⌉)),
+`dispatch.hold_live` (default false: hold ready `evidence_mode: live` nodes for a person to
 release), `review.node_nits` (`accept` default | `decide`: whether a develop
 node's `pass-with-nits` is a pass or an exit-20 stop; plan stages and amendments always stop),
 `review.invalid_evidence_restarts` (default 2: re-dispatches of the Reviewer on one subject after invalid review evidence),
@@ -276,11 +277,33 @@ sent to `node retry` first. Both commands apply `SetNode` + `SaveState` under th
 so the Loop's manifest sync only commits them. With nothing running, nothing failed and a held `todo` node left, the
 tick state is `held` (`decide_loop.decide_tick_state`): `dag run`/`dag tick` exit 20 with the report of 5.2.
 
+#### Upstream defects
+
+A Worker whose work is blocked by something a *finished* upstream node should have delivered reports
+`omac.worker-blocker/v3` `upstream-defect` (`defects`: class, `suspected_node`, anchor ids, design ref, expected/observed,
+repro); a Reviewer whose every open blocker names a finished upstream node as `owner` produces the same report instead of
+rework (no review bounce is spent). The report lives on the platform item (`decision_required`, at most 6 KiB) and the node
+carries `defect_pending`. Between two ticks of `dag run|tick` (the process that holds the write lock), `pipeline/defects.py`
+fingerprints each defect (`core/defects.py::fingerprint` = suspected node + sorted anchor ids; prose never counts), and
+`decide_defects.DEFECT_ROUTES` — the one routing table — picks a route: stop for a person (`defect-needs-owner`,
+`-unroutable`, `-fix-generation-cap`, `-recurred`, `-budget-exhausted`, each with copyable release commands), wait
+(`queued`: a human amendment is pending, or another fix of the same node is in flight), attach the reporter to a fix that
+exists, or `auto-fix`. An auto-fix is a *system amendment* through the ordinary amendment ledger
+(`core/amendment.py::build_system_amendment`, identity `…/v3-system`): code builds it, no Agent reviews it and no person
+confirms it, and its trust is a fixed whitelist — `add` fix nodes (each with `contract.defect_refs`, `blocked_by` only
+finished or added nodes), append-only `update` of a reporter's `blocked_by`, `resume` of a reporter's authoring. A fix node
+copies the suspected node's worker, reviewer, scope and gates; its review is the ordinary node review. The reporter waits on
+it through `blocked_by`, so it cannot be retried before the fix merges. Order and crash safety: intent
+(`_dag.defects.applying`, saved) → `<name>.system-amendment.yaml` → `apply_amendment` → reload → `fixing`; fingerprint
+states (`queued → applying → fixing → fixed → recurred | needs-owner`) only move forward, budgets are charged when a fix
+becomes `fixing`, and a restart finishes or withdraws the intent. Operators use `omac defect list|report|grant`.
+
 ### 7.6 Acceptance and amendments
 
 When the DAG converges and the manifest requires acceptance, an outer loop runs the acceptor against the acceptance
 document (`acceptance.max_rounds`, independent of `retry`). Failed flows produce an incremental decomposition that is
-merged into the manifest. `dag amend propose|accept` changes a running DAG: a reviewed proposal bound to the base
+merged through a system amendment (7.5), recorded per flow in the defect ledger; a flow that fails again after its increment
+was merged stops the loop. `dag amend propose|accept` changes a running DAG: a reviewed proposal bound to the base
 manifest digest, applied under a ledger so an interrupted apply is resumed and out-of-scope edits are refused.
 
 ## 8. Acceptance documents

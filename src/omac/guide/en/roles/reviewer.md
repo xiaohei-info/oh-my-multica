@@ -75,6 +75,10 @@ conflict or cannot be reproduced, do not infer pass.
   not `fixed` must remain in `blockers` with the same root and a classification
   matching `prior_blocker_results`; a root declared fixed cannot also remain a
   current blocker.
+- Write a **node id** as a blocker `owner`. When the root cause of a blocker sits in a finished upstream node, set
+  `owner` to that node id: if every open blocker of the round is owned by a finished upstream node, OMAC does not bounce
+  the node back for rework but handles it as an upstream defect (no review bounce is spent). One blocker without an
+  `owner`, or owned by this node, keeps the ordinary rework.
 - When a cycle may qualify as `scope-expanding`, add a stable `owner` to every
   open blocker. Multiple blockers may share an owner, but at least two distinct
   owners and two consecutive non-reducing blocker transitions are required before

@@ -143,3 +143,17 @@ exit_code: 5
 `control.blocker_report_template` 和 `control.report_blocker` 提交 v2 结构化阻塞，
 保留真实失败证据和工作树。确认 exit20、terminal=true、next_action=stop 后停止。
 普通 reject 仍正常返工；细节见 `omac guide recovery`。
+
+### 上游缺陷与环境故障
+
+- 设计或验收已写明、但**已完成的上游节点没做到**（缺字段、缺路由、缺登记）时，用 `reason_code: upstream-defect`
+  上报，不要在本节点里补上游的活，也不要把它写成取舍。报告多一个 `defects`（1–6 项），每项：
+  `class`（`design-gap` 设计已写明上游漏做；`contract-gap` 合同本身缺口；`tradeoff` 需要人取舍）、
+  `suspected_node`（已完成的上游节点 id）、`anchors`（验收 `flow` / `flow/action`、requirement 或 provides 的稳定 id；
+  指纹只由 `suspected_node` + `anchors` 决定，措辞不影响去重）、`design_ref`（须在你或疑似节点的 `source_of_truth` 路径下）、
+  `expected`、`observed`、`locations`（`文件:函数` 证据，不进指纹）、`repro`（`{command, exit_code}`，exit_code 非 0）。
+  只有 `design-gap` 会被自动修复；其余、不可路由或预算用尽的报告停在 exit 20 等人。
+  OMAC 随后在两轮 tick 之间插入修复节点并让你的节点等它合并，不需要你做任何控制流操作。
+- 网络、推送、依赖下载等**环境**失败用 `reason_code: environment-failure`，evidence 至少一项含真实执行的
+  command 和非零 exit_code，规则同 `quality-gate-failed`。
+- 报告上限 6144 UTF-8 JSON 字节；v2 报告仍被接受。

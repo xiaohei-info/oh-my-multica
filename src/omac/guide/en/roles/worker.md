@@ -194,3 +194,20 @@ decision, do not fake a successful submission or rely on final prose saying
 control.report_blocker to submit a v2 structured blocker. Preserve failed evidence
 and the worktree. Stop after confirming exit20, terminal=true, next_action=stop.
 Ordinary reject rework remains unchanged; see `omac guide recovery`.
+
+### Upstream defects and environment failures
+
+- When the design or acceptance document already says what is needed but **a finished upstream node did not deliver
+  it** (a missing field, route or registration), report `reason_code: upstream-defect`. Do not patch the upstream work
+  in this node and do not present it as a trade-off. The report gains `defects` (1-6 entries), each with `class`
+  (`design-gap`: the design says it, upstream missed it; `contract-gap`: the contract itself is incomplete; `tradeoff`:
+  a person must choose), `suspected_node` (a finished upstream node id), `anchors` (stable ids: acceptance `flow` /
+  `flow/action`, a requirement or a provides item; the fingerprint is `suspected_node` + `anchors`, wording never
+  changes it), `design_ref` (under the `source_of_truth` of your node or the suspected node), `expected`, `observed`,
+  `locations` (`file:function` evidence, not part of the fingerprint) and `repro` (`{command, exit_code}` with a
+  non-zero exit_code). Only `design-gap` is fixed automatically; other classes, unroutable reports and a spent budget
+  stop at exit 20 for a person. OMAC then inserts a fix node between two ticks and makes your node wait for its
+  merge; you do nothing about control flow.
+- Network, push or dependency-download failures are `reason_code: environment-failure`: evidence needs at least one
+  actually executed command with a non-zero exit_code, like `quality-gate-failed`.
+- A report may be 6144 UTF-8 JSON bytes at most; v2 reports are still accepted.

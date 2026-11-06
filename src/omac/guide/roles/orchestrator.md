@@ -101,7 +101,9 @@
     必须锚到包含数据结构和边界条件的细粒度章节而不是整篇文档，`non_goals` 必须写清
     相邻模块、旧逻辑和禁止重构范围以消除隐含上下文，`verification_commands` 和
     `integration_gates` 必须可直接复制运行。
-11. 增量拆解只包含针对失败 flow 的新增 fix 节点，不复制或重写原有 done 节点；提交前让增量
+11. 增量拆解的 `blocked_by` 只能引用已完成（done/abandoned）的节点或本增量内新增的节点；OMAC 用系统
+    amendment 并入，并给每个新增节点补上 `contract.defect_refs`。同一 flow 修过后再次失败时不再增补节点。
+    增量拆解只包含针对失败 flow 的新增 fix 节点，不复制或重写原有 done 节点；提交前让增量
     manifest 通过 OMAC 的 manifest lint，需要本地检查时运行 `omac dag check <manifest>`。
 
 ## 完成条件

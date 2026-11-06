@@ -58,6 +58,9 @@
   声明 `fixed` 的根因不得同时仍列为 blocker。
 - 若本轮可能构成 `scope-expanding`，每个 open blocker 必须补充稳定的 `owner`（同一 owner
   可以对应多个 blocker，但至少需要两个不同 owner）；同时只有 blocker 数连续两轮不再减少时才可建议 DAG amendment。
+- blocker 的 `owner` 写**节点 id**。若某 blocker 的根因在已完成的上游节点里，把 `owner` 设为该节点 id：
+  当本轮全部 open blocker 的 `owner` 都是已完成的上游节点时，OMAC 不再退回本节点返工，而是作为上游缺陷处理
+  （不消耗评审回退次数）；只要有一个 blocker 没有 `owner` 或属于本节点，就照常返工。
 - blocker 若要求新增外部输入，必须补充 `required_inputs`，每项为
   `{artifact_id, producer, evidence_mode}`；若要求特定证据类别，补充
   `required_evidence_mode: fixture|artifact|live`。这些字段只描述边界，不复制交付物正文。

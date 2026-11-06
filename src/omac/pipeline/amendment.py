@@ -36,9 +36,9 @@ from ..core.workitem import WorkItemStatus
 from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import ui
 from .tasks import _review_subject_digest as task_review_subject_digest, run_task
-from .apply import Ports, apply, apply_one
+from .apply import ManifestState, Ports, apply, apply_one
 from .decide_transitions import finish_clearing_decision
-from .decide_effects import UpdateMetadata
+from .decide_effects import SaveState, SetDagFact, UpdateMetadata
 from .stage_recovery import prepare_stage_recovery
 
 
@@ -689,6 +689,9 @@ def _write_reviewed_amendment(engine, manifest, manifest_path: str, outcome: dic
     )
     target = output_file or default_amendment_path(manifest_path)
     _write_yaml_atomic(target, reviewed)
+    # Until this file is applied the definition must not move under it: upstream-defect routing only queues (设计 §7.5).
+    apply([SetDagFact("pending_human_amendment", {"amendment_id": reviewed["amendment_id"], "file": os.path.abspath(target)}),
+           SaveState()], Ports(), ManifestState(manifest, manifest_path))
     if issue.review_verdict == "pass-with-nits":
         state = "pending_operator_nits_acceptance"
         next_action = f"omac dag amend accept-nits {manifest_path} {target}"
