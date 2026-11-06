@@ -29,6 +29,8 @@ structured stdout report is the current recovery fact.
      in-progress node is refused (let it finish or `abandon` it), a `blocked`/`failed` node must be
      `retry`-ed first. Unlike `abandon`, a held node does not satisfy its downstream, so a closing
      node behind it is not released early.
+   - `omac node retry` also takes `--note <text>` (at most 2000 characters): it appears in the issue body as the
+     operator note for this retry, and a retry without `--note` clears the previous one.
    - `omac node release <manifest> <key>`: lift the hold; the node is dispatched like any ready node.
      Both commands take the manifest write lock, so stop a running `omac dag run` first; the hold is
      stored in the node's state file and survives the Loop's manifest sync and restarts.
@@ -37,6 +39,23 @@ structured stdout report is the current recovery fact.
      acceptance-mapping, or topology defects. Do not overwrite the live manifest.
 4. Re-run `omac dag run <manifest>`. Completed nodes are reused; the remainder
    continues from current state.
+
+### Waiting for decisions, the decision list and follow-ups
+
+- `omac dag decisions <manifest> [--output json]` (read-only) lists what the DAG waits for: the source `blocked`/`failed`
+  nodes and the held nodes, each with a stable `decision_key` (`node:status:work_item_id`) and copyable commands.
+  Read the evidence with `omac node show`.
+- `omac dag run <manifest> --wait-decisions [--max-minutes N]`: when nothing is running and a decision is pending,
+  release the write lock and wait (so `omac node retry|release` and other writers do not exit 5). Each new decision
+  emits one `decision_pending` event on stderr, deduplicated by `decision_key` (a decision that comes back after it was
+  resolved is announced again). The run resumes by itself once the set of decisions changes; it exits 0 on
+  convergence and 10 when `--max-minutes` ends before that. Without the flag nothing changes: exit 20.
+- `omac dag followups <manifest> [--output json]` (read-only) gathers the `pass-with-nits` nits of the merged nodes
+  (`<node>#<n>`). The closeout node's (`meta.closeout_node`) review requires each to be disposed of as
+  `fix`, `defer` or `drop`.
+- `dispatch.hold_live: true`: a ready node whose `contract.evidence_mode` is `live` is held by the code (once per node);
+  the tick reports `held` with the `omac node release` command. Prepare the live environment, release it, and it
+  dispatches like any other node.
 
 ### `pass-with-nits` acceptance
 
@@ -630,7 +649,12 @@ This is for a contract stop condition or an owner decision, not ordinary Reviewe
 reject rework. Completed old Runs cannot be reported retroactively.
 
 Use `quality-gate-failed` with at least one actual command, nonzero integer
-exit_code, retained evidence ref and observation. Use `owner-decision-required`
+exit_code, retained evidence ref and observation. Use `environment-failure` when
+the environment, not the task, stopped you (a push, network or download timeout)
+with the same evidence rule: OMAC retries the same Worker automatically within
+`retry.environment` (default 1) without spending `retry.worker`, then stops with
+exit 20 and a copyable `omac node retry <manifest> <key> --worker <next worker in
+roles.workers>` in `next_actions`. Use `owner-decision-required`
 with evidence refs/observations and a specific decision_needed. contract_ref must
 name an existing top-level context.contract field; explain its relevance in
 summary. Do not run later verification forbidden by the stop condition, invent a

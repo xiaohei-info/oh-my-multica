@@ -169,3 +169,16 @@ def test_work_show_exposes_the_exact_binding_without_claiming_to_authenticate_th
 
     assert template["issue_id"] == item.id and template["handoff_generation"] == "generation" and template["run_id"] == "run"
     assert template["review_context_binding"] == review_context_binding(item)
+
+
+def test_an_environment_failure_report_needs_a_command_that_failed(case):
+    item, report = case
+    report["reason_code"] = "environment-failure"
+    worker_blocker._validate(report, item.id)               # the evidence of the fixture has a failing command
+
+    report["evidence"] = [{"ref": "artifacts/push.log", "observation": "git push timed out"}]
+    with pytest.raises(ValidationError):
+        worker_blocker._validate(report, item.id)
+    report["evidence"] = [{"ref": "artifacts/push.log", "command": "git push", "exit_code": 0, "observation": "ok"}]
+    with pytest.raises(ValidationError):
+        worker_blocker._validate(report, item.id)

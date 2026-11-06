@@ -23,6 +23,7 @@ from .acceptance_responsibility import (
     responsibility_matrix,
     trace_refs,
 )
+from .followups import TRIAGE_CATEGORY, triage_gaps
 from .interfaces import has_evidence_locator, interface_matrix, provided_items, registrations
 from .manifest import loads_manifest
 from .taskmeta import (
@@ -1133,9 +1134,26 @@ def _validate_obligation_results(item: Any, report: dict, errors: list[str]):
             errors.append(
                 f"review_report obligation evidence must cite a repository path with a file extension or a test name: "
                 f"{obligation_id} (e.g. `src/api/packs.py:build_view` or `test_pack_views`)")
+    for obligation in obligations:
+        if isinstance(obligation, dict) and obligation.get("category") == TRIAGE_CATEGORY:
+            _validate_triage(obligation, results.get(obligation.get("obligation_id")), errors)
     for obligation_id in sorted(set(results) - expected):
         errors.append(f"review_report references unknown obligation: {obligation_id}")
     return expected, results
+
+
+def _validate_triage(obligation: dict, result: Any, errors: list[str]) -> None:
+    """A passing closeout triage names every follow-up with a disposition."""
+    evidence = result.get("evidence") if isinstance(result, dict) else None
+    subject = obligation.get("subject")
+    if not (isinstance(result, dict) and result.get("status") == "pass" and isinstance(evidence, str)
+            and isinstance(subject, list)):
+        return
+    gaps = triage_gaps(subject, evidence)
+    if gaps:
+        errors.append(
+            f"review_report obligation {obligation.get('obligation_id')} does not dispose of: {', '.join(gaps)}; "
+            "name each follow-up id with fix, defer or drop on its own line")
 
 
 def _open_blockers_for_subject(item: Any, ledger: Any) -> dict:

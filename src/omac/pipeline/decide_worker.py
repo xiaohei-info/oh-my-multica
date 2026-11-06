@@ -34,6 +34,37 @@ def decide_worker_no_submit(obs: NoSubmitObservation) -> NoSubmit:
     return NoSubmit.RETRY
 
 
+ENVIRONMENT_FAILURE = "environment-failure"   # worker-blocker reason code: the environment, not the task, stopped the Worker
+
+
+class EnvironmentFailure(Enum):
+    RETRY = "retry"          # one more run of the same Worker, counted in bounces.environment
+    ESCALATE = "escalate"    # budget used up (or 0): exit 20 with the command that hands the node to another Worker
+
+
+@dataclass(frozen=True)
+class EnvironmentFailureObservation(Observation):
+    consumed: int
+    limit: int
+
+
+def decide_environment_failure(obs: EnvironmentFailureObservation) -> EnvironmentFailure:
+    return EnvironmentFailure.RETRY if obs.consumed < obs.limit else EnvironmentFailure.ESCALATE
+
+
+def next_worker_retry_command(manifest_path: str, node_key: str, current: str, workers: list[str]) -> str:
+    """The copyable retry that moves the node to the Worker after ``current`` in ``roles.workers`` (wrapping around).
+
+    Without another configured Worker it is the plain retry: the operator picks one with ``--worker``.
+    """
+    others = [w for w in workers if w != current]
+    if not others:
+        return f"omac node retry {manifest_path} {node_key}"
+    after = workers.index(current) + 1 if current in workers else 0
+    nxt = next((w for w in workers[after:] + workers[:after] if w != current), others[0])
+    return f"omac node retry {manifest_path} {node_key} --worker {nxt}"
+
+
 class AfterCi(Enum):
     BOUNCE = "bounce"                  # already returned to the Worker; do not advance this tick
     BLOCK = "block"                    # CI retry budget exhausted

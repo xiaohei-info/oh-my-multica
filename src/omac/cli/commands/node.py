@@ -30,6 +30,7 @@ from ...pipeline.decide_retry import (
 )
 
 NAME = "node"
+_NOTE_MAX_CHARS = 2000
 SUMMARY = "exit 20 后的决策工具(show/retry/accept-nits/accept/abandon)与挂起(hold/release)"
 DESCRIPTION = """异常处理闭环:dag run 以 exit 20 退出后,由调用者决策。
 
@@ -77,6 +78,9 @@ def register(parser):
     retry.add_argument("manifest", help="manifest 文件路径")
     retry.add_argument("node_key", help="节点 id")
     retry.add_argument("--worker", help="改派给另一个 worker")
+    retry.add_argument("--note", help=ui(
+        f"Tell the Worker something for this run (at most {_NOTE_MAX_CHARS} characters); it appears in the issue body",
+        f"给本次重试的 Worker 的说明(最多 {_NOTE_MAX_CHARS} 字符),写入 issue 正文"))
     retry.add_argument(
         "--stage", choices=("authoring", "review"), default="authoring",
         help="恢复阶段；默认 authoring，已有封存交付可显式恢复 review",
@@ -351,6 +355,16 @@ def _retry_on_platform(args, manifest, node, engine, stage: str) -> None:
         refreshed.worker_handoff or refreshed.reviewer_run_baseline or refreshed.decision_required)
 
 
+def _validated_note(note: str | None) -> str | None:
+    note = (note or "").strip() or None
+    if note is not None and len(note) > _NOTE_MAX_CHARS:
+        raise ValidationError(ui(
+            f"--note is {len(note)} characters; keep it within {_NOTE_MAX_CHARS} and put long material in a file the "
+            "Worker can read (name its path in the note).",
+            f"--note 有 {len(note)} 字符,上限 {_NOTE_MAX_CHARS};较长的材料放进文件,在说明里写明路径。"))
+    return note
+
+
 def _cmd_retry(args) -> int:
     manifest = _load_or_raise(args.manifest)
     node = _require_node(manifest, args.node_key)
@@ -365,6 +379,11 @@ def _cmd_retry(args) -> int:
             f"Node {node.id} has no reviewer to resume",
             f"节点 {node.id} 没有可恢复的 reviewer"))
 
+    note = _validated_note(args.note)
+    if stage == "review" and note:
+        raise ValidationError(ui(
+            "--note is for the Worker and cannot be combined with --stage review",
+            "--note 是写给 Worker 的,不能与 --stage review 同时使用"))
     config = load_config()
     engine = _build_engine(config)
 
@@ -395,6 +414,7 @@ def _cmd_retry(args) -> int:
             node.recovery_marker = False
 
     # work_item_id 保留(同一 issue 续用)。
+    node.retry_note = note   # 没带 --note 的重试清掉上一次的说明
     node.status = "in_review" if stage == "review" else "todo"
     clear_confirmed_merge(node)
     save_manifest(manifest, args.manifest)

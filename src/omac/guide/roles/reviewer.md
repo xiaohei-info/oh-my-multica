@@ -92,6 +92,9 @@
    检查这些 flow 里是否有本节点负责却未声明为 contribution 的业务行为。
    `acceptance-action:*`、`interface:*`、`registry:*` 类 obligation 判 `pass` 时，evidence 必须含
    定位符：带扩展名的仓库路径（如 `src/api/packs.py:build_view`）或测试名（如 `test_pack_views`），否则提交被拒。
+   收尾节点的评审多一条 `followups:triage` obligation：先运行 `omac dag followups <manifest>`，其中每条建议项
+   （`<节点>#<序号>`）都必须在本次交付里被处置为 `fix`、`defer` 或 `drop`；`pass` 的 evidence 里每条建议项独占一行，
+   写明 id、处置和位置（如 `api-core#1: defer - docs/followups.md`），缺任何一条提交被拒。
 9. 检查 coverage；改动分支 coverage 低于 gate 一律 reject。
 10. 判断范围：`scope_paths` 是主要代码归属范围。必要配套文件只要服务于 contract 且已说明原因，
    不因必要配套文件未被预先列出而 reject；无关扩张、并行边界破坏或 `non_goals` 违规仍须 reject。

@@ -8,6 +8,17 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+- New: `omac dag run --wait-decisions` — when nothing is running and a decision is pending, the run releases the manifest
+  write lock and waits instead of exiting 20, announces each new decision once (`decision_pending` event, deduplicated
+  by `decision_key`), resumes when a person acts, exits 0 on convergence and 10 at `--max-minutes`. New read-only
+  `omac dag decisions` (what the DAG waits for) and `omac dag followups` (the `pass-with-nits` nits of merged nodes);
+  the closeout node's review gains a `followups:triage` obligation: every follow-up must be disposed of as fix, defer or drop.
+- New: a Worker `environment-failure` blocker report (push/network timeouts) is retried once by the same Worker
+  (`retry.environment`, default 1, counted in `bounces.environment`, `retry.worker` untouched); after that the node stops
+  with exit 20 and a copyable `omac node retry … --worker <next worker>`.
+- New: `dispatch.hold_live` (default false) holds a ready node whose `contract.evidence_mode` is `live` until `omac node release`.
+- New: `omac node retry --note <text>` puts an operator note into the Worker's issue body for that retry.
+
 ## [2.4.0] — 2026-11-06
 
 - New: `omac node hold <manifest> <node> [--reason <text>]` and `omac node release <manifest> <node>` park and resume a node

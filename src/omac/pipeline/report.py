@@ -96,6 +96,33 @@ def _node_row(node, item) -> dict:
     }
 
 
+DECISION_KEYS = ("decision_key", "kind", "node", "status", "work_item_id", "reason", "next_actions")
+
+
+def pending_decisions(manifest: Manifest, manifest_path: str) -> list[dict]:
+    """Every decision the DAG waits for a person to make, from the manifest alone (no platform read).
+
+    One record per node that stopped the DAG (``blocked``/``failed`` with a work item, or whose upstream is not itself
+    waiting) and per ``held`` node. Nodes only blocked because an upstream waits are not decisions of their own: they
+    are listed under the upstream's report. ``decision_key`` names this occurrence (node, status, work item), so the
+    same decision keeps its key tick after tick and a node that stops again on a new work item gets a new one.
+    """
+    waiting = {key for key, node in manifest.nodes.items() if node.status in graph.NEEDS_DECISION}
+    decisions = []
+    for key, node in manifest.nodes.items():
+        if key in waiting and (node.work_item_id or not any(dep in waiting for dep in node.blocked_by)):
+            decisions.append({
+                "decision_key": f"{key}:{node.status}:{node.work_item_id or '-'}", "kind": node.status, "node": key,
+                "status": node.status, "work_item_id": node.work_item_id, "reason": None,
+                "next_actions": [f"omac node retry {manifest_path} {key}", f"omac node abandon {manifest_path} {key}"]})
+        elif node.status == "todo" and node.held:
+            decisions.append({
+                "decision_key": f"{key}:held:{node.work_item_id or '-'}", "kind": "held", "node": key,
+                "status": node.status, "work_item_id": node.work_item_id, "reason": node.hold_reason,
+                "next_actions": [f"omac node release {manifest_path} {key}"]})
+    return decisions
+
+
 def _build_failed_node(
     node,
     item,

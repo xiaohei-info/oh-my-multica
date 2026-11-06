@@ -130,6 +130,10 @@ conflict or cannot be reproduced, do not infer pass.
    `pass`, its evidence must contain a locator: a repository path with a file
    extension (such as `src/api/packs.py:build_view`) or a test name (such as
    `test_pack_views`); otherwise the submission is rejected.
+   The closeout node's review has one more obligation, `followups:triage`: run
+   `omac dag followups <manifest>`; every follow-up (`<node>#<n>`) must be disposed of in this delivery
+   as `fix`, `defer` or `drop`. A `pass` lists each follow-up on its own line with the id, the disposition and
+   where (for example `api-core#1: defer - docs/followups.md`); a missing one is rejected.
 9. Reject coverage below its gate.
 10. Treat `scope_paths` as primary ownership. Required supporting files are valid
    when they serve the contract and are explained; unrelated scope growth,

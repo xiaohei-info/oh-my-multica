@@ -26,6 +26,8 @@ docs/design/README.md §6:配置与状态一律 YAML 进 git,不用 SQLite。
       ci: 3                                    # CI 失败 → worker 重修(0 = 立即 blocked,不回退)
       review: 3                                # reviewer reject → worker 重修(节点开发与 plan 流水线共用)
       merge: 3                                 # 合并冲突 → worker 重解
+      environment: 1                           # Worker 报 environment-failure(推送/网络等环境故障)→ 同一 worker 自动重试次数;
+                                               # 用尽后 exit 20,报告给出可复制的 `node retry --worker <下一个>`
       no_submit_runs: 2                        # reviewer 连续结束 Run 未提交裁决的续跑预算(须 ≥ 1;
                                                # 不含基础设施瞬时失败预算,后者固定为 2)
     review:
@@ -37,6 +39,8 @@ docs/design/README.md §6:配置与状态一律 YAML 进 git,不用 SQLite。
       profile: auto                            # auto | light | standard；只允许人强制
       light_max_nodes: 12                      # light 档：拆解节点数上限
       light_max_business_actions: 20           # light 档：验收 business-action 数上限
+    dispatch:
+      hold_live: false                         # true = 就绪的 contract.evidence_mode: live 节点由代码自动挂起(等人 release)
     reconcile:                                 # P3 低频全量审计调度
       full_scan_interval_ticks: 20             # 成功 active tick 数达到此值后，下轮全量读取
       full_scan_max_age_seconds: 1800          # 距上次成功全量读取的最长秒数
@@ -73,6 +77,7 @@ DEFAULT_RETRY = {
     "ci": 3,
     "review": 3,
     "merge": 3,
+    "environment": 1,
 }
 
 # 总控验收外层循环上限(docs/design/README.md §6;与 retry 正交)
@@ -279,6 +284,26 @@ def validate_node_nits(value) -> str:
             "`accept` merges a develop node that passed with nits; `decide` stops for `omac node accept-nits`.",
             f"review.node_nits 必须是 {' / '.join(NODE_NITS_MODES)} 之一(非法值 {value!r})。"
             "accept 让带 nits 通过的 develop 节点直接合并;decide 则停下等 `omac node accept-nits`。"))
+    return value
+
+
+def resolve_hold_live(config: dict) -> bool:
+    """解析 dispatch.hold_live(布尔,缺省 false);非法值 fail-closed。"""
+    raw = get_value(config, "dispatch")
+    if raw is None:
+        return False
+    if not isinstance(raw, dict):
+        raise ValidationError(ui(
+            f"dispatch must be a YAML mapping; got {type(raw).__name__}",
+            f"dispatch 配置应为 YAML 映射,got {type(raw).__name__}"))
+    return validate_hold_live(raw.get("hold_live", False))
+
+
+def validate_hold_live(value) -> bool:
+    if not isinstance(value, bool):
+        raise ValidationError(ui(
+            f"dispatch.hold_live must be true or false; got {type(value).__name__}({value!r})",
+            f"dispatch.hold_live 必须为布尔值 true/false,got {type(value).__name__}({value!r})"))
     return value
 
 

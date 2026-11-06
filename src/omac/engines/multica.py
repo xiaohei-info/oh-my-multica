@@ -34,7 +34,7 @@ from ..core.review_convergence import (
 from ..core.taskmeta import (
     AMENDMENT_ATTEMPT_KEY, BOUNCE_BASELINE_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
     DECISION_REQUIRED_KEY, DELIVERY_IDENTITY_KEY, DELIVERABLE_KEY,
-    DELIVERABLE_REF_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
+    DELIVERABLE_REF_KEY, ENVIRONMENT_BOUNCE_KEY, KIND_KEY, MERGE_BOUNCE_KEY, PHASE_KEY,
     MACHINE_FEEDBACK_REF_KEY, PROJECT_RULES_KEY, PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY,
     REVIEW_CONTINUATION_KEY, REVIEW_GENERATION_KEY,
     REVIEW_LEDGER_GENERATION_KEY, REVIEWER_RUN_BASELINE_KEY,
@@ -106,7 +106,7 @@ _KNOWN_WORK_ITEM_METADATA_KEYS = {
     "contract",
     AMENDMENT_ATTEMPT_KEY, BOUNCE_BASELINE_KEY, CI_BOUNCE_KEY, CONTRACT_REF_KEY,
     DECISION_REQUIRED_KEY, DELIVERABLE_KEY, DELIVERABLE_REF_KEY, KIND_KEY,
-    MACHINE_FEEDBACK_REF_KEY, MERGE_BOUNCE_KEY, PHASE_KEY, PROJECT_RULES_KEY,
+    ENVIRONMENT_BOUNCE_KEY, MACHINE_FEEDBACK_REF_KEY, MERGE_BOUNCE_KEY, PHASE_KEY, PROJECT_RULES_KEY,
     PROJECT_RULES_REF_KEY, REVIEW_BOUNCE_KEY, REVIEW_CONTINUATION_KEY,
     REVIEW_GENERATION_KEY, REVIEW_LEDGER_GENERATION_KEY,
     REVIEWER_RUN_BASELINE_KEY,
@@ -2080,6 +2080,7 @@ class MulticaStore(WorkItemStore):
         ci_bounce: Optional[int] = None,
         review_bounce: Optional[int] = None,
         merge_bounce: Optional[int] = None,
+        environment_bounce: Optional[int] = None,
         deliverable: Optional[str] = None,
         project_rules: Optional[str] = None,
         source_refs: Optional[List[Dict[str, Any]]] = None,
@@ -2133,7 +2134,8 @@ class MulticaStore(WorkItemStore):
             (WORKER_BOUNCE_KEY, _text(worker_bounce)),
             (CI_BOUNCE_KEY, _text(ci_bounce)),
             (REVIEW_BOUNCE_KEY, _text(review_bounce)),
-            (MERGE_BOUNCE_KEY, _text(merge_bounce))))
+            (MERGE_BOUNCE_KEY, _text(merge_bounce)),
+            (ENVIRONMENT_BOUNCE_KEY, _text(environment_bounce))))
         delivery_refs = []
         if deliverable is not None:
             delivery_refs.append((

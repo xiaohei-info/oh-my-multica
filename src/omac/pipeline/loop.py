@@ -21,7 +21,7 @@ import yaml
 
 from ..core import graph, logsetup
 from ..core.amendment import ensure_amendment_apply_complete
-from ..core.config import DEFAULT_RETRY, resolve_no_submit_runs, resolve_node_nits
+from ..core.config import DEFAULT_RETRY, resolve_hold_live, resolve_no_submit_runs, resolve_node_nits
 from ..core.contract_boundaries import (
     build_contract_boundary_decision,
     contract_boundary_conflicts,
@@ -60,9 +60,12 @@ from .observation_conflict import conflict_streaks
 from ..errors import AuthError, ObservationConflict, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from .decide_review import VerdictObservation, VerdictPath, decide_verdict_path
+from .decide_hold import AUTO_HELD_KEY, plan_auto_hold_live
+from .followups import review_obligations_for
 from .decide_worker import (
     control_matches_handoff_candidate, handoff_has_new_delivery,
-    AfterCi, AfterCiObservation, NoSubmit, NoSubmitObservation, decide_after_ci, decide_worker_no_submit,
+    AfterCi, AfterCiObservation, ENVIRONMENT_FAILURE, EnvironmentFailure, EnvironmentFailureObservation, NoSubmit,
+    NoSubmitObservation, decide_after_ci, decide_environment_failure, decide_worker_no_submit, next_worker_retry_command,
 )
 from .decide_merge import is_recovering_merge_handoff, merge_bounce_attempt, merge_request_state_is_valid, plan_finish_bounce
 from .convergence import (
@@ -110,8 +113,10 @@ from .decide_effects import (
     CreateWorkItem,
     DispatchReviewer,
     NormalizeConfirmedMerge,
+    Plan,
     PrepareReviewCycle,
     ResetReview,
+    SetNode,
     SetNodeContract,
     UpdateMetadata,
     UpdateStatus,
@@ -1174,7 +1179,8 @@ def _prepare_new_review_subject(store, manifest, key, item_id, current, subject_
     if guard():
         return None
     apply([
-        UpdateMetadata(item_id, {'review_obligations': build_review_obligations(current)}),
+        UpdateMetadata(item_id, {'review_obligations': review_obligations_for(
+            store, manifest, key, build_review_obligations(current))}),
     ], Ports(store=store))
     if guard():
         return None
@@ -2867,14 +2873,66 @@ class _Node:
     decision_class: str | None = None
 
 
+def _environment_blocker(decision: Any) -> bool:
+    blocker = decision.get("blocker") if isinstance(decision, dict) else None
+    return isinstance(blocker, dict) and blocker.get("reason_code") == ENVIRONMENT_FAILURE
+
+
+def _retry_environment_failure(c: _Collect, n: _Node) -> bool:
+    """An environment-failure report within ``retry.environment`` goes back to the same Worker once; True when it did.
+
+    The count is written before the new Worker generation: a crash in between leaves the budget spent, never a second
+    replay. It is a fresh generation of the same handoff without spending ``retry.worker`` (as for a transient Run failure).
+    The reporting Run may not have ended yet; then nothing is counted and the next tick looks again.
+    """
+    consumed = n.item.bounces.environment
+    limit = c.limits["environment"]
+    if decide_environment_failure(EnvironmentFailureObservation(consumed=consumed, limit=limit)) \
+            is not EnvironmentFailure.RETRY:
+        return False
+    if any(run.kind == "direct" and run.active for run in c.runtime.list_runs(n.item.id)):
+        return True
+    apply([
+        UpdateMetadata(n.item.id, {"environment_bounce": consumed + 1, "decision_required": {}}),
+        UpdateStatus(n.item.id, WorkItemStatus.IN_PROGRESS),
+    ], Ports(store=c.store))
+    log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=n.key, id=n.item.id, gate="environment",
+             round=consumed + 1, max=limit)
+    n.handoff = _retry_worker_handoff(
+        c.store, c.runtime, c.code_host, c.manifest, n.key, n.item, consume_business_bounce=False)
+    stopped = n.handoff.state == "needs-decision"
+    status = "blocked" if stopped else "in_progress"
+    _apply_plan(Ports(store=c.store), c.manifest, Plan((SetNode(n.key, {"status": status}),), status))
+    if stopped:
+        c.failures[n.key] = "worker-decision-required"
+    return True
+
+
+def _environment_escalation(c: _Collect, n: _Node) -> dict:
+    """The standing decision, with the retry command that hands the node to the next configured Worker."""
+    roles = (c.config or {}).get("roles")
+    workers = roles.get("workers") if isinstance(roles, dict) else None
+    workers = [workers] if isinstance(workers, str) else list(workers or [])
+    command = next_worker_retry_command(c.manifest_path, n.key, n.node.worker, workers)
+    return {**n.item.decision_required, "next_action": command}
+
+
 def _collect_worker_blocker(c: _Collect, n: _Node) -> bool:
-    """A structured worker blocker is an operator decision, not a no-submit failure."""
+    """A structured worker blocker is an operator decision, not a no-submit failure.
+
+    The one exception is an environment failure with budget left: it returns to the same Worker (no decision needed).
+    """
     key, node = n.key, n.node
-    # Structured worker blockers are operator decisions, not no-submit failures.
-    if n.item.phase == TaskPhase.AUTHORING and n.item.decision_required:
+    decision = n.item.decision_required
+    if n.item.phase == TaskPhase.AUTHORING and decision:
+        environment = _environment_blocker(decision)
+        if environment and _retry_environment_failure(c, n):
+            return True
+        escalation = _environment_escalation(c, n) if environment else None
         _apply_plan(Ports(store=c.store), c.manifest, plan_block(
-            key, n.item.id, write_status=n.item.status != WorkItemStatus.BLOCKED))
-        c.failures[key] = str(n.item.decision_required.get("reason_code", "worker-decision-required"))
+            key, n.item.id, decision=escalation, write_decision=escalation is not None and escalation != decision,
+            write_status=n.item.status != WorkItemStatus.BLOCKED))
+        c.failures[key] = str(decision.get("reason_code", "worker-decision-required"))
         return True
     return False
 
@@ -4273,6 +4331,18 @@ def _with_fresh_failures(store, manifest, observations, new_failures):
     return {**observations, **{key: fresh[item_id] for key, item_id in ids.items() if item_id in fresh}}
 
 
+def _auto_hold_live(manifest: Manifest, manifest_path: str, ready: List[str]) -> List[str]:
+    """``dispatch.hold_live``: hold the ready live nodes before they dispatch; returns the ready nodes that remain."""
+    plan = plan_auto_hold_live(ready, manifest.nodes, manifest.dag_state.get(AUTO_HELD_KEY) or ())
+    if plan is None:
+        return ready
+    held = [effect.node_key for effect in plan.effects if isinstance(effect, SetNode)]
+    apply(plan, Ports(), ManifestState(manifest, manifest_path))
+    for key in held:
+        log.info(logsetup.EVT_AUTO_HOLD, kind=_DAG_KIND, node=key, reason=manifest.nodes[key].hold_reason)
+    return [key for key in ready if key not in held]
+
+
 def tick(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -4340,6 +4410,8 @@ def tick(
     # 4. DECIDE: 计算就绪节点
     snapshot = _build_snapshot(manifest)
     ready = graph.prioritize_ready(graph.ready_nodes(snapshot), manifest.nodes)
+    if resolve_hold_live(config or {}):
+        ready = _auto_hold_live(manifest, manifest_path, ready)
 
     # 5. DISPATCH: 派发就绪节点(受 max_parallel 约束)
     dispatched = _dispatch(store, runtime, code_host, manifest, manifest_path, ready, max_parallel)
