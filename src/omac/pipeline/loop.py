@@ -2693,8 +2693,9 @@ def _reconcile_confirmed_merge(store: WorkItemStore, manifest: Manifest, key: st
     Explicit amendment/retry must retire it before any authoring/review recovery is eligible again."""
     if _confirmed_merge_has_real_recovery(item):
         raise PlatformError(
-            f"Confirmed merge node {key} still has recovery control facts; "
-            "inspect the WorkItem before clearing its recovery marker")
+            f"Confirmed merge node {key} still has recovery control facts; inspect "
+            f"`omac work show {node.work_item_id}`, then retire them with "
+            f"`omac node accept {_recovery_path(manifest) or '<manifest>'} {key}`")
     changed = False
     # A terminal DONE projection may carry a historical reviewer
     # baseline from the just-completed cycle. It is stale only after
