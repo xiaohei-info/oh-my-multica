@@ -8,6 +8,17 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [2.4.1] — 2026-11-06
+
+- Fix: `omac node accept` on a node whose WorkItem still carried a worker blocker (`decision_required`) or a review→worker
+  handoff left the handoff and the node's `recovery_marker` behind. The next `dag run` then failed its reconcile with
+  "Confirmed merge node ... still has recovery control facts" and every other node stopped. An operator decision now
+  retires what it answers: `node accept` clears `decision_required` and `worker_handoff` on the WorkItem (through the existing
+  `UpdateMetadata` effect, before `done`) and the node's `recovery_marker`; `node abandon` does the same when the WorkItem
+  still carries either fact (platform first; no platform write otherwise, and no engine means a manifest-only abandon as
+  before). `node retry` already resets both. The reconcile error now names the repair command (`omac node accept`, which
+  can be re-run on a done node whose PR is merged).
+
 ## [2.4.0] — 2026-11-06
 
 - New: `omac node hold <manifest> <node> [--reason <text>]` and `omac node release <manifest> <node>` park and resume a node

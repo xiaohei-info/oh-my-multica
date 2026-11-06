@@ -236,6 +236,7 @@ a later tick; otherwise a Worker that redelivers first gets a review that starts
 
 A node is ready when every blocker is `done` or `abandoned`. `node abandon` turns a blocked node into `abandoned` and
 unlocks its downstream. `node accept-nits|accept|retry` are the other explicit decisions (`accept-nits` is needed only under `review.node_nits: decide`).
+Each of them retires what it answers: `accept` and `abandon` clear the issue's `decision_required` and `worker_handoff` (`decide_transitions.retire_decision`) and the node's `recovery_marker`; `retry` resets both through stage recovery. A done, confirmed-merge node never keeps a decision or handoff.
 
 `omac node hold|release` park and resume a node without changing the graph. Holding sets `held` (and an optional
 `hold_reason`) on a `todo` node; `graph.ready_nodes` is the single place that skips it, and because it stays `todo` its
