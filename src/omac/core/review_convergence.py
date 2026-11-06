@@ -18,7 +18,9 @@ from .acceptance_responsibility import (
     contributions,
     full_claims,
     responsibility_matrix,
+    trace_refs,
 )
+from .interfaces import has_evidence_locator, provided_items, registrations
 from .manifest import loads_manifest
 from .taskmeta import (
     DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase, current_review_ledger,
@@ -853,6 +855,39 @@ def source_change_obligations(item: Any) -> list[dict]:
     return found
 
 
+# Obligations whose passing evidence must say where the proof is (a repository path or a test name).
+_LOCATOR_CATEGORIES = frozenset({"acceptance-contribution", "interface", "registry", "defect"})
+
+
+def _interface_chain_obligations(contract: Any) -> list[dict]:
+    """What this node provides, which registries it adds to, and one aggregate for the acceptance refs it only traces."""
+    obligations = [{
+        "obligation_id": f"interface:{artifact_id}:{provided_id}",
+        "category": "interface",
+        "requirement": (
+            f"Verify the delivery provides {provided_id} of artifact {artifact_id} exactly as the contract declares, "
+            "for the consumers that require it; cite where (file path or test)"),
+        "subject": {"artifact_id": artifact_id, "id": provided_id},
+    } for artifact_id, provided_id in provided_items(contract)]
+    obligations.extend({
+        "obligation_id": f"registry:{registry_id}",
+        "category": "registry",
+        "requirement": f"Verify this node adds its entry to registry {registry_id}; cite where (file path or test)",
+        "subject": registry_id,
+    } for registry_id in registrations(contract))
+    refs = sorted({ref for ref in trace_refs(contract) if isinstance(ref, str) and ref.strip()})
+    if refs:
+        obligations.append({
+            "obligation_id": "trace:refs",
+            "category": "trace",
+            "requirement": (
+                "These acceptance flows are only traced by this node. Verify none of them contains business behavior "
+                "this node is responsible for but did not declare as a contribution"),
+            "subject": refs,
+        })
+    return obligations
+
+
 def build_review_obligations(
     item: Any,
     *,
@@ -909,6 +944,7 @@ def build_review_obligations(
             "requirement": f"Independently verify integration gate {gate_name}",
             "subject": gate_name,
         })
+    obligations.extend(_interface_chain_obligations(contract))
     kind = getattr(getattr(item, "kind", None), "value", getattr(item, "kind", None))
     deliverable = getattr(item, "deliverable", None)
     if kind == TaskKind.DECOMPOSE.value and isinstance(deliverable, str):
@@ -1039,6 +1075,9 @@ def _validate_obligation_results(item: Any, report: dict, errors: list[str]):
     results = _results_by_id(
         report.get("obligation_results"), "obligation_id",
         errors=errors, prefix="review_report.obligation_results")
+    locator_ids = {
+        obligation.get("obligation_id") for obligation in obligations
+        if isinstance(obligation, dict) and obligation.get("category") in _LOCATOR_CATEGORIES}
     for obligation_id in sorted(expected):
         if obligation_id not in results:
             errors.append(f"review_report missing obligation result: {obligation_id}")
@@ -1050,6 +1089,10 @@ def _validate_obligation_results(item: Any, report: dict, errors: list[str]):
         if not isinstance(result.get("evidence"), str) or not result["evidence"].strip():
             errors.append(
                 f"review_report obligation evidence is required: {obligation_id}")
+        elif result.get("status") == "pass" and obligation_id in locator_ids and not has_evidence_locator(result["evidence"]):
+            errors.append(
+                f"review_report obligation evidence must cite a repository path with a file extension or a test name: "
+                f"{obligation_id} (e.g. `src/api/packs.py:build_view` or `test_pack_views`)")
     for obligation_id in sorted(set(results) - expected):
         errors.append(f"review_report references unknown obligation: {obligation_id}")
     return expected, results

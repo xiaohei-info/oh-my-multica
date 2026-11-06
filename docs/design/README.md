@@ -59,7 +59,16 @@ A DAG is two things on disk, both plain text, both committed to git:
 ```
 .omac/<name>.yaml            DAG definition: meta + node definitions. Changes only on plan and amendment.
 .omac/<name>.state/<node>.yaml   One file per node: work_item_id, status, merge facts. A few hundred bytes.
+.omac/<name>.state/_dag.yaml     DAG-level runtime facts (the reconcile-audit schedule). Written only by the Loop; absent until there is one.
 ```
+
+The definition digest (`core/amendment.py::manifest_definition_digest`) leaves out every runtime `meta` key
+(`RUNTIME_META_KEYS`), and `_dag.yaml` is not part of the definition, so a tick never changes a reviewed amendment's
+base. `meta.omac_schema` is the schema a release writes (3 in 3.0); an older omac refuses a higher value instead of
+silently dropping fields. A long-running `dag run` compares the definition file with what it last wrote at the start of
+every tick and reloads it when someone else edited it (`node retry --worker`), so a save never puts a stale definition
+back. A 2.x manifest that still holds `meta.reconcile_audit` is migrated into `_dag.yaml` on load; the next save rewrites
+its definition file once.
 
 * **Incremental atomic writes.** `save_manifest` compares each file's content with what the last load/save left on disk
   and rewrites only what changed: write a temporary file in the same directory, `fsync`, `os.replace`. Node state files
@@ -74,7 +83,7 @@ A DAG is two things on disk, both plain text, both committed to git:
   platform attachments). The definition holds no run history; the amendment ledger in `meta` is replaced per amendment.
   Large payloads (captured sources, transcripts) are attachments on the platform, referenced by digest.
 * **No journal to archive.** Effect intents (worker handoff, review cycle, merge request) live on the platform issue; a node file
-  keeps its runtime facts (six, plus the `held` / `hold_reason` of a held node), and the only DAG-level record is the amendment ledger above. Nothing accumulates, so nothing is
+  keeps its runtime facts (six, plus the `held` / `hold_reason` of a held node), and the only DAG-level records are the amendment ledger above and `_dag.yaml`. Nothing accumulates, so nothing is
   archived: `tests/test_manifest_state.py` (500 nodes with every fact set average well under 4 KiB) and
   `tests/test_amendment_budget_retention.py` (120 amendments leave the manifest the size of the first few) pin it.
 * **No 1.x compatibility.** A single-file 1.x manifest (inline `work_item_id`, or the old compressed envelope) is not read
@@ -190,7 +199,7 @@ remain in a few shell modules; `MANIFEST_WRITE_BASELINE` in the same test pins t
 | `UpdateStatus`, `UpdateMetadata`, `AddComment`, `Assign`, `ClearAssignment`, `ResetReview`, `PrepareReviewCycle`, `CreateWorkItem`, `SetNodeContract`, `SetAuthoringIdentity`, `NormalizeConfirmedMerge`, `RestoreAuthoringGeneration` | `WorkItemStore` |
 | `Wake`, `AcknowledgeAssignment`, `DispatchReviewer`, `CancelRun` | `AgentRuntime` |
 | `RequestMerge` | `CodeHost` |
-| `SetNode`, `SaveState` | the manifest (in memory, then atomically on disk) |
+| `SetNode`, `SetDagFact`, `SaveState` | the manifest (in memory, then atomically on disk) |
 
 Crash consistency is a property of the plan, not of the executor: the *order* is the contract. `RequestMerge` (an effect
 whose outcome may be unknown and must never be replayed) is rejected by `validate_plan` unless the same plan first has

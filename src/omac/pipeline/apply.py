@@ -17,7 +17,7 @@ from ..core.manifest import Manifest, save_manifest
 from .decide_effects import (
     AcknowledgeAssignment, AddComment, Assign, CancelRun, ClearAssignment, CreateWorkItem, DispatchReviewer, Effect,
     NormalizeConfirmedMerge, Plan, PrepareReviewCycle, RequestMerge, ResetReview, RestoreAuthoringGeneration, SaveState,
-    SetAuthoringIdentity, SetNode, SetNodeContract, UpdateMetadata, UpdateStatus, Wake, validate_plan,
+    SetAuthoringIdentity, SetDagFact, SetNode, SetNodeContract, UpdateMetadata, UpdateStatus, Wake, validate_plan,
 )
 
 
@@ -39,6 +39,9 @@ class ManifestState:
         node = self.manifest.nodes[node_key]
         for name, value in fields.items():
             setattr(node, name, value)
+
+    def set_dag_fact(self, key: str, value: Any) -> None:
+        self.manifest.dag_state[key] = value
 
     def save(self) -> None:
         save_manifest(self.manifest, self.path)
@@ -69,6 +72,7 @@ _RUNNERS: dict[type, Callable[[Effect, Ports, ManifestState | None], Any]] = {
     RequestMerge: lambda e, p, s: p.code_host.request_pull_request_merge(
         e.pr_url, e.command, e.timeout_seconds),
     SetNode: lambda e, p, s: s.set_node(e.node_key, dict(e.fields)),
+    SetDagFact: lambda e, p, s: s.set_dag_fact(e.key, e.value),
     SaveState: lambda e, p, s: s.save(),
 }
 

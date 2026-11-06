@@ -34,6 +34,7 @@
 | 配置 Config | 引擎、workspace、project、角色、重试预算等 | `.omac/config.yaml`，`core/config.py` | 人（`omac init`、`omac config set`）；优先级 文件 < `OMAC_*` 环境变量 < 命令行参数 |
 | Manifest（DAG） | `meta` + 节点定义 | `.omac/<name>.yaml`，`core/manifest.py::Manifest` | 只在 plan / amendment 时由 omac 改写 |
 | 节点 Node | 定义（`id`、`worker`、`blocked_by`、`reviewer`、`gate`、`contract`…）+ 运行时状态 | `core/manifest.py::Node` | 定义见上；运行时状态**只由 omac Loop 写**（单写者锁） |
+| DAG 状态文件 | DAG 级运行时事实（目前是 `reconcile_audit`），不属于定义，不进定义摘要 | `.omac/<name>.state/_dag.yaml`（`Manifest.dag_state`） | omac Loop（经 `SetDagFact`） |
 | 节点状态文件 | 每节点的运行时事实：`work_item_id`、`status`、`merged`、`merged_at`、`merge_request_state`、`recovery_marker`，以及挂起节点的 `held`、`hold_reason` | `.omac/<name>.state/<node>.yaml`（`_RUNTIME_KEYS`） | omac Loop |
 | 契约 Contract | 目标、验收、非目标、验证命令、集成门、`pr_base`、覆盖率门 | `core/manifest.py::Contract`，派单时下发到工作项 | orchestrator 产出，经评审与 lint |
 | 工作项 Work item | 平台上的一个 issue，承载一个完整阶段（产出、评审、回退往返都在同一条上） | `core/workitem.py::WorkItem` | omac 只经 `apply` 写；Agent 只经 `omac work submit|block` 提交 |
@@ -179,7 +180,7 @@ blocked / in_review ── omac node accept ──► done        上游修复�
 | `UpdateStatus`、`UpdateMetadata`、`AddComment`、`Assign`、`ClearAssignment`、`ResetReview`、`PrepareReviewCycle`、`CreateWorkItem`、`SetNodeContract`、`SetAuthoringIdentity`、`NormalizeConfirmedMerge`、`RestoreAuthoringGeneration` | `WorkItemStore` |
 | `Wake`、`AcknowledgeAssignment`、`DispatchReviewer`、`CancelRun` | `AgentRuntime` |
 | `RequestMerge` | `CodeHost` |
-| `SetNode`、`SaveState` | manifest（先内存，再原子落盘） |
+| `SetNode`、`SetDagFact`、`SaveState` | manifest（先内存，再原子落盘） |
 
 一个决策若中间必须插一次读取，就在读取处拆成两次 `apply`；读取是显式阶段，不能藏进 Effect（设计 §7.3.1）。
 Worker/Reviewer 交接检查点是守护协议：每次 `apply` 只带一个效果，之后做一次可中止交接的控制读取。
@@ -202,6 +203,7 @@ Worker/Reviewer 交接检查点是守护协议：每次 `apply` 只带一个效�
 | 配置 | `.omac/config.yaml`（提交到 git） | 派单前自动同步到 main |
 | DAG 定义 | `.omac/<name>.yaml`（git） | 只在 plan / amendment 时变化；`meta` 中未知键原样保留 |
 | 节点运行时状态 | `.omac/<name>.state/<node>.yaml`（git） | 首行 `# sha256: <正文摘要>`；单文件 ≤ 64 KiB；增量原子写 |
+| DAG 运行时状态 | `.omac/<name>.state/_dag.yaml`（git） | 同上；`_` 开头不会与节点 id 冲突；tick 开始时若定义文件被外部改动则先重载；`meta.omac_schema` 高于本版本即拒读 |
 | 验收文档 | `.omac/<name>.acceptance.yaml`（git） | 与 manifest 一起提交 |
 | 效果意图、交接、verdict、证据 | 平台工作项的 metadata 与附件 | 大载荷存附件，manifest 只留引用 + 摘要 |
 | manifest 写锁 | `$TMPDIR/omac-manifest-<hash>.lock`（`fcntl.flock`） | 本机单写者 |

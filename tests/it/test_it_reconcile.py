@@ -269,7 +269,7 @@ def test_the_status_report_asks_for_a_full_scan_and_leaves_the_audit_state_alone
 
     build_status_report(manifest, kit.store, kit.code_host, path)
 
-    assert read_ids(reads) == {static.id} and load_manifest(path).meta["reconcile_audit"] == audit
+    assert read_ids(reads) == {static.id} and load_manifest(path).dag_state["reconcile_audit"] == audit
 
 
 # ---- the audit schedule only advances after a tick has fully succeeded ---------------------------------------------
@@ -299,7 +299,7 @@ def test_a_failed_full_reconcile_does_not_advance_the_audit_state(kit):
     with reads_fail(kit.store, PlatformError("simulated reconcile failure")), pytest.raises(PlatformError, match="simulated reconcile"):
         run_tick(kit, manifest, path, record)
 
-    assert state["recorded"] is False and "reconcile_audit" not in load_manifest(path).meta
+    assert state["recorded"] is False and "reconcile_audit" not in load_manifest(path).dag_state
 
 
 def test_a_full_tick_that_fails_after_reconcile_does_not_advance_the_audit_state(kit):
@@ -312,7 +312,7 @@ def test_a_full_tick_that_fails_after_reconcile_does_not_advance_the_audit_state
     with pytest.raises(PlatformError, match="simulated collect failure"):
         run_tick(kit, manifest, path, record)
 
-    assert state["recorded"] is False and "reconcile_audit" not in load_manifest(path).meta
+    assert state["recorded"] is False and "reconcile_audit" not in load_manifest(path).dag_state
 
 
 def test_a_full_scan_whose_static_reads_fail_is_incomplete_and_stays_scheduled(kit):
@@ -322,7 +322,7 @@ def test_a_full_scan_whose_static_reads_fail_is_incomplete_and_stays_scheduled(k
         result = run_tick(kit, manifest, path, record)
 
     assert result.audit_complete is False and state["recorded"] is False
-    assert "reconcile_audit" not in load_manifest(path).meta
+    assert "reconcile_audit" not in load_manifest(path).dag_state
     assert reconcile_audit.should_full_scan(manifest, {"full_scan_interval_ticks": 2, "full_scan_max_age_seconds": 1800}, now=NOW)
 
 
@@ -335,7 +335,7 @@ def test_a_failed_audit_state_write_does_not_advance_the_audit_state(kit):
     with pytest.raises(PlatformError, match="simulated audit"):
         run_tick(kit, manifest, path, fail_after_success)
 
-    assert "reconcile_audit" not in load_manifest(path).meta
+    assert "reconcile_audit" not in load_manifest(path).dag_state
 
 
 def test_the_audit_state_is_recorded_after_the_needs_decision_report_and_before_the_save(kit):
@@ -348,11 +348,11 @@ def test_the_audit_state_is_recorded_after_the_needs_decision_report_and_before_
 
     def record():
         order.append("hook")
-        assert order == ["report", "hook"] and "reconcile_audit" not in load_manifest(path).meta
+        assert order == ["report", "hook"] and "reconcile_audit" not in load_manifest(path).dag_state
         reconcile_audit.record_successful_tick(manifest, full_scan=True, now=NOW)
 
     result = run_tick(kit, manifest, path, record)
 
     assert result.state == "needs_decision" and order == ["report", "hook"]
-    assert load_manifest(path).meta["reconcile_audit"] == {
+    assert load_manifest(path).dag_state["reconcile_audit"] == {
         "schema": "omac.reconcile-audit/v1", "last_full_scan_at": "2026-08-11T12:00:00Z", "completed_interval_ticks": 0}

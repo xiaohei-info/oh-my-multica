@@ -64,19 +64,29 @@ MISSING_CONSUMES = _MissingContractField.VALUE
 
 
 @dataclass(frozen=True)
+class Provided:
+    """One checkable interface item an artifact provides (`id`), anchored in the design (`ref`)."""
+
+    id: str
+    ref: str | None = None
+
+
+@dataclass(frozen=True)
 class ProducedArtifact:
-    """Stable artifact identity produced by one node."""
+    """Stable artifact identity produced by one node, with the interface items it provides."""
 
     artifact_id: str
+    provides: tuple = ()
 
 
 @dataclass(frozen=True)
 class ConsumedArtifact:
-    """One exact artifact input and the upstream node that owns it."""
+    """One exact artifact input and the upstream node that owns it; `requires` names the provided items it needs."""
 
     artifact_id: str
     producer: str
     evidence_mode: EvidenceMode
+    requires: tuple = ()
 
 
 def _load_evidence_mode(value):
@@ -89,11 +99,23 @@ def _load_evidence_mode(value):
         return value
 
 
+def _load_provided(value):
+    if isinstance(value, dict):
+        return Provided(id=value.get("id"), ref=value.get("ref"))
+    return value  # invalid input is kept as-is so lint can report it
+
+
+def _load_sequence(value, load=lambda item: item):
+    """A YAML list becomes an immutable tuple; anything else is kept for lint to reject."""
+    return tuple(load(item) for item in value) if isinstance(value, list) else (value if value is not None else ())
+
+
 def _load_produced_artifact(value):
     if isinstance(value, ProducedArtifact):
         return value
     if isinstance(value, dict):
-        return ProducedArtifact(artifact_id=value.get("artifact_id"))
+        return ProducedArtifact(
+            artifact_id=value.get("artifact_id"), provides=_load_sequence(value.get("provides"), _load_provided))
     return value
 
 
@@ -105,6 +127,7 @@ def _load_consumed_artifact(value):
             artifact_id=value.get("artifact_id"),
             producer=value.get("producer"),
             evidence_mode=_load_evidence_mode(value.get("evidence_mode")),
+            requires=_load_sequence(value.get("requires")),
         )
     return value
 
@@ -113,19 +136,35 @@ def _dump_evidence_mode(value):
     return value.value if isinstance(value, EvidenceMode) else value
 
 
+def _dump_provided(value):
+    if isinstance(value, Provided):
+        return {"id": value.id, **({"ref": value.ref} if value.ref is not None else {})}
+    return value
+
+
+def _dump_sequence(value, dump=lambda item: item):
+    return [dump(item) for item in value] if isinstance(value, tuple) else value
+
+
 def _dump_produced_artifact(value):
     if isinstance(value, ProducedArtifact):
-        return {"artifact_id": value.artifact_id}
+        data = {"artifact_id": value.artifact_id}
+        if value.provides:
+            data["provides"] = _dump_sequence(value.provides, _dump_provided)
+        return data
     return value
 
 
 def _dump_consumed_artifact(value):
     if isinstance(value, ConsumedArtifact):
-        return {
+        data = {
             "artifact_id": value.artifact_id,
             "producer": value.producer,
             "evidence_mode": _dump_evidence_mode(value.evidence_mode),
         }
+        if value.requires:
+            data["requires"] = _dump_sequence(value.requires)
+        return data
     return value
 
 
@@ -156,6 +195,15 @@ class Contract:
     evidence_mode: EvidenceMode | None = None
     produces: list[ProducedArtifact] = field(default_factory=list)
     consumes: list[ConsumedArtifact] | None | _MissingContractField = MISSING_CONSUMES
+    # Interface chain (3.0): registries (`meta.registries`) this node adds an entry to; technical requirements
+    # (acceptance v3) it owns; defects a system fix node repairs.
+    registers: list = field(default_factory=list)
+    requirement_refs: list = field(default_factory=list)
+    defect_refs: list = field(default_factory=list)
+
+
+def _load_list(value):
+    return list(value) if isinstance(value, list) else (value if value is not None else [])
 
 
 def _load_contract(raw):
@@ -179,6 +227,9 @@ def _load_contract(raw):
         acceptance_doc=raw.get("acceptance_doc"),
         scope_paths=list(raw.get("scope_paths", [])),
         evidence_mode=_load_evidence_mode(raw.get("evidence_mode")),
+        registers=_load_list(raw.get("registers")),
+        requirement_refs=_load_list(raw.get("requirement_refs")),
+        defect_refs=_load_list(raw.get("defect_refs")),
         produces=(
             [_load_produced_artifact(value) for value in raw_produces]
             if isinstance(raw_produces, list) else raw_produces
@@ -234,6 +285,10 @@ def _dump_contract(contract):
             [_dump_consumed_artifact(value) for value in contract.consumes]
             if isinstance(contract.consumes, list) else contract.consumes
         )
+    for name in ("registers", "requirement_refs", "defect_refs"):
+        value = getattr(contract, name)
+        if value:
+            data[name] = list(value) if isinstance(value, list) else value
     if contract.coverage_gate != 90:
         data["coverage_gate"] = contract.coverage_gate
     return data
@@ -285,12 +340,22 @@ def clear_confirmed_merge(node: Node) -> None:
     node.merged_at = None
     node.merge_request_state = None
 
+SCHEMA_VERSION = 3  # meta.omac_schema this release writes; a higher one is refused rather than half-read
+DAG_STATE_FILE = "_dag.yaml"  # `_` cannot start a node id, so it never collides with a node state file
+# meta keys that are runtime facts: they never enter a definition digest (core/amendment.py) and, once they
+# have a home in DAG state, are migrated out of the definition file on load.
+RUNTIME_META_KEYS = frozenset({"amendment_apply", "reconcile_audit"})
+_DAG_STATE_META_KEYS = ("reconcile_audit",)
+
+
 @dataclass
 class Manifest:
     meta: dict
     nodes: dict  # id -> Node
     # What the last load/save left on disk, so a save rewrites only files whose content changed.
     _disk: dict = field(default_factory=dict, repr=False, compare=False)
+    # DAG-level runtime facts (`.omac/<name>.state/_dag.yaml`): written by the Loop, never part of the definition.
+    dag_state: dict = field(default_factory=dict)
 
 def _build_nodes(raw) -> dict:
     """从已展开的 raw dict 构造 {id: Node}(共享于文件加载与不落盘文本解析)。"""
@@ -424,25 +489,64 @@ def _reject_1x_state(raw, path: str) -> None:
             "请用 omac 1.x 跑完或放弃该运行,再用 2.0 重新开始: `omac plan create ...`。"))
 
 
-def load_manifest(path: str) -> Manifest:
-    """Load the DAG definition plus each node's state file (环境变量展开 + schema 校验)."""
-    target = _canonical_manifest_target(path)
+def _read_definition(path: str, target: str):
+    """Parse the definition file: (expanded raw mapping, its nodes, the plain definition a save would write)."""
     with open(target, "rb") as f:
         raw = yaml.load(f.read().decode("utf-8"), Loader=_YAML_LOADER)
     _reject_1x_state(raw, path)
     raw = _expand_env(raw)
-    manifest = Manifest(meta=raw.get("meta", {}), nodes=_build_nodes(raw))
+    schema = (raw.get("meta") or {}).get("omac_schema", SCHEMA_VERSION)
+    if isinstance(schema, bool) or not isinstance(schema, int) or schema > SCHEMA_VERSION:
+        raise ValidationError(ui(
+            f"{path} has meta.omac_schema {schema!r}; this omac reads schema {SCHEMA_VERSION} and lower. "
+            "A newer omac wrote it and this version would silently drop fields. Upgrade omac on this machine "
+            "(`pip install -U oh-my-multica`) and rerun; do not edit the field.",
+            f"{path} 的 meta.omac_schema 为 {schema!r};当前 omac 只读取 schema {SCHEMA_VERSION} 及更低版本。"
+            "它由更新版本的 omac 写入,旧版本会静默丢字段。请在本机升级 omac(`pip install -U oh-my-multica`)后重试,不要手改该字段。"))
+    nodes = _build_nodes(raw)
+    plain = {"meta": copy.deepcopy(raw.get("meta", {})), "nodes": [_definition_of(n) for n in nodes.values()]}
+    return raw, nodes, plain
+
+
+def load_manifest(path: str) -> Manifest:
+    """Load the DAG definition, DAG state and each node's state file (环境变量展开 + schema 校验)."""
+    target = _canonical_manifest_target(path)
+    raw, nodes, plain = _read_definition(path, target)
+    manifest = Manifest(meta=raw.get("meta", {}), nodes=nodes)
     directory, states = state_dir(target), {}
     for key, node in manifest.nodes.items():
         state_path = os.path.join(directory, f"{key}.yaml")
         if os.path.exists(state_path):
             states[key] = _read_state_file(state_path)
             _apply_runtime(node, states[key])
-    plain = {"meta": copy.deepcopy(manifest.meta),
-             "nodes": [_definition_of(n) for n in manifest.nodes.values()]}
+    dag_path = os.path.join(directory, DAG_STATE_FILE)
+    on_disk = _read_state_file(dag_path) if os.path.exists(dag_path) else {}
+    manifest.dag_state = copy.deepcopy(on_disk)
+    for key in _DAG_STATE_META_KEYS:  # 2.x kept these in meta: move them once; the next save rewrites the definition
+        if key in manifest.meta:
+            manifest.dag_state.setdefault(key, manifest.meta.pop(key))
     inline = any(any(k in n for k in _RUNTIME_KEYS) for n in raw.get("nodes", []))
-    manifest._disk = {"path": target, "def": None if inline else plain, "state": states}
+    manifest._disk = {"path": target, "def": None if inline else plain, "state": states, "dag": on_disk}
     return manifest
+
+
+def reload_if_definition_changed(manifest: Manifest, path: str) -> bool:
+    """Adopt the on-disk manifest when its definition was edited behind this process's back.
+
+    A long-running ``dag run`` holds the definition in memory; without this its next save would put the old
+    definition back over an operator's edit (``node retry --worker``). Compares only the definition file, so an
+    unchanged DAG costs one small parse. Returns whether the in-memory manifest was replaced.
+    """
+    target = _canonical_manifest_target(path)
+    disk = manifest._disk
+    if disk.get("path") != target or disk.get("def") is None:
+        return False
+    if _read_definition(path, target)[2] == disk["def"]:
+        return False
+    fresh = load_manifest(target)
+    manifest.meta, manifest.nodes, manifest.dag_state, manifest._disk = (
+        fresh.meta, fresh.nodes, fresh.dag_state, fresh._disk)
+    return True
 
 
 def loads_manifest(text: str) -> Manifest:
@@ -502,6 +606,7 @@ def save_manifest(manifest: Manifest, path: str):
     states = {key: _runtime_of(n) for key, n in manifest.nodes.items()}
     definition = {"meta": manifest.meta, "nodes": [_definition_of(n) for n in manifest.nodes.values()]}
     old_states = disk.get("state", {})
+    dag_path = os.path.join(directory, DAG_STATE_FILE)
 
     touched = set()
     for key, state in states.items():
@@ -514,6 +619,12 @@ def save_manifest(manifest: Manifest, path: str):
         except FileNotFoundError:
             pass
         touched.add(directory)
+    if manifest.dag_state != (disk.get("dag") or {}):
+        if manifest.dag_state:
+            _atomic_write(dag_path, _state_bytes(manifest.dag_state, DAG_STATE_FILE))
+        elif os.path.exists(dag_path):
+            os.unlink(dag_path)
+        touched.add(directory)
     if disk.get("def") != definition:
         mode = stat.S_IMODE(os.stat(target).st_mode) if os.path.exists(target) else None
         body = yaml.dump(definition, Dumper=getattr(yaml, "CDumper", yaml.Dumper),
@@ -522,7 +633,8 @@ def save_manifest(manifest: Manifest, path: str):
         touched.add(os.path.dirname(target))
     for changed in touched:
         _fsync_dir(changed)
-    manifest._disk = {"path": target, "def": copy.deepcopy(definition), "state": copy.deepcopy(states)}
+    manifest._disk = {"path": target, "def": copy.deepcopy(definition), "state": copy.deepcopy(states),
+                      "dag": copy.deepcopy(manifest.dag_state)}
 
 
 @contextmanager

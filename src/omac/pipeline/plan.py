@@ -34,7 +34,7 @@ from ..core import acceptance as acceptance_mod
 from ..core.config import CONFIG_DIR, CONFIG_PATH
 from ..core.gitsync import commit_files, ensure_config_synced, ensure_files_clean
 from ..core.lint import lint
-from ..core.manifest import load_manifest, loads_manifest, manifest_files, save_manifest
+from ..core.manifest import SCHEMA_VERSION, load_manifest, loads_manifest, manifest_files, save_manifest
 from ..core.project_rules import read_agents_snapshot, write_project_rules
 from ..core.review_preflight import plan_manifest_preflight
 from ..core.taskmeta import (
@@ -538,6 +538,7 @@ def _write_plan_outputs(
         # Reviewer 审查原始 decompose deliverable；最终文件使用同一个 Manifest
         # 执行模型做 canonical dump。权威 acceptance 原文单独落盘并由 meta.acceptance_file 引用。
         manifest = loads_manifest(manifest_text)
+        manifest.meta["omac_schema"] = SCHEMA_VERSION
         manifest.meta["plan_id"] = plan_id
         manifest.meta.setdefault("name", name)
         manifest.meta["acceptance_required"] = not ctx.no_acceptance
