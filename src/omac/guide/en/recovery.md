@@ -57,6 +57,37 @@ structured stdout report is the current recovery fact.
   the tick reports `held` with the `omac node release` command. Prepare the live environment, release it, and it
   dispatches like any other node.
 
+### Upstream defect feedback
+
+After a Worker (or a Reviewer whose every blocker names a finished upstream node as `owner`) reports `upstream-defect`, the
+locked `omac dag run|tick` routes it between two ticks. With `defects.auto_fix: design-gap` (the default; `off` disables it)
+a `design-gap` defect inserts a `fix.*` node, the reporter's `blocked_by` gains it, and the reporter becomes ready once the
+fix is merged. That is a system amendment built by code: no Agent reviews it and no person confirms it. Budgets:
+`defects.per_reporter` (default 2) and `defects.max_auto_fixes` (default `auto` = max(5, ⌈0.15 × nodes⌉)).
+
+When it cannot be handled automatically `dag run` stops with exit 20 and `next_actions` carry copyable release commands.
+Stop reasons:
+
+| Reason | Meaning | What to do |
+|---|---|---|
+| `defect-needs-owner` | A trade-off or contract gap, or `defects.auto_fix` is `off` | `omac dag amend propose <manifest> --report-file <report.md> --docs <design.md> --blocked-node <node>`, or `node abandon|accept|retry` |
+| `defect-unroutable` | The report cannot be tied to a finished upstream node or anchor | Same; first check `suspected_node` and `anchors` in the report |
+| `defect-fix-generation-cap` | A fix node itself reported a defect; a fix is never fixed automatically | Same |
+| `defect-recurred` | The same defect (suspected node + anchors) came back after its fix was merged | `dag amend propose` or `node retry` first, or `abandon|accept` |
+| `defect-budget-exhausted` | The reporter's or the whole DAG's automatic-fix budget is used up | `omac defect grant <manifest> --reporter <node> --count 1`, or as above |
+
+- `omac defect list <manifest> [--output json]` is read-only: the defect ledger (fingerprint states
+  `queued → applying → fixing → fixed → recurred | needs-owner`), budget use, reports waiting for a route and
+  `pending_human_amendment`.
+- `omac defect report <manifest> --before <node> --report-file <defects.yaml>` queues a person's report (at most 5 queued),
+  shaped like a Worker's `defects`; `repro` may be omitted.
+- `omac defect grant <manifest> --reporter <node> [--count N]` adds automatic fixes for a reporter and routes its stopped report again.
+- While a human amendment is pending, a defect only queues (`queued`) and the DAG is not changed; `dag amend accept` or discard that proposal first.
+- The incremental decomposition for a failed final-acceptance flow also goes through a system amendment; a flow that fails
+  again after its increment was merged stops the loop and lists the failed items.
+- Known limits: the inner ticks of the acceptance outer loop do not route defects (a report from an increment node stops with
+  exit 20 and is routed by the next `omac dag run`); the system-amendment file exists on this machine only.
+
 ### `pass-with-nits` acceptance
 
 A DAG develop node with `pass-with-nits` counts as a pass by default

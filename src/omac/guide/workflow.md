@@ -31,6 +31,10 @@
    `omac node retry|accept|abandon` 做显式决策，再重跑 `omac dag run`。
    只剩被 `omac node hold` 挂起的节点及其下游时，`dag run`/`dag tick` 同样以 exit 20 结束，
    报告的 `held_nodes` 列出它们，`next_actions` 给出 `omac node release` 命令。
+   需要人长时间处理决策时，用 `omac dag run --wait-decisions`：没有进行中节点且有待决策项时放开写锁等待，
+   不退出；`omac dag decisions` 列出在等的决策，`omac dag followups` 列出已合并节点的 `pass-with-nits` 建议项。
+   下游发现“已完成的上游没做到设计已写明的事”时，Worker 用 `upstream-defect` 上报，`dag run` 在两轮 tick 之间
+   自动插入修复节点（`defects.auto_fix`）；停下来等人时按 `omac guide recovery` 的“上游缺陷回流”处理。
 
 ## plan 到 dag run 的衔接
 

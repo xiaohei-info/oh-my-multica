@@ -38,6 +38,12 @@ Resolve conflicts in this order:
    explicit choice with `omac node retry|accept|abandon`, then run
    `omac dag run` again. When only held nodes (`omac node hold`) and the nodes behind them are left,
    `dag run`/`dag tick` also exit 20; the report lists them (`held_nodes`) with `omac node release` commands.
+   When a person needs time to decide, use `omac dag run --wait-decisions`: with nothing running and a decision pending
+   it releases the write lock and waits instead of exiting. `omac dag decisions` lists what the DAG waits for and
+   `omac dag followups` lists the `pass-with-nits` nits of merged nodes.
+   When a downstream Worker finds that a finished upstream node did not deliver something the design states, it reports
+   `upstream-defect`; `dag run` inserts a fix node between two ticks (`defects.auto_fix`). When it stops for a person,
+   follow "Upstream defect feedback" in `omac guide recovery`.
 
 ## From plan to dag run
 

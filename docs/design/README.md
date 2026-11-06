@@ -1,4 +1,4 @@
-# oh-my-multica design (2.0)
+# oh-my-multica design (3.0)
 
 This is the current design of `omac`. Section numbers are stable: code comments cite them as `docs/design/README.md §7.3`.
 Rules for working in the repository are in [`AGENTS.md`](../../AGENTS.md); this document explains the *why* and the
@@ -25,7 +25,9 @@ source and tests; the pull-request template asks the same question.
    invalid arguments print the command's full help. All text goes through `omac.i18n.ui(english, chinese)`.
 4. **Retries are explicit decisions (2.4).** A business failure is not retried automatically. Bounded, counted returns to
    the Worker (`retry.worker|ci|review|merge`) exist for machine-detectable rework; when the budget is spent the node
-   blocks and `omac` exits 20 with a structured report. `omac node retry|abandon|accept` are the decisions.
+   blocks and `omac` exits 20 with a structured report. `omac node retry|abandon|accept` are the decisions. Two bounded
+   automatic paths exist since 3.0, both counted and both stopping in exit 20 when spent: one same-Worker retry of an
+   `environment-failure` report, and the upstream-defect route (7.5), which inserts a fix node instead of retrying.
 5. **Unknown results are never replayed; drift fails closed.** If a write may or may not have happened, `omac` persists an
    intent *before* the effect, and after a crash it observes instead of repeating. If the platform no longer matches what
    was recorded, it stops and says so.
@@ -59,7 +61,7 @@ A DAG is two things on disk, both plain text, both committed to git:
 ```
 .omac/<name>.yaml            DAG definition: meta + node definitions. Changes only on plan and amendment.
 .omac/<name>.state/<node>.yaml   One file per node: work_item_id, status, merge facts. A few hundred bytes.
-.omac/<name>.state/_dag.yaml     DAG-level runtime facts (the reconcile-audit schedule, the defect ledger, a pending human amendment). Written only by the Loop; absent until there is one.
+.omac/<name>.state/_dag.yaml     DAG-level runtime facts (the reconcile-audit schedule, the defect ledger, a pending human amendment, the live nodes the Loop already held). Written only by the Loop; absent until there is one.
 ```
 
 The definition digest (`core/amendment.py::manifest_definition_digest`) leaves out every runtime `meta` key
@@ -78,12 +80,16 @@ its definition file once.
   merge) is refused with the file path and `git checkout -- <file>`.
 * **Sync through `origin/main`.** `core/gitsync.py` commits the definition and the state directory after each tick.
   Machines advancing different nodes touch different files, so git merges them without conflict; a conflicting push
-  is rebased only when every unpushed commit touches nothing but those files.
+  is rebased only when every unpushed commit touches nothing but those files. Known limit (3.0): `_dag.yaml` is one file, so
+  two machines that both tick change it (the audit schedule) and can conflict on rebase; the system-amendment file
+  (`.omac/<name>.system-amendment.yaml`, 7.5) is local and not synced.
 * **Bounded size.** A node's state file is limited to 64 KiB at save time (the error says to keep large payloads as
   platform attachments). The definition holds no run history; the amendment ledger in `meta` is replaced per amendment.
   Large payloads (captured sources, transcripts) are attachments on the platform, referenced by digest.
 * **No journal to archive.** Effect intents (worker handoff, review cycle, merge request) live on the platform issue; a node file
-  keeps its runtime facts (six, plus the `held` / `hold_reason` of a held node), and the only DAG-level records are the amendment ledger above and `_dag.yaml`. Nothing accumulates, so nothing is
+  keeps its runtime facts (`work_item_id`, `status`, `merged`, `merged_at`, `merge_request_state`, `recovery_marker`, plus `held` / `hold_reason`
+  of a held node, the `retry_note` of the last `node retry --note`, and `defect_pending` while a defect report awaits routing), and the only DAG-level
+  records are the amendment ledger above and `_dag.yaml`. Nothing accumulates, so nothing is
   archived: `tests/test_manifest_state.py` (500 nodes with every fact set average well under 4 KiB) and
   `tests/test_amendment_budget_retention.py` (120 amendments leave the manifest the size of the first few) pin it.
 * **No 1.x compatibility.** A single-file 1.x manifest (inline `work_item_id`, or the old compressed envelope) is not read
@@ -115,6 +121,20 @@ Commands take `--output json|table`; agents and the web use JSON. `dag run --out
 `{held_nodes: [{key, reason}], blocked_downstream, next_actions}` with one `omac node release` command per held node.
 `dag status` node rows carry `held` and `hold_reason`.
 
+3.0 adds three read-only commands whose JSON is new (no existing field changed):
+
+* `omac dag decisions <manifest>` prints `{decisions: [{decision_key, kind, node, status, work_item_id, reason, next_actions}]}`;
+  `kind` is the node status (`blocked`, `failed`) or `held`, and `decision_key` (`<node>:<status>:<work_item_id>`) is stable
+  while the decision stands. It reads the manifest only.
+* `omac dag followups <manifest>` prints `{closeout_node, followups: [{followup_id, node, work_item_id, nit}]}`, the nits of
+  merged `pass-with-nits` nodes (`followup_id` is `<node>#<n>`).
+* `omac defect list <manifest>` prints the defect ledger (`used_global`, `used_by_reporter`, `granted_by_reporter`, `entries`,
+  `inbox`, `applying`, `pending_reporters`, `pending_human_amendment`); `defect report` and `defect grant` write through the
+  Loop's own path under the manifest write lock.
+
+Exit 20 from a defect stop (`defect-needs-owner`, `-unroutable`, `-fix-generation-cap`, `-recurred`, `-budget-exhausted`) has
+the usual report; its `next_actions` come from `decide_defects.render_release`.
+
 ## 6. Configuration
 
 `.omac/config.yaml` (precedence: file < `OMAC_*` environment < flags): `engine: multica`, `workspace`, `project`
@@ -123,7 +143,7 @@ Commands take `--output json|table`; agents and the web use JSON. `dag run --out
 `ci.check_command`, `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
 `retry` (`worker|ci|review|merge|environment`, `no_submit_runs`; `environment` is the automatic same-Worker retries of an
 `environment-failure` report, default 1), `defects` (`auto_fix: off|design-gap`, `per_reporter` 2, `max_auto_fixes: auto` = max(5, ⌈0.15 × nodes⌉)),
-`dispatch.hold_live` (default false: hold ready `evidence_mode: live` nodes for a person to
+`dispatch.hold_live` (default false: hold each ready `evidence_mode: live` node once for a person to
 release), `review.node_nits` (`accept` default | `decide`: whether a develop
 node's `pass-with-nits` is a pass or an exit-20 stop; plan stages and amendments always stop),
 `review.invalid_evidence_restarts` (default 2: re-dispatches of the Reviewer on one subject after invalid review evidence),
@@ -200,6 +220,12 @@ reconcile → result collection (collect_results) → evidence / CI / merge gate
   is the explicit decision. Success is concluded only from the *observed* pull request, never from the command's exit code.
 * **ready nodes** (就绪节点) are nodes whose blockers are `done` or `abandoned`. When fewer slots than ready nodes remain, `graph.prioritize_ready` orders them: owner of a complete flow
   (`acceptance_claims`) first, then most transitive downstream nodes, then manifest order.
+* **Waiting for a person (`dag run --wait-decisions`).** When nothing is running and a decision is pending the run does not exit 20:
+  it releases the manifest write lock (so `node retry|release|accept` work) and polls the manifest without it. Each decision is
+  announced once as a `decision_pending` event (stderr), keyed by `decision_key`; a decision that was resolved and comes back is
+  announced again. When the set of decisions changes the run takes the lock again and continues; it exits 0 on convergence and
+  10 at `--max-minutes` (the wall clock runs across the wait). Without the flag nothing changes. Known limit: it compares the
+  manifest only, so a change made only on the platform is not noticed until `dag run` is started again.
 * **A stopped node blocks only what depends on it.** `loop._mark_downstream_blocked` marks the transitive downstream
   (`graph.downstream_of`) of needs-decision nodes `blocked`; independent branches keep being dispatched, and the tick
   reports `needs_decision` (exit 20) only when no node is running.
@@ -229,7 +255,7 @@ sit between two effects are split at that read; the read is a stage or an explic
 * **Merge** (`decide_merge.py`): precheck → observe → one of {settle, record pending, block, *intent plan + one
   `RequestMerge`*} → observe again → {settle, bounce, block}. Each arrow that follows a read is a separate call to `apply`.
 * **Authoring task** (`decide_task.py`, `tasks.run_task`): an explicit **stage transition table**
-  `(stage, fact) → (next stage, effects)` with 40 rows. A handler per stage observes (reads, waits for a Run, calls the
+  `(stage, fact) → (next stage, effects)` with 41 rows. A handler per stage observes (reads, waits for a Run, calls the
   producer) and names the fact; the table gives the effects to apply before entering the next stage. A budget stop is two
   rows with a read between them (`MACHINE_GATE → BLOCK_BUDGET → STOPPED`). `tests/test_decide_task.py` pins every row and
   checks that the table is closed (every stage reachable, only `STOPPED`/`DONE` are terminal, an unknown pair is an error).
@@ -277,6 +303,23 @@ sent to `node retry` first. Both commands apply `SetNode` + `SaveState` under th
 `dag run` makes them exit 5 instead of racing the Loop). `held`/`hold_reason` are runtime facts in the node state file,
 so the Loop's manifest sync only commits them. With nothing running, nothing failed and a held `todo` node left, the
 tick state is `held` (`decide_loop.decide_tick_state`): `dag run`/`dag tick` exit 20 with the report of 5.2.
+With `dispatch.hold_live` the Loop holds a ready `evidence_mode: live` node itself, once (`decide_hold.plan_auto_hold_live`:
+`SetNode` + `SetDagFact("auto_held")` + `SaveState`, event `auto_hold`); after `node release` it is an ordinary node.
+
+**Environment failures and retry notes.** A Worker `environment-failure` blocker report (the environment, not the task, stopped
+it; evidence must hold a command that really exited non-zero) is retried once by the same Worker without spending
+`retry.worker`: `decide_worker.decide_environment_failure` reads `bounces.environment` against `retry.environment`, and the
+retry is the ordinary Worker handoff with a new generation. When it is spent the node stops (exit 20) and `next_actions` carry
+`omac node retry … --worker <next worker>`. `node retry --note <text>` (at most 2000 characters) stores the note as the node's
+`retry_note`; it is rendered into the next authoring issue body and cleared by a retry without a note (it is not review
+feedback, because the Loop resets review feedback before it dispatches). Known limit: `bounces.environment` is an absolute
+count outside the amendment baseline, so a new Worker chosen by `node retry --worker` starts with the spent budget and its
+first environment failure stops at once.
+
+**Follow-ups.** `core/followups.py` lists the nits of merged nodes whose verdict was `pass-with-nits`. The review of
+`meta.closeout_node` gets one `followups:triage` obligation (`pipeline/followups.review_obligations_for`, built when a review
+subject is prepared, only if there is something to triage): its evidence must name every follow-up id with `fix`, `defer` or
+`drop`, otherwise the evidence gate refuses the report.
 
 #### Upstream defects
 
@@ -305,7 +348,12 @@ When the DAG converges and the manifest requires acceptance, an outer loop runs 
 document (`acceptance.max_rounds`, independent of `retry`). Failed flows produce an incremental decomposition that is
 merged through a system amendment (7.5), recorded per flow in the defect ledger; a flow that fails again after its increment
 was merged stops the loop. `dag amend propose|accept` changes a running DAG: a reviewed proposal bound to the base
-manifest digest, applied under a ledger so an interrupted apply is resumed and out-of-scope edits are refused.
+manifest digest, applied under a ledger so an interrupted apply is resumed and out-of-scope edits are refused. The digest
+leaves out runtime `meta` (4), so a tick between `propose` and `accept` no longer invalidates a reviewed proposal; a proposal
+reviewed under 2.x was bound to the old digest and must be proposed again. While a human proposal is reviewed and not applied,
+`_dag.pending_human_amendment` is set and defect routing only queues (7.5); the marker clears itself once the file is gone,
+applied or recorded as the last amendment. Known limits: the acceptance outer loop's inner ticks do not route defects (a report
+from an increment node stops with exit 20 and is routed by the next `dag run`), and the system-amendment file is local.
 
 ## 8. Acceptance documents
 
@@ -319,6 +367,9 @@ an action, and every `technical` requirement is claimed by a node's `contract.re
 extraction is the Reviewer's `requirements:extraction` obligation; the interface matrix of a decomposition is its
 `interface:matrix` obligation (generated when any `requires` exists).
 
+A flow's evidence is only as good as the interfaces between nodes, so 3.0 makes them checkable (10.1). Known limit: the
+requirement checks verify ids and coverage, not whether a `ref` path exists in the pull request.
+
 ## 9. Knowledge distribution
 
 `omac guide ...` serves bilingual, packaged, machine-consumed documents (`src/omac/guide/`), and agent role templates
@@ -331,6 +382,15 @@ live in `src/omac/agents/`. They state mechanism only (what to submit, in what s
 A manifest *node* (`core/manifest.py`) is a definition plus runtime state. Its *work item* is the platform issue
 (`core/workitem.py`), carrying phase, verdicts, attachment references and the handoff intents. A *contract* states the
 objective, acceptance, non-goals, verification commands, integration gates, `pr_base` and coverage gate.
+
+3.0 adds typed interfaces to the contract and the artifact lists (`core/manifest.py`, checked by `core/interfaces.py` in `lint`
+and `lint_increment`): a produced artifact may declare `provides: [{id, ref}]`, a consumed one `requires: [<id>]`; every
+`requires` must be in the producer's `provides`, and `meta.registries` names a guard node that must run after every node that
+`registers` into it (a registrant added after the guard is done is refused with the guard node to add). Contracts may also
+carry `requirement_refs` (acceptance v3 technical requirements, 8) and `defect_refs` (set on the fix nodes the Loop inserts; carried, not validated). Review
+obligations follow: `interface:<artifact>:<id>`, `registry:<id>`, and one aggregate `trace:refs` for nodes with
+`acceptance_refs`. A `pass` for an interface-chain obligation must name a locator (a path with an extension or a test name);
+only the format is checked. Fields that are absent are not written, so a manifest without 3.0 fields round-trips byte for byte.
 
 ### 10.2 Terminology
 

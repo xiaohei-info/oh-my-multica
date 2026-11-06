@@ -45,6 +45,31 @@
 - `dispatch.hold_live: true`：就绪的 `contract.evidence_mode: live` 节点由代码自动挂起（每个节点只挂一次），
   tick 报告 `held` 并给出 `omac node release` 命令；准备好真实环境后 release，之后与普通节点相同。
 
+### 上游缺陷回流
+
+Worker（或所有 blocker 的 `owner` 都指向已完成上游的 Reviewer）上报 `upstream-defect` 后，持锁的 `omac dag run|tick`
+在两轮 tick 之间路由它：`defects.auto_fix: design-gap`（默认；`off` 关闭）下，`design-gap` 类缺陷会插入一个 `fix.*` 修复节点，
+报告者的 `blocked_by` 加上它，修复合并后报告者自然就绪；这是一次由代码生成的系统 amendment，不经 Agent 评审也不需要人确认。
+预算：`defects.per_reporter`（默认 2）、`defects.max_auto_fixes`（默认 `auto` = max(5, ⌈0.15×节点数⌉)）。
+
+无法自动处理时 `dag run` 以 exit 20 停下，报告的 `next_actions` 给出可复制的放行命令。停止原因：
+
+| 原因 | 含义 | 处理 |
+|---|---|---|
+| `defect-needs-owner` | 取舍或合同缺口，或 `defects.auto_fix` 为 `off` | `omac dag amend propose <manifest> --report-file <report.md> --docs <design.md> --blocked-node <节点>`，或 `node abandon|accept|retry` |
+| `defect-unroutable` | 报告无法落到已完成的上游节点或锚点 | 同上；先核对报告里的 `suspected_node` 与 `anchors` |
+| `defect-fix-generation-cap` | 修复节点自己又上报了缺陷；修复节点不会被自动再修 | 同上 |
+| `defect-recurred` | 同一缺陷（疑似节点 + 锚点）在修复合并后再次出现 | 先 `dag amend propose` 或 `node retry`，或 `abandon|accept` |
+| `defect-budget-exhausted` | 报告者或整个 DAG 的自动修复预算用完 | `omac defect grant <manifest> --reporter <节点> --count 1` 追加后继续，或同上 |
+
+- `omac defect list <manifest> [--output json]`：只读，缺陷账本（指纹状态 `queued → applying → fixing → fixed → recurred | needs-owner`）、
+  预算使用、待路由报告和 `pending_human_amendment`。
+- `omac defect report <manifest> --before <节点> --report-file <缺陷.yaml>`：人工上报（最多 5 条排队），与 Worker 的 `defects` 同形，`repro` 可省略。
+- `omac defect grant <manifest> --reporter <节点> [--count N]`：追加报告者的自动修复次数并重新路由其停止的报告。
+- 有待确认的人工 amendment 时，缺陷只排队（`queued`），不改 DAG；先 `dag amend accept` 或丢弃该提案。
+- 最终验收失败的 flow 的增量拆解也走系统 amendment；同一 flow 修过后再失败会停止循环，列出未通过项。
+- 已知限制：验收外层循环的内层 tick 不路由缺陷，增量节点上的上报会 exit 20，下一次 `omac dag run` 才路由；系统 amendment 文件只在本机。
+
 ### `pass-with-nits` 接受决策
 
 DAG develop 节点收到 `pass-with-nits` 默认（`review.node_nits: accept`）视为通过：照常合并，nits 原文留在评审报告和

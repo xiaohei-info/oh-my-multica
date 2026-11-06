@@ -34,9 +34,9 @@
 | 配置 Config | 引擎、workspace、project、角色、重试预算等 | `.omac/config.yaml`，`core/config.py` | 人（`omac init`、`omac config set`）；优先级 文件 < `OMAC_*` 环境变量 < 命令行参数 |
 | Manifest（DAG） | `meta` + 节点定义 | `.omac/<name>.yaml`，`core/manifest.py::Manifest` | 只在 plan / amendment 时由 omac 改写 |
 | 节点 Node | 定义（`id`、`worker`、`blocked_by`、`reviewer`、`gate`、`contract`…）+ 运行时状态 | `core/manifest.py::Node` | 定义见上；运行时状态**只由 omac Loop 写**（单写者锁） |
-| DAG 状态文件 | DAG 级运行时事实（`reconcile_audit`、上游缺陷账本 `defects`、`pending_human_amendment`），不属于定义，不进定义摘要 | `.omac/<name>.state/_dag.yaml`（`Manifest.dag_state`） | omac Loop（经 `SetDagFact`） |
+| DAG 状态文件 | DAG 级运行时事实（`reconcile_audit`、上游缺陷账本 `defects`、`pending_human_amendment`、`dispatch.hold_live` 已自动挂起过的节点 `auto_held`），不属于定义，不进定义摘要 | `.omac/<name>.state/_dag.yaml`（`Manifest.dag_state`） | omac Loop（经 `SetDagFact`） |
 | 节点状态文件 | 每节点的运行时事实：`work_item_id`、`status`、`merged`、`merged_at`、`merge_request_state`、`recovery_marker`，挂起节点的 `held`、`hold_reason`，最近一次 `node retry --note` 的 `retry_note`，以及带待路由缺陷报告的 `defect_pending` | `.omac/<name>.state/<node>.yaml`（`_RUNTIME_KEYS`） | omac Loop |
-| 契约 Contract | 目标、验收、非目标、验证命令、集成门、`pr_base`、覆盖率门 | `core/manifest.py::Contract`，派单时下发到工作项 | orchestrator 产出，经评审与 lint |
+| 契约 Contract | 目标、验收、非目标、验证命令、集成门、`pr_base`、覆盖率门，以及 3.0 的接口声明（制品的 `provides` / `requires`、`registers`）、`requirement_refs`、`defect_refs`（均可缺省，缺省不序列化） | `core/manifest.py::Contract`，派单时下发到工作项 | orchestrator 产出，经评审与 lint |
 | 工作项 Work item | 平台上的一个 issue，承载一个完整阶段（产出、评审、回退往返都在同一条上） | `core/workitem.py::WorkItem` | omac 只经 `apply` 写；Agent 只经 `omac work submit|block` 提交 |
 | 任务类型 TaskKind | `plan`、`acceptance`、`decompose`、`amendment`、`develop`、`final-acceptance` | `core/taskmeta.py` | — |
 | 任务阶段 TaskPhase | `authoring`、`review`、`confirmation`（评审是阶段，不是独立 issue） | `core/taskmeta.py` | omac |
@@ -44,7 +44,7 @@
 | 拉取请求 Pull request | Worker 的代码交付 | `engines/codehost.py::CodeHost` | Worker 开 PR；合并只由 omac 经 `RequestMerge` 发起 |
 | 证据 Evidence | verification、review report、verdict、验收结果；有 schema | `core/evidence.py` | Agent 产出；omac 校验 |
 | 评审结论 Verdict | `pass` / `pass-with-nits` / `reject`，只对其 subject digest 有效 | `core/evidence.py` | Reviewer（不能是产出者本人） |
-| 验收文档 | 业务流与证明它们的证据 | `.omac/<name>.acceptance.yaml`，`core/acceptance*.py` | planner 产出；acceptor 执行 |
+| 验收文档 | 业务流与证明它们的证据；v3 增加 `requirements`（含 `technical` 需求，由节点 `requirement_refs` 认领） | `.omac/<name>.acceptance.yaml`，`core/acceptance*.py`，`core/requirements.py` | planner 产出；acceptor 执行 |
 | 修订 Amendment | 运行中改 DAG：绑定基线 manifest digest 的已评审提案 + 账本；另有**系统 amendment**（上游缺陷回流 / 最终验收增量）：代码按固定白名单生成，不经 Agent 评审与人工确认 | `core/amendment.py`，`pipeline/amendment.py`，`pipeline/defects.py` | `omac dag amend propose|accept`；系统 amendment 只在持锁的 `dag run|tick` 进程里、两轮 tick 之间应用 |
 | 机制角色 | `planner`、`orchestrator`、`worker`、`reviewer`、`acceptor`（`pipeline/dispatch.py::KIND_ROLE`） | `src/omac/guide/roles/` | 配置在 `roles` 中映射到具体 Agent |
 | Agent 模板 | 通用能力画像（architect、backend-eng…），**不是**机制角色 | `src/omac/agents/`，`cli/agent_templates.py` | `omac init` 用它创建 Agent |
@@ -105,6 +105,9 @@ blocked / in_review ── omac node accept ──► done        上游修复�
 3. **dag run / tick**（一轮 tick）：
    `reconcile → 结果收集（collect_results）→ 证据 / CI / 合并门 → 就绪节点 → 派单 → 收敛或 exit 20`。
    `dag run` 循环 tick；`dag tick` 只跑一轮（exit 0/10/20）。每轮先观察平台与 manifest，再决策。
+   `dag run --wait-decisions` 在无进行中节点且有待决策项时放开写锁等待人处理（每个 `decision_key` 通知一次），
+   而不是 exit 20；只读的 `dag decisions` / `dag followups` 列出在等的决策与已合并节点的建议项。
+   两轮 tick 之间，持锁的进程把 Worker / Reviewer 上报的上游缺陷路由成系统 amendment（`pipeline/defects.py`）。
 4. **Agent 侧**：`omac work show <issue>`（实例事实包 + `guide_refs`）→ 干活 → `omac work submit <issue> …`；
    需要人决策时 `omac work block`；读上游交付用 `omac work read`。
 5. **交接**：Worker → Reviewer 由持久化意图串起（`worker_handoff`、`reviewer_run_baseline`、`delivery_identity`）；
@@ -184,6 +187,9 @@ blocked / in_review ── omac node accept ──► done        上游修复�
 
 一个决策若中间必须插一次读取，就在读取处拆成两次 `apply`；读取是显式阶段，不能藏进 Effect（设计 §7.3.1）。
 Worker/Reviewer 交接检查点是守护协议：每次 `apply` 只带一个效果，之后做一次可中止交接的控制读取。
+DAG 级事实（审计计划、缺陷账本、`pending_human_amendment`、`auto_held`）只经 `SetDagFact` + `SaveState` 写入。缺陷回流的系统 amendment
+按"意图（账本 `applying`，已落盘）→ 系统 amendment 文件 → `apply_amendment` → 重载 → `fixing`"的顺序推进，崩溃后续完或撤销意图，
+不重放（`pipeline/defects.py`；这是 §5.4"意图先于效果"在 amendment 上的应用）。
 
 ### 3.5 外部系统的唯一接入点
 
@@ -206,7 +212,8 @@ Worker/Reviewer 交接检查点是守护协议：每次 `apply` 只带一个效�
 | DAG 运行时状态 | `.omac/<name>.state/_dag.yaml`（git） | 同上；`_` 开头不会与节点 id 冲突；tick 开始时若定义文件被外部改动则先重载；`meta.omac_schema` 高于本版本即拒读 |
 | 验收文档 | `.omac/<name>.acceptance.yaml`（git） | 与 manifest 一起提交 |
 | 效果意图、交接、verdict、证据 | 平台工作项的 metadata 与附件 | 大载荷存附件，manifest 只留引用 + 摘要 |
-| manifest 写锁 | `$TMPDIR/omac-manifest-<hash>.lock`（`fcntl.flock`） | 本机单写者 |
+| 系统 amendment 文件 | `.omac/<name>.system-amendment.yaml`（本机，不进 git 同步） | 缺陷回流时由代码生成，应用后失效；换机器续跑时没有文件的意图会被撤销并重新路由 |
+| manifest 写锁 | `$TMPDIR/omac-manifest-<hash>.lock`（`fcntl.flock`） | 本机单写者；`dag run --wait-decisions` 等待期间不持锁 |
 | 多机同步 | `origin/main`（`core/gitsync.py`） | 每轮 tick 后提交；不同机器推进不同节点，改不同文件 |
 
 ## 4. 统一架构词汇表
@@ -442,3 +449,9 @@ Agent 的产出只经 `omac work submit|block` 进入，一律是待校验的证
 6. **`Contract.acceptance`** 是保留的旧版全流程声明字段（`core/manifest.py` 注释），新 manifest 用显式的责任语义
    （`core/acceptance_responsibility.py`）。
 7. **待确认**：分支命名是否有约定（目前只有从 `main` 拉主题分支的惯例）。
+8. **3.0 已知限制**（细节见 `CHANGELOG.md` 3.0.0 与设计 §4、§7.3、§7.5、§7.6、§8）：`_dag.yaml` 是单个文件，多机同时 tick 的
+   rebase 可能冲突，系统 amendment 文件不同步；`bounces.environment` 是绝对计数，`node retry --worker` 不重置它；最终验收内层
+   loop 不路由缺陷；系统 amendment 的 authoring 恢复只在私有 Docker Multica 上验证过，未在生产平台跑过；live 节点评审只靠义务文字
+   与指南约束 Reviewer，证据门不强制 live 字段；证据定位符与 `ref` 只检查格式，不核实路径存在；`--wait-decisions` 只比较 manifest，
+   不感知只发生在平台侧的变化；`dag decisions` 的 `next_actions` 只有 retry / abandon / release；amendment 阶段的评审证据无效重派
+   上限固定为默认值 2，不读 `review.invalid_evidence_restarts`；`plan.profile` 强制 `light` 的人同时绕过 standard 预检。
