@@ -45,9 +45,21 @@ def finish_with_delivery(item_id: str, delivery: Mapping[str, Any]) -> tuple[Eff
     return (UpdateMetadata(item_id, dict(delivery)), UpdateStatus(item_id, WorkItemStatus.DONE))
 
 
+def retire_decision(item_id: str) -> tuple[Effect, ...]:
+    """An operator decided (accept / abandon): the standing decision and the worker handoff it left are retired."""
+    return (UpdateMetadata(item_id, {"decision_required": {}, "worker_handoff": {}}),)
+
+
+def retire_standing_facts(item: Any) -> tuple[Effect, ...]:
+    """The same retirement, only when the observed issue still carries one of the two facts (no write otherwise)."""
+    if item.decision_required in (None, {}) and item.worker_handoff is None:
+        return ()
+    return retire_decision(item.id)
+
+
 def finish_clearing_decision(item_id: str) -> tuple[Effect, ...]:
-    """An operator accepted: the standing decision goes first, then done."""
-    return (UpdateMetadata(item_id, {"decision_required": {}}), UpdateStatus(item_id, WorkItemStatus.DONE))
+    """An operator accepted: the standing decision and handoff go first, then done."""
+    return (*retire_decision(item_id), UpdateStatus(item_id, WorkItemStatus.DONE))
 
 
 def rework_to_producer(item_id: str) -> tuple[Effect, ...]:

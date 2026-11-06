@@ -37,5 +37,5 @@ def test_terminal_transitions():
     assert finish_with_delivery("i", {"deliverable": "r"}) == (
         UpdateMetadata("i", {"deliverable": "r"}), UpdateStatus("i", S.DONE))
     assert finish_clearing_decision("i") == (
-        UpdateMetadata("i", {"decision_required": {}}), UpdateStatus("i", S.DONE))
+        UpdateMetadata("i", {"decision_required": {}, "worker_handoff": {}}), UpdateStatus("i", S.DONE))
     assert rework_to_producer("i") == (ResetReview("i"), UpdateStatus("i", S.TODO))
