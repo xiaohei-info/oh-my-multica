@@ -8,6 +8,15 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [3.0.3] — 2026-11-08
+
+### Fixed
+
+- **`omac node retry --stage review` now works on the block the Loop itself writes when a Reviewer finishes without submitting.** The
+  `reviewer-run-no-submit-retry-exhausted` and `reviewer-run-terminal-time-unavailable` decisions carry a Run id, which the
+  recovery classifier did not recognise, so the advertised `next_action` was refused ("the persisted recovery decision does not
+  identify this review"). They now reset the review stage like the other explicit Reviewer retries.
+
 ## [3.0.2] — 2026-11-08
 
 ### Fixed

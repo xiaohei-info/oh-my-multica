@@ -98,6 +98,17 @@ def test_the_explicit_retry_decisions_are_classified_apart_from_the_provisional_
     assert classify(PATH, KEY, decision_with(run_id="")(explicit)) == "other"
 
 
+@pytest.mark.parametrize("reason", ["reviewer-run-no-submit-retry-exhausted", "reviewer-run-terminal-time-unavailable"])
+def test_the_reviewer_block_decisions_the_loop_writes_are_cleared_by_the_advertised_retry(reason):
+    from omac.pipeline.decide_recovery import reviewer_recovery_decision
+    item = delivered_item()
+    item = replace(item, decision_required=reviewer_recovery_decision(PATH, KEY, item, reason, run_id="run-1"))
+    assert classify(PATH, KEY, item) == "explicit-review-retry"
+    plan = plan_delayed_reviewer_recovery(
+        manifest(), PATH, KEY, item, REVIEWER, agent_id_of=lambda _: AGENT, list_runs=lambda: [], stable_run_identity=True)
+    assert plan.action == "ordinary"
+
+
 def run(rid="run-bob", status="running", created="2026-08-03T00:00:01Z", trigger="issue_assignment", agent=AGENT):
     return AgentRunObservation(id=rid, kind="direct", status=status, agent_id=agent, created_at=created, trigger_kind=trigger)
 
