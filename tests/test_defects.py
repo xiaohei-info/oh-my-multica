@@ -602,3 +602,58 @@ def test_a_bad_defects_setting_is_refused_instead_of_defaulted(raw):
 
     with pytest.raises(ValidationError):
         resolve_defects({"defects": raw}, 10)
+
+
+def queue_inbox_report(world, **over):
+    """A person's report for ``api``, which is blocked on an unrelated owner decision (not an upstream-defect one)."""
+    other = blocker_decision([defect()])
+    other["blocker"] = {"schema": "omac.worker-blocker/v2", "reason_code": "owner-decision-required"}
+    world.store.items["w-api"].decision_required = other
+    manifest = load_manifest(world.path)
+    manifest.nodes["api"].defect_pending = manifest.nodes["web"].defect_pending = False
+    save_manifest(manifest, world.path)
+    world.manifest = load_manifest(world.path)
+    shell.report_defects(world.manifest, world.path, "api", [{k: v for k, v in defect(**over).items() if k != "repro"}])
+
+
+def test_a_person_reported_defect_for_a_node_blocked_on_another_worker_decision_still_gets_its_fix_node(world):
+    from functools import partial
+
+    from omac.core.amendment import apply_amendment
+
+    queue_inbox_report(world)
+
+    advance(world, apply_system=partial(apply_amendment, recover=recover_to_authoring))
+
+    assert fix_nodes(world)[0] in load_manifest(world.path).nodes["api"].blocked_by
+    assert not world.store.items["w-api"].decision_required
+
+
+def test_an_inbox_report_that_cannot_be_merged_keeps_its_reason_in_the_ledger_and_on_the_blocked_node(world):
+    queue_inbox_report(world)
+    world.store.list_members = lambda workspace: {"carol", "bob"}      # the builder refuses: no agent for the fix node
+
+    advance(world)
+
+    entry = ledger(world)["entries"][fingerprint("lib", ["FLOW-1/ACT-1"])]
+    assert entry["state"] == "needs-owner" and entry["stop"]["reason_code"] == "defect-unroutable"
+    assert "agent pool" in entry["stop"]["detail"]
+    decision = decision_of(world, "w-api")
+    assert decision["reason_code"] == "defect-unroutable" and "agent pool" in decision["detail"]
+    assert decision["blocker"]["reason_code"] == "owner-decision-required"      # the worker's own report stays readable
+
+
+def test_a_stopped_inbox_report_is_logged_once_and_a_grant_queues_it_again(world, monkeypatch):
+    queue_inbox_report(world)
+    world.config = {"defects": {"per_reporter": 0}}
+    logged = []
+    monkeypatch.setattr(shell, "log", SimpleNamespace(info=lambda event, **fields: logged.append(fields["route"])))
+
+    for _ in range(3):
+        advance(world)
+    assert logged == ["defect-budget-exhausted"]
+
+    world.manifest = load_manifest(world.path)
+    shell.grant_budget(world.manifest, world.path, "api", 1)
+    advance(world)
+    assert fix_nodes(world)
