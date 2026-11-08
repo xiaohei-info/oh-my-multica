@@ -8,6 +8,8 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [3.0.1] — 2026-11-08
+
 ### Fixed
 
 - **A tick that changes nothing no longer commits.** The reconcile-audit schedule (`completed_interval_ticks`,
