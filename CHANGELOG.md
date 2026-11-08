@@ -8,6 +8,19 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [3.0.2] — 2026-11-08
+
+### Fixed
+
+- **A person's defect report for a node blocked on another worker decision now gets its fix node.** The system amendment
+  refused such a reporter ("holds an unresolved worker decision"), the report ended as `defect-unroutable`, and the reason
+  was dropped. A system amendment now supersedes the decision of the nodes it recovers.
+- **A stopped defect keeps its reason.** `defect-unroutable` and every other stop write `stop.reason_code` and
+  `stop.detail` on the ledger entry (`omac defect list`) and, for a blocked reporter, into its `decision_required`.
+- **A stopped person's report is logged once.** A report stopped by `defect-budget-exhausted` was re-routed and logged
+  twice per tick (about 2,500 lines in two minutes). It is marked stopped; `omac defect grant` or a new `defect report`
+  queues it again.
+
 ## [3.0.1] — 2026-11-08
 
 ### Fixed

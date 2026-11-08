@@ -112,7 +112,12 @@ def _pending_reports(store, manifest: Manifest, ledger: dict) -> tuple[list[_Rep
         source = "review" if decision.get("gate") == "review" else "worker"
         reports.append(_Report(key, blocker.get("defects"), source, item.id, decision))
     for entry in ledger["inbox"]:
-        reports.append(_Report(entry["reporter"], entry["defects"], "inbox"))
+        if entry.get("stopped"):
+            continue                    # already stopped (and logged) once: `omac defect grant` or a new report re-queues it
+        node = manifest.nodes.get(entry["reporter"])
+        item = store.get_work_item(node.work_item_id) if node and node.status == "blocked" and node.work_item_id else None
+        held = item.decision_required if item is not None and isinstance(item.decision_required, dict) else None
+        reports.append(_Report(entry["reporter"], entry["defects"], "inbox", item.id if held else None, held))
     return reports, stale
 
 
@@ -208,19 +213,25 @@ def _record(ledger: dict, report: _Report, state: str, ctx: _Ctx) -> None:
 
 def _stop(ctx: _Ctx, ledger: dict, report: _Report, route: Route, detail: str | None, decisions: list, flags: dict) -> None:
     actions = render_release(route, ctx.path, report.reporter)
+    reason = (detail or stop_summary(route))[:300]
     if route is Route.RECURRED:
         for fp in report.fps:
             if ledger["entries"].get(fp, {}).get("state") in ("fixed", "recurred"):
                 ledger["entries"][fp]["state"] = "recurred"
     elif route in _CODE_STOPS:
         _record(ledger, report, "needs-owner", ctx)
+    for fp in report.fps:
+        if fp in ledger["entries"]:
+            ledger["entries"][fp]["stop"] = {"reason_code": route.value, "detail": reason}
     if report.item_id is not None:
         decisions.append((report.item_id, {
             **report.decision, "reason_code": route.value, "next_action": actions[0], "alternatives": actions[1:],
-            "detail": (detail or stop_summary(route))[:300]}))
+            "detail": reason}))
         flags[report.reporter] = False
-    elif route is not Route.BUDGET_EXHAUSTED:
-        ledger["inbox"] = [e for e in ledger["inbox"] if e["id"] != _inbox_id(report.reporter, report.defects)]
+    if report.source == "inbox":
+        inbox_id = _inbox_id(report.reporter, report.defects)
+        ledger["inbox"] = [{**e, "stopped": route.value} if e["id"] == inbox_id else e for e in ledger["inbox"]
+                           if route is Route.BUDGET_EXHAUSTED or e["id"] != inbox_id]
     log.info(logsetup.EVT_DEFECT_ROUTED, kind="dag", reporter=report.reporter, route=route.value, fps=report.fps)
 
 
@@ -337,7 +348,8 @@ def advance(engine, manifest: Manifest, path: str, config: dict, *, apply_system
             _record(ledger, report, "queued", ctx)
         else:
             consumed.append(report)
-        log.info(logsetup.EVT_DEFECT_ROUTED, kind="dag", reporter=report.reporter, route=verdict.value, fps=report.fps)
+        if verdict not in STOPS:        # a stop is logged once, by `_stop`
+            log.info(logsetup.EVT_DEFECT_ROUTED, kind="dag", reporter=report.reporter, route=verdict.value, fps=report.fps)
     if ledger != before or decisions or flags:
         _save(manifest, path, ledger, flags, store=engine.store, decisions=decisions)
         changed = True
@@ -450,6 +462,7 @@ def grant_budget(manifest: Manifest, path: str, reporter: str, count: int) -> di
         raise ValidationError(ui(f"Unknown node {reporter!r}", f"未知节点 {reporter!r}"))
     ledger = ledger_of(manifest)
     ledger["granted_by_reporter"][reporter] = ledger["granted_by_reporter"].get(reporter, 0) + count
+    ledger["inbox"] = [{k: v for k, v in e.items() if k != "stopped"} if e["reporter"] == reporter else e for e in ledger["inbox"]]
     effects: list[Any] = [SetDagFact("defects", ledger)]
     if node.status == "blocked" and node.work_item_id:
         effects.append(SetNode(reporter, {"defect_pending": True}))

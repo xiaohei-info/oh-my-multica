@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 import hashlib
 import json
 import shlex
+from collections.abc import Collection
 from typing import Any, Callable
 
 import yaml
@@ -1048,7 +1049,8 @@ def build_reviewed_amendment(
         raise ValidationError(
             "Only a reviewer pass or pass-with-nits can enter human confirmation")
 
-    validate_affected(manifest, proposal, store, consume_defects=bool(system))
+    validate_affected(manifest, proposal, store, consume_defects=bool(system),
+                      reporters=system["reporter_items"] if system else ())
     minimal, derived, immutable = _minimal_rerun(manifest, proposal)
     if immutable:
         raise ValidationError(
@@ -1404,11 +1406,14 @@ def _normalize_recovered_authoring_node(
     return True
 
 
-def validate_affected(manifest: Manifest, proposal: dict[str, Any], store: Any, *, consume_defects: bool = False) -> None:
+def validate_affected(manifest: Manifest, proposal: dict[str, Any], store: Any, *, consume_defects: bool = False,
+                      reporters: Collection[str] = ()) -> None:
     """Fail closed when the derived affected set touches a vanished WorkItem or an unresolved held decision.
 
     The affected set is derived from the operations and the minimal re-run, never from a caller-chosen
     node list, so an amendment cannot reach beyond what its operations imply.
+    ``reporters`` are the nodes a system amendment recovers: whatever they were blocked on (a person's queued defect report
+    can reach a node that holds another worker decision) is superseded by the recovery.
     """
     minimal, _, _ = _minimal_rerun(manifest, proposal)
     affected = set(_changed_node_ids(proposal)) | {n for ids in minimal.values() for n in ids}
@@ -1424,7 +1429,8 @@ def validate_affected(manifest: Manifest, proposal: dict[str, Any], store: Any, 
                 f"`omac node show <manifest> {node_id}` before proposing or accepting this amendment") from exc
         # A system amendment is exactly what consumes an upstream-defect report; every other worker decision still needs a person.
         blocker = decision.get("blocker") if isinstance(decision, dict) else None
-        consumable = consume_defects and isinstance(blocker, dict) and blocker.get("reason_code") == UPSTREAM_DEFECT
+        consumable = node_id in reporters or (
+            consume_defects and isinstance(blocker, dict) and blocker.get("reason_code") == UPSTREAM_DEFECT)
         if isinstance(decision, dict) and decision.get("reason_code") == "worker-decision-required" and not consumable:
             raise ValidationError(
                 f"Affected node {node_id!r} holds an unresolved worker decision; resolve it first "
@@ -1765,7 +1771,8 @@ def _verify_amendment_applicable(current: Manifest, amendment: dict, store: Any,
         errors = system_proposal_errors(current, amendment, (amendment.get("review") or {}).get("reporter_items") or [])
         if errors:
             raise ValidationError("System amendment validation failed:\n  - " + "\n  - ".join(errors))
-    validate_affected(current, amendment, store, consume_defects=system)
+    validate_affected(current, amendment, store, consume_defects=system,
+                      reporters=(amendment.get("review") or {}).get("reporter_items") or ())
     runtime_rebased = _verify_base(current, amendment)
     expected_acceptance = (amendment.get("base") or {}).get("acceptance_sha256")
     if expected_acceptance and _acceptance_digest(acceptance) != expected_acceptance:
