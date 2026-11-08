@@ -11,7 +11,7 @@ from _support.loopkit import contract
 from omac.cli import exit_codes
 from omac.cli.commands import dag
 from omac.cli.main import main
-from omac.core.manifest import Manifest, Node, load_manifest, save_manifest
+from omac.core.manifest import Manifest, Node, load_manifest, read_local_runtime, save_manifest, write_local_runtime
 from omac.core.workitem import WorkItemStatus
 from omac.errors import AuthError, PlatformError
 from omac.pipeline import loop, reconcile_audit
@@ -264,17 +264,22 @@ def test_the_status_report_asks_for_a_full_scan_and_leaves_the_audit_state_alone
     project_scoped(kit)
     static = kit.item("static", status=WorkItemStatus.BLOCKED)
     audit = {"schema": "omac.reconcile-audit/v1", "last_full_scan_at": "2026-08-11T12:00:00Z", "completed_interval_ticks": 1}
-    manifest, path = saved(kit, [linked("static", static, "blocked")], meta={"reconcile_audit": audit})
+    manifest, path = saved(kit, [linked("static", static, "blocked")])
+    write_local_runtime(path, reconcile_audit.RUNTIME_NAME, audit)
     reads = control_reads(kit)
 
     build_status_report(manifest, kit.store, kit.code_host, path)
 
-    assert read_ids(reads) == {static.id} and load_manifest(path).dag_state["reconcile_audit"] == audit
+    assert read_ids(reads) == {static.id} and audit_state(path) == audit
 
 
 # ---- the audit schedule only advances after a tick has fully succeeded ---------------------------------------------
 
 NOW = reconcile_audit.datetime(2026, 8, 11, 12, 0, tzinfo=reconcile_audit.timezone.utc)
+
+
+def audit_state(path):
+    return read_local_runtime(path, reconcile_audit.RUNTIME_NAME)
 
 
 def audit_case(kit, status="blocked"):
@@ -285,7 +290,7 @@ def audit_case(kit, status="blocked"):
 
     def record():
         state["recorded"] = True
-        reconcile_audit.record_successful_tick(manifest, full_scan=True, now=NOW)
+        reconcile_audit.record_successful_tick(path, full_scan=True, now=NOW)
     return manifest, path, state, record
 
 
@@ -299,7 +304,7 @@ def test_a_failed_full_reconcile_does_not_advance_the_audit_state(kit):
     with reads_fail(kit.store, PlatformError("simulated reconcile failure")), pytest.raises(PlatformError, match="simulated reconcile"):
         run_tick(kit, manifest, path, record)
 
-    assert state["recorded"] is False and "reconcile_audit" not in load_manifest(path).dag_state
+    assert state["recorded"] is False and audit_state(path) is None
 
 
 def test_a_full_tick_that_fails_after_reconcile_does_not_advance_the_audit_state(kit):
@@ -312,7 +317,7 @@ def test_a_full_tick_that_fails_after_reconcile_does_not_advance_the_audit_state
     with pytest.raises(PlatformError, match="simulated collect failure"):
         run_tick(kit, manifest, path, record)
 
-    assert state["recorded"] is False and "reconcile_audit" not in load_manifest(path).dag_state
+    assert state["recorded"] is False and audit_state(path) is None
 
 
 def test_a_full_scan_whose_static_reads_fail_is_incomplete_and_stays_scheduled(kit):
@@ -322,8 +327,8 @@ def test_a_full_scan_whose_static_reads_fail_is_incomplete_and_stays_scheduled(k
         result = run_tick(kit, manifest, path, record)
 
     assert result.audit_complete is False and state["recorded"] is False
-    assert "reconcile_audit" not in load_manifest(path).dag_state
-    assert reconcile_audit.should_full_scan(manifest, {"full_scan_interval_ticks": 2, "full_scan_max_age_seconds": 1800}, now=NOW)
+    assert audit_state(path) is None
+    assert reconcile_audit.should_full_scan(path, {"full_scan_interval_ticks": 2, "full_scan_max_age_seconds": 1800}, now=NOW)
 
 
 def test_a_failed_audit_state_write_does_not_advance_the_audit_state(kit):
@@ -335,7 +340,7 @@ def test_a_failed_audit_state_write_does_not_advance_the_audit_state(kit):
     with pytest.raises(PlatformError, match="simulated audit"):
         run_tick(kit, manifest, path, fail_after_success)
 
-    assert "reconcile_audit" not in load_manifest(path).dag_state
+    assert audit_state(path) is None
 
 
 def test_the_audit_state_is_recorded_after_the_needs_decision_report_and_before_the_save(kit):
@@ -348,11 +353,11 @@ def test_the_audit_state_is_recorded_after_the_needs_decision_report_and_before_
 
     def record():
         order.append("hook")
-        assert order == ["report", "hook"] and "reconcile_audit" not in load_manifest(path).dag_state
-        reconcile_audit.record_successful_tick(manifest, full_scan=True, now=NOW)
+        assert order == ["report", "hook"] and audit_state(path) is None
+        reconcile_audit.record_successful_tick(path, full_scan=True, now=NOW)
 
     result = run_tick(kit, manifest, path, record)
 
     assert result.state == "needs_decision" and order == ["report", "hook"]
-    assert load_manifest(path).dag_state["reconcile_audit"] == {
+    assert audit_state(path) == {
         "schema": "omac.reconcile-audit/v1", "last_full_scan_at": "2026-08-11T12:00:00Z", "completed_interval_ticks": 0}

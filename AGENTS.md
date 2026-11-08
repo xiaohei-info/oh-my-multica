@@ -34,7 +34,7 @@
 | 配置 Config | 引擎、workspace、project、角色、重试预算等 | `.omac/config.yaml`，`core/config.py` | 人（`omac init`、`omac config set`）；优先级 文件 < `OMAC_*` 环境变量 < 命令行参数 |
 | Manifest（DAG） | `meta` + 节点定义 | `.omac/<name>.yaml`，`core/manifest.py::Manifest` | 只在 plan / amendment 时由 omac 改写 |
 | 节点 Node | 定义（`id`、`worker`、`blocked_by`、`reviewer`、`gate`、`contract`…）+ 运行时状态 | `core/manifest.py::Node` | 定义见上；运行时状态**只由 omac Loop 写**（单写者锁） |
-| DAG 状态文件 | DAG 级运行时事实（`reconcile_audit`、上游缺陷账本 `defects`、`pending_human_amendment`、`dispatch.hold_live` 已自动挂起过的节点 `auto_held`），不属于定义，不进定义摘要 | `.omac/<name>.state/_dag.yaml`（`Manifest.dag_state`） | omac Loop（经 `SetDagFact`） |
+| DAG 状态文件 | DAG 级运行时事实（上游缺陷账本 `defects`、`pending_human_amendment`、`dispatch.hold_live` 已自动挂起过的节点 `auto_held`），不属于定义，不进定义摘要 | `.omac/<name>.state/_dag.yaml`（`Manifest.dag_state`） | omac Loop（经 `SetDagFact`） |
 | 节点状态文件 | 每节点的运行时事实：`work_item_id`、`status`、`merged`、`merged_at`、`merge_request_state`、`recovery_marker`，挂起节点的 `held`、`hold_reason`，最近一次 `node retry --note` 的 `retry_note`，以及带待路由缺陷报告的 `defect_pending` | `.omac/<name>.state/<node>.yaml`（`_RUNTIME_KEYS`） | omac Loop |
 | 契约 Contract | 目标、验收、非目标、验证命令、集成门、`pr_base`、覆盖率门，以及 3.0 的接口声明（制品的 `provides` / `requires`、`registers`）、`requirement_refs`、`defect_refs`（均可缺省，缺省不序列化） | `core/manifest.py::Contract`，派单时下发到工作项 | orchestrator 产出，经评审与 lint |
 | 工作项 Work item | 平台上的一个 issue，承载一个完整阶段（产出、评审、回退往返都在同一条上） | `core/workitem.py::WorkItem` | omac 只经 `apply` 写；Agent 只经 `omac work submit|block` 提交 |
@@ -214,7 +214,8 @@ DAG 级事实（审计计划、缺陷账本、`pending_human_amendment`、`auto_
 | 效果意图、交接、verdict、证据 | 平台工作项的 metadata 与附件 | 大载荷存附件，manifest 只留引用 + 摘要 |
 | 系统 amendment 文件 | `.omac/<name>.system-amendment.yaml`（本机，不进 git 同步） | 缺陷回流时由代码生成，应用后失效；换机器续跑时没有文件的意图会被撤销并重新路由 |
 | manifest 写锁 | `$TMPDIR/omac-manifest-<hash>.lock`（`fcntl.flock`） | 本机单写者；`dag run --wait-decisions` 等待期间不持锁 |
-| 多机同步 | `origin/main`（`core/gitsync.py`） | 每轮 tick 后提交；不同机器推进不同节点，改不同文件 |
+| 本机运行时数据 | `$TMPDIR/omac-<name>-<hash>.json`（`core/manifest.py::local_runtime_file`，不进 git） | 易变的运维数据（`reconcile-audit` 全量审计排程）；可能丢失，读到缺失或损坏一律按"未知"处理（如强制一次全量审计） |
+| 多机同步 | `origin/main`（`core/gitsync.py`） | tick 后只在 git 跟踪的文件有实质变化时提交并推送；不同机器推进不同节点，改不同文件 |
 
 ## 4. 统一架构词汇表
 
@@ -282,7 +283,10 @@ DAG 级事实（审计计划、缺陷账本、`pending_human_amendment`、`auto_
 5. **Manifest 状态**。每个 manifest 只有一个写者（`core/manifest.py::manifest_write_lock`）。
    运行时状态是每节点一个小文件；`save_manifest` 只重写内容变化的文件；不得新增重写整份状态
    或读取 1.x 单文件 manifest 的代码路径。`meta` 中未知键原样保留。不得在 manifest 中存放无界或大载荷
-   （捕获的源文件、转录、归档），改存附件引用 + 摘要。
+   （捕获的源文件、转录、归档），改存附件引用 + 摘要。git 跟踪的状态文件只放有业务含义的状态（节点、Run、
+   缺陷、决策）；tick 计数、扫描时间这类每轮都变的运维数据放本机运行时数据（`local_runtime_file`）或内存，
+   丢失后能重新推出或安全归零——否则每轮 tick 都会产生一个提交并推到目标分支。移出 git 的旧字段在加载时丢弃
+   （`_HOST_LOCAL_KEYS`），下一次保存把它从 git 中删掉一次。
 
 ### 5.2 命名与目录约定
 
@@ -325,6 +329,11 @@ DAG 级事实（审计计划、缺陷账本、`pending_human_amendment`、`auto_
   同一工作项的 Worker 控制与 Reviewer 派单用本机锁（`worker_control_lock`、`reviewer_dispatch_lock`），
   持锁后仍必须做一次权威读取；这些锁不是平台级 CAS。多机经 `origin/main` 同步；推送冲突只在每个未推送提交
   都只涉及 manifest 定义与状态目录时才自动 rebase（不 rebase 用户业务提交），推送退避 10 s 起、上限 300 s。
+- **sync 失败显性化**（`core/gitsync.py`）：失败按步骤区分并记入 `manifest_sync_failed.step`——`rebase_not_started`
+  （git 拒绝开始 rebase，如工作树有未提交改动；**不得** `rebase --abort`）、`rebase_conflict`（已中止，远程未覆盖）、
+  `rebase_abort`、`push` / `push_retry`（推送被拒或网络）、`fetch`、`upstream`、`safety`。同一步骤连续失败直到退避
+  封顶时，`commit_manifest` raise `NeedsDecision`（exit 20），消息带 git 原始错误与可复制的修复命令；不得只打
+  warning 继续循环。计数在进程内：`dag run` 会停下，每次一个进程的 `dag tick` 只会逐次告警。
 - **超时与预算**：默认值以 `core/config.py` 和设计 §6 为准；新的超时或预算必须可配置并写进设计 §6，不能散落魔法数。
 
 ### 5.5 确定性代码 vs 模型

@@ -1,16 +1,18 @@
-"""Persisted scheduling for periodic full reconcile audits."""
+"""Scheduling for periodic full reconcile audits.
+
+The schedule (last full scan, ticks since) is volatile operational data: it lives in a host-local runtime file,
+never in git, so a tick that changes nothing else commits nothing. A lost file only forces one early full scan.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from ..core.manifest import Manifest
-from .apply import ManifestState, Ports, apply_one
-from .decide_effects import SetDagFact
+from ..core.manifest import read_local_runtime, write_local_runtime
 
 
-META_KEY = "reconcile_audit"
+RUNTIME_NAME = "reconcile-audit"
 SCHEMA = "omac.reconcile-audit/v1"
 
 
@@ -21,7 +23,7 @@ class AuditState:
 
 
 def should_full_scan(
-    manifest: Manifest,
+    manifest_path: str,
     config: dict,
     *,
     now: datetime | None = None,
@@ -33,7 +35,7 @@ def should_full_scan(
     write from silently delaying an audit.
     """
     current = _utc_now(now)
-    state = _load_state(manifest.dag_state.get(META_KEY))
+    state = _load_state(read_local_runtime(manifest_path, RUNTIME_NAME))
     if state is None or state.last_full_scan_at > current:
         return True
     if state.completed_interval_ticks >= config["full_scan_interval_ticks"]:
@@ -43,7 +45,7 @@ def should_full_scan(
 
 
 def record_successful_tick(
-    manifest: Manifest,
+    manifest_path: str,
     *,
     full_scan: bool,
     now: datetime | None = None,
@@ -51,20 +53,20 @@ def record_successful_tick(
     """Record a completed runner tick after every tick phase has succeeded."""
     current = _utc_now(now)
     if full_scan:
-        _record(manifest, _format_utc(current), 0)
+        _record(manifest_path, _format_utc(current), 0)
         return
 
-    state = _load_state(manifest.dag_state.get(META_KEY))
+    state = _load_state(read_local_runtime(manifest_path, RUNTIME_NAME))
     if state is None:
         # The caller should have selected a full scan. Retain the bad state so
         # a restart fails closed and schedules one instead of inventing facts.
         return
-    _record(manifest, _format_utc(state.last_full_scan_at), state.completed_interval_ticks + 1)
+    _record(manifest_path, _format_utc(state.last_full_scan_at), state.completed_interval_ticks + 1)
 
 
-def _record(manifest: Manifest, last_full_scan_at: str, completed_interval_ticks: int) -> None:
+def _record(manifest_path: str, last_full_scan_at: str, completed_interval_ticks: int) -> None:
     fact = {"schema": SCHEMA, "last_full_scan_at": last_full_scan_at, "completed_interval_ticks": completed_interval_ticks}
-    apply_one(SetDagFact(META_KEY, fact), Ports(), ManifestState(manifest, None))
+    write_local_runtime(manifest_path, RUNTIME_NAME, fact)
 
 
 def _load_state(raw: Any) -> AuditState | None:

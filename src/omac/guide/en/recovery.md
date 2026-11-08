@@ -294,7 +294,11 @@ When `commit_manifest` cannot push, OMAC keeps the local manifest commit and
 uses exponential backoff for that repository/path (10 seconds initially, capped
 at 5 minutes). Calls inside the window do not issue another push or warning.
 Remote lag remains an explicit sync warning rather than a false synced state;
-a successful push clears the backoff.
+a successful push clears the backoff. When the same `step` keeps failing until
+the backoff reaches its cap, `dag run` stops with exit 20 and prints git's error
+and repair commands. `rebase_not_started` means git never started the rebase
+(usually uncommitted changes in the working tree; OMAC does not abort anything):
+run `git status`, commit or stash the changes, `git push`, then rerun the command.
 
 ## Controlled amendment of a running DAG
 

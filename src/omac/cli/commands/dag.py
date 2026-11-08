@@ -770,15 +770,15 @@ def _scheduled_tick(
     retry_limits: dict,
     config: dict,
 ):
-    """Run one tick with P3's persisted, explicit full-scan selection."""
+    """Run one tick with P3's explicit full-scan selection (schedule kept host-local, see reconcile_audit)."""
     def one_tick():
-        full_scan = should_full_scan(manifest, resolve_reconcile(config))
+        full_scan = should_full_scan(manifest_path, resolve_reconcile(config))
         return tick(
             engine.store, engine.runtime, engine.code_host, manifest, manifest_path,
             max_parallel=max_parallel, retry_limits=retry_limits, config=config,
             full_scan=full_scan,
             after_successful_tick=lambda: record_successful_tick(
-                manifest, full_scan=full_scan),
+                manifest_path, full_scan=full_scan),
         )
 
     result = one_tick()

@@ -5,6 +5,7 @@ import copy
 from enum import Enum
 import fcntl
 import hashlib
+import json
 import os
 import re
 import stat
@@ -346,10 +347,11 @@ def clear_confirmed_merge(node: Node) -> None:
 
 SCHEMA_VERSION = 3  # meta.omac_schema this release writes; a higher one is refused rather than half-read
 DAG_STATE_FILE = "_dag.yaml"  # `_` cannot start a node id, so it never collides with a node state file
-# meta keys that are runtime facts: they never enter a definition digest (core/amendment.py) and, once they
-# have a home in DAG state, are migrated out of the definition file on load.
+# meta keys that are runtime facts: they never enter a definition digest (core/amendment.py).
 RUNTIME_META_KEYS = frozenset({"amendment_apply", "reconcile_audit"})
-_DAG_STATE_META_KEYS = ("reconcile_audit",)
+# Volatile operational data that once lived in git (2.x meta, 3.0 ``_dag.yaml``) and now is host-local
+# (``local_runtime_file``): dropped on load, so the next save removes it from git once.
+_HOST_LOCAL_KEYS = ("reconcile_audit",)
 
 
 @dataclass
@@ -535,9 +537,9 @@ def load_manifest(path: str) -> Manifest:
     dag_path = os.path.join(directory, DAG_STATE_FILE)
     on_disk = _read_state_file(dag_path) if os.path.exists(dag_path) else {}
     manifest.dag_state = copy.deepcopy(on_disk)
-    for key in _DAG_STATE_META_KEYS:  # 2.x kept these in meta: move them once; the next save rewrites the definition
-        if key in manifest.meta:
-            manifest.dag_state.setdefault(key, manifest.meta.pop(key))
+    for key in _HOST_LOCAL_KEYS:
+        manifest.meta.pop(key, None)
+        manifest.dag_state.pop(key, None)
     inline = any(any(k in n for k in _RUNTIME_KEYS) for n in raw.get("nodes", []))
     manifest._disk = {"path": target, "def": None if inline else plain, "state": states, "dag": on_disk}
     return manifest
@@ -653,6 +655,27 @@ def save_manifest(manifest: Manifest, path: str):
         _fsync_dir(changed)
     manifest._disk = {"path": target, "def": copy.deepcopy(definition), "state": copy.deepcopy(states),
                       "dag": copy.deepcopy(manifest.dag_state)}
+
+
+def local_runtime_file(path: str, name: str) -> str:
+    """Host-local runtime data for this manifest, never in git (beside the write lock).
+
+    It may vanish (reboot, temp cleanup), so a reader treats a missing or unreadable file as unknown.
+    """
+    key = hashlib.sha256(_canonical_manifest_target(path).encode("utf-8")).hexdigest()[:24]
+    return os.path.join(tempfile.gettempdir(), f"omac-{name}-{key}.json")
+
+
+def read_local_runtime(path: str, name: str):
+    try:
+        with open(local_runtime_file(path, name), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def write_local_runtime(path: str, name: str, data) -> None:
+    _atomic_write(local_runtime_file(path, name), json.dumps(data, sort_keys=True).encode("utf-8"))
 
 
 @contextmanager
