@@ -206,7 +206,9 @@ omac plan resume --plan-id p-xxxx
 
 `commit_manifest` 的 push 失败时，OMAC 先保留本地 manifest commit，并对同一仓库/路径
 使用 10 秒起、最多 5 分钟的指数退避；退避窗口内不重复发起 push 或刷屏。远端暂时落后
-是显式同步告警，不会伪造已同步状态；恢复后成功 push 会清除退避状态。
+是显式同步告警，不会伪造已同步状态；恢复后成功 push 会清除退避状态。同一步骤（`step`）连续失败到退避封顶时，
+`dag run` 以 exit 20 停下，消息里有 git 原始错误与修复命令；`rebase_not_started` 表示 git 没开始 rebase
+（通常是工作树有未提交改动，OMAC 不会 abort），先 `git status` 提交或暂存改动，`git push` 后重跑同一命令。
 
 ## 运行中 DAG 的受控 amendment
 

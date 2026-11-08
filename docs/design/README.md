@@ -61,7 +61,7 @@ A DAG is two things on disk, both plain text, both committed to git:
 ```
 .omac/<name>.yaml            DAG definition: meta + node definitions. Changes only on plan and amendment.
 .omac/<name>.state/<node>.yaml   One file per node: work_item_id, status, merge facts. A few hundred bytes.
-.omac/<name>.state/_dag.yaml     DAG-level runtime facts (the reconcile-audit schedule, the defect ledger, a pending human amendment, the live nodes the Loop already held). Written only by the Loop; absent until there is one.
+.omac/<name>.state/_dag.yaml     DAG-level runtime facts (the defect ledger, a pending human amendment, the live nodes the Loop already held). Written only by the Loop; absent until there is one.
 ```
 
 The definition digest (`core/amendment.py::manifest_definition_digest`) leaves out every runtime `meta` key
@@ -69,8 +69,11 @@ The definition digest (`core/amendment.py::manifest_definition_digest`) leaves o
 base. `meta.omac_schema` is the schema a release writes (3 in 3.0); an older omac refuses a higher value instead of
 silently dropping fields. A long-running `dag run` compares the definition file with what it last wrote at the start of
 every tick and reloads it when someone else edited it (`node retry --worker`), so a save never puts a stale definition
-back. A 2.x manifest that still holds `meta.reconcile_audit` is migrated into `_dag.yaml` on load; the next save rewrites
-its definition file once.
+back. Git carries only state with business meaning: node, Run, defect and decision facts. Volatile operational data (the
+reconcile-audit schedule: last full scan, ticks since) is host-local (`core/manifest.py::local_runtime_file`, beside the
+write lock in `$TMPDIR`), so a tick that changes nothing commits and pushes nothing; a lost file only forces one early full
+scan. A manifest that still holds `reconcile_audit` (2.x `meta`, 3.0 `_dag.yaml`) drops it on load; the next save removes
+it from git once.
 
 * **Incremental atomic writes.** `save_manifest` compares each file's content with what the last load/save left on disk
   and rewrites only what changed: write a temporary file in the same directory, `fsync`, `os.replace`. Node state files
@@ -80,8 +83,12 @@ its definition file once.
   merge) is refused with the file path and `git checkout -- <file>`.
 * **Sync through `origin/main`.** `core/gitsync.py` commits the definition and the state directory after each tick.
   Machines advancing different nodes touch different files, so git merges them without conflict; a conflicting push
-  is rebased only when every unpushed commit touches nothing but those files. Known limit (3.0): `_dag.yaml` is one file, so
-  two machines that both tick change it (the audit schedule) and can conflict on rebase; the system-amendment file
+  is rebased only when every unpushed commit touches nothing but those files. A failed sync names its step: `fetch`,
+  `upstream`, `safety` (user commits or a moving HEAD), `rebase_not_started` (git refused to start, e.g. uncommitted
+  changes; nothing is aborted), `rebase_conflict` (aborted, remote untouched), `rebase_abort`, `push` / `push_retry`. The
+  local commit is kept and the push backs off (10 s doubling to 300 s); when the same step keeps failing until the backoff
+  sits at its cap, the tick raises `NeedsDecision` (exit 20) with the step, git's error and repair commands instead of
+  warning forever. The count is per process: one `dag tick` per process warns each time. The system-amendment file
   (`.omac/<name>.system-amendment.yaml`, 7.5) is local and not synced.
 * **Bounded size.** A node's state file is limited to 64 KiB at save time (the error says to keep large payloads as
   platform attachments). The definition holds no run history; the amendment ledger in `meta` is replaced per amendment.

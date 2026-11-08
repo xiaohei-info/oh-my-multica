@@ -628,7 +628,7 @@ class TestCommitManifest:
             ".omac/m.yaml", "local manifest", repo_root=str(work),
             engine_type="multica") is True
 
-        assert warnings[-1][1]["step"] == "rebase"
+        assert warnings[-1][1]["step"] == "rebase_conflict"
         assert not (work / ".git" / "rebase-merge").exists()
         assert not (work / ".git" / "rebase-apply").exists()
         assert manifest.read_text() == "state: local\n"
@@ -638,9 +638,50 @@ class TestCommitManifest:
             capture_output=True, text=True, check=True).stdout
         assert remote_manifest == "state: remote\n"
 
-    def test_rebase_abort_failure_is_reported(self, monkeypatch):
+    def test_dirty_worktree_rebase_is_not_aborted_and_repeated_failure_stops(
+            self, tmp_path, monkeypatch):
+        """Regression: git refused to start the rebase (uncommitted changes), OMAC still ran `rebase --abort`,
+        logged 'no rebase in progress' as a warning and the Loop ran on for hours with nothing pushed."""
+        monkeypatch.delenv("OMAC_GIT_SYNC", raising=False)
+        work = _make_repo(tmp_path)
+        manifest = work / ".omac" / "m.yaml"
+        manifest.parent.mkdir()
+        manifest.write_text("state: 0\n")
+        assert commit_manifest(".omac/m.yaml", "initial manifest", repo_root=str(work), engine_type="multica")
+        other = tmp_path / "other"
+        subprocess.run(["git", "clone", str(tmp_path / "remote.git"), str(other)],
+                       check=True, capture_output=True, text=True)
+        _git(other, "config", "user.email", "o@o")
+        _git(other, "config", "user.name", "o")
+        _git(other, "checkout", "main")
+        (other / "OTHER").write_text("merged code")
+        _git(other, "add", "OTHER")
+        _git(other, "commit", "-m", "merge worker pr")
+        _git(other, "push", "origin", "main")
+        (work / "README").write_text("uncommitted user edit")      # git now refuses to start a rebase
+        now = [1000.0]
+        monkeypatch.setattr(gitsync.time, "monotonic", lambda: now[0])
+        warnings = []
+        monkeypatch.setattr(
+            "omac.core.gitsync.log.warning", lambda event, **kwargs: warnings.append((event, kwargs)))
+
+        with pytest.raises(NeedsDecision) as stopped:
+            for attempt in range(1, 20):
+                manifest.write_text(f"state: {attempt}\n")
+                commit_manifest(".omac/m.yaml", "manifest sync", repo_root=str(work), engine_type="multica")
+                now[0] += gitsync._PUSH_RETRY_MAX_SECONDS   # past every backoff window
+        assert {kwargs["step"] for _, kwargs in warnings} == {"rebase_not_started"}
+        assert stopped.value.report["step"] == "rebase_not_started"
+        assert "git -C" in str(stopped.value) and stopped.value.exit_code == 20
+        assert (work / "README").read_text() == "uncommitted user edit"
+        assert not (work / ".git" / "rebase-merge").exists() and not (work / ".git" / "rebase-apply").exists()
+
+    def test_rebase_abort_failure_is_reported(self, monkeypatch, tmp_path):
         """abort 失败时不能误报已恢复,必须暴露人工修复信号。"""
+        (tmp_path / "rebase-merge").mkdir()                       # a rebase did start
         responses = {
+            ("rev-parse", "--git-path", "rebase-merge"):
+                subprocess.CompletedProcess([], 0, f"{tmp_path / 'rebase-merge'}\n", ""),
             ("fetch", "--quiet"): subprocess.CompletedProcess([], 0, "", ""),
             ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"):
                 subprocess.CompletedProcess([], 0, "origin/main\n", ""),

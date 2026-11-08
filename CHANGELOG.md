@@ -8,6 +8,18 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A tick that changes nothing no longer commits.** The reconcile-audit schedule (`completed_interval_ticks`,
+  `last_full_scan_at`) changed on every tick and was committed and pushed as `chore(omac): manifest sync`, thousands of
+  times a day. It is now host-local runtime data outside git; a lost file forces one early full scan. A running DAG reads
+  as before: the old `reconcile_audit` field is dropped on load and the next save removes it from git once.
+- **A stuck git sync stops the loop.** When git refused to start the rebase (uncommitted changes), OMAC still ran
+  `rebase --abort`, logged `no rebase in progress` and kept ticking with nothing pushed. Sync failures now name their step
+  (`rebase_not_started`, `rebase_conflict`, `rebase_abort`, `push`, `push_retry`, ...); a rebase that never started is
+  not aborted, and when the same step keeps failing until the push backoff reaches its 5-minute cap, `dag run` exits 20
+  with git's error and repair commands.
+
 ## [3.0.0] — 2026-11-06
 
 A major release. Exit codes, existing `--output json` fields (only additions), the three ports and the `ignore_imports`
