@@ -1,6 +1,9 @@
 """Upstream-defect feedback on a real Multica: the system amendment really recovers the reporter's authoring stage
 (clears its ``decision_required``, back to todo), and a crash around that apply leaves exactly one fix node.
 (Routing, budgets and the amendment whitelist are pure functions: tests/test_defects.py.)"""
+import json
+import shlex
+
 import pytest
 import yaml
 
@@ -126,3 +129,19 @@ def test_s15_a_crash_around_the_system_amendment_leaves_exactly_one_fix_node_and
     assert "applying" not in ledger and ledger["used_global"] == 1 and ledger["entries"][case.fp]["state"] == "fixing"
     assert (on_disk.nodes["api"].status, on_disk.nodes["api"].defect_pending) == ("todo", False)
     assert case.api.status == WorkItemStatus.TODO and not case.api.decision_required
+
+
+def test_a_stopped_defect_is_closed_with_resolve_and_the_printed_retry_command_restarts_the_reporter(case):
+    shell.advance(case.kit.engine, case.manifest, case.path, {"defects": {"auto_fix": "off"}})
+    assert case.api.decision_required["reason_code"] == "defect-needs-owner"
+
+    resolved = case.kit.project.omac("defect", "resolve", case.path, case.fp, "--pr", "https://example.test/pr/1")
+    assert resolved.returncode == 0, resolved.stderr
+    retry = json.loads(resolved.stdout)["next_actions"][0]
+    words = shlex.split(retry)
+    assert words[:3] == ["omac", "node", "retry"]
+    assert case.kit.project.omac(*words[1:]).returncode == 0
+
+    on_disk = load_manifest(case.path)
+    assert shell.ledger_of(on_disk)["entries"][case.fp]["state"] == "fixed" and on_disk.nodes["api"].status == "todo"
+    assert case.fix_nodes() == []

@@ -1,4 +1,4 @@
-"""omac defect — the operator's side of upstream-defect feedback (list / report / grant)."""
+"""omac defect — the operator's side of upstream-defect feedback (list / report / grant / resolve)."""
 from __future__ import annotations
 
 import os
@@ -10,10 +10,10 @@ from ..output import add_output_flag, hint, print_json
 from ...core.manifest import load_manifest, manifest_write_lock
 from ...errors import ValidationError
 from ...i18n import ui
-from ...pipeline.defects import describe, grant_budget, report_defects
+from ...pipeline.defects import describe, grant_budget, report_defects, resolve_defect
 
 NAME = "defect"
-SUMMARY = "上游缺陷回流:查看账本(list)、人工上报(report)、补充自动修复预算(grant)"
+SUMMARY = "上游缺陷回流:查看账本(list)、人工上报(report)、补充自动修复预算(grant)、登记 OMAC 之外已合并的修复(resolve)"
 DESCRIPTION = """上游缺陷回流的人工入口。Worker / Reviewer 发现"设计已写明、上游漏做"时由 `omac work block`
 上报;`dag run` 在两轮 tick 之间校验、指纹去重、扣预算,再用系统 amendment 插入修复节点并让报告者等它。
 
@@ -22,8 +22,9 @@ DESCRIPTION = """上游缺陷回流的人工入口。Worker / Reviewer 发现"�
   report  人工上报:--before <节点> 之前必须先修的缺陷(YAML,与 worker-blocker 的 defects 同形,repro 可省略);
           校验通过后排队,下次 `omac dag run` 路由
   grant   给报告者补充自动修复次数,并让它已停止的报告重新进入路由
+  resolve 登记 OMAC 之外已合并的修复:--pr <url> 把该指纹标为 fixed(之后不会再为它插修复节点),并打印收尾命令
 
-预算:defects.per_reporter(每报告者)、defects.max_auto_fixes(全局)、defects.auto_fix=off 关闭自动修复。
+预算:defects.per_reporter(每报告者)、defects.max_auto_fixes(全局)、defects.per_suspected(同一疑似节点)、defects.auto_fix=off 关闭自动修复。
 修复节点自己再上报缺陷、同一缺陷在修复合并后复发、预算用尽,都会停在 exit 20,报告里给出可复制的放行命令。
 """
 
@@ -44,6 +45,11 @@ def register(parser):
     grant.add_argument("manifest", help=ui("Manifest file path", "manifest 文件路径"))
     grant.add_argument("--reporter", required=True, help=ui("Reporter node id", "报告者节点 id"))
     grant.add_argument("--count", type=int, default=1, help=ui("How many fixes to add (default 1)", "补充次数(默认 1)"))
+
+    resolve = sub.add_parser("resolve", help=ui("Record a fix merged outside OMAC: the fingerprint becomes fixed", "登记 OMAC 之外已合并的修复:该指纹标为 fixed"))
+    resolve.add_argument("manifest", help=ui("Manifest file path", "manifest 文件路径"))
+    resolve.add_argument("fingerprint", help=ui("Defect fingerprint (see `omac defect list`)", "缺陷指纹(见 `omac defect list`)"))
+    resolve.add_argument("--pr", required=True, help=ui("URL of the merged fix PR", "已合并修复 PR 的 URL"))
 
 
 def _manifest(path):
@@ -69,6 +75,8 @@ def run(args) -> int:
         manifest = _manifest(args.manifest)
         if args.action == "report":
             result = report_defects(manifest, args.manifest, args.before, _read_defects(args.report_file))
+        elif args.action == "resolve":
+            result = resolve_defect(manifest, args.manifest, args.fingerprint, args.pr)
         else:
             if args.count < 1:
                 raise ValidationError(ui("--count must be at least 1", "--count 至少为 1"))

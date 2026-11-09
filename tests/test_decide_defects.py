@@ -12,7 +12,8 @@ from omac.pipeline.decide_defects import (
 
 BASE = DefectFacts(
     auto_fix="design-gap", unroutable=None, defect_class="design-gap", reporter_generation=0, state=None,
-    human_amendment_pending=False, inflight_other_fix=False, done_other_fix=False, budget_left=True)
+    human_amendment_pending=False, inflight_other_fix=False, done_other_fix=False, other_fix_after_run=None,
+    fixed_on_suspected=0, suspected_fix_cap=2, budget_left=True)
 
 ROWS = [   # (facts that make exactly this row the first match, route)
     (dict(auto_fix="off"), Route.NEEDS_OWNER),
@@ -26,7 +27,9 @@ ROWS = [   # (facts that make exactly this row the first match, route)
     (dict(state="fixing"), Route.ATTACH),
     (dict(state="applying"), Route.ATTACH),
     (dict(inflight_other_fix=True), Route.QUEUED),
-    (dict(done_other_fix=True), Route.RETRY_AFTER_FIX),
+    (dict(done_other_fix=True, other_fix_after_run=True), Route.RETRY_AFTER_FIX),     # the fix is newer than the failed run
+    (dict(done_other_fix=True, other_fix_after_run=None), Route.RETRY_AFTER_FIX),     # times unknown: the old behaviour
+    (dict(fixed_on_suspected=2), Route.NODE_FIX_CAP),
     (dict(budget_left=False), Route.BUDGET_EXHAUSTED),                          # S5
     (dict(human_amendment_pending=True), Route.QUEUED),
     (dict(), Route.AUTO_FIX),
@@ -44,12 +47,24 @@ def test_every_row_of_the_table_is_reached_by_some_facts():
 
 
 def test_the_table_is_closed_every_combination_of_facts_has_a_route():
-    for auto, unroutable, klass, generation, state, human, inflight, done, budget in itertools.product(
+    for auto, unroutable, klass, generation, state, human, inflight, done, after, fixed, budget in itertools.product(
             ("off", "design-gap"), (None, "why"), ("design-gap", "tradeoff"), (0, 1),
             (None, "queued", "applying", "fixing", "fixed", "recurred", "needs-owner"),
-            (False, True), (False, True), (False, True), (False, True)):
-        facts = DefectFacts(auto, unroutable, klass, generation, state, human, inflight, done, budget)
+            (False, True), (False, True), (False, True), (None, False, True), (0, 2), (False, True)):
+        facts = DefectFacts(auto, unroutable, klass, generation, state, human, inflight, done, after, fixed, 2, budget)
         assert isinstance(decide_defect(facts), Route)
+
+
+def test_a_merged_fix_older_than_the_failed_run_is_not_retried_and_a_new_fix_is_inserted():
+    stale = replace(BASE, done_other_fix=True, other_fix_after_run=False, fixed_on_suspected=1)
+    assert decide_defect(stale) is Route.AUTO_FIX
+    assert decide_defect(replace(stale, budget_left=False)) is Route.BUDGET_EXHAUSTED
+
+
+def test_a_suspected_node_at_its_fix_cap_stops_instead_of_getting_another_fix_node():
+    capped = replace(BASE, done_other_fix=True, other_fix_after_run=False, fixed_on_suspected=2)
+    assert decide_defect(capped) is Route.NODE_FIX_CAP and Route.NODE_FIX_CAP in STOPS
+    assert decide_defect(replace(capped, other_fix_after_run=True)) is Route.RETRY_AFTER_FIX       # a retry adds no node
 
 
 def test_an_unknown_ledger_state_is_refused_not_routed():

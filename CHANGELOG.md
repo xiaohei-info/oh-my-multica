@@ -8,6 +8,12 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Upstream defects: a new fingerprint is rerun against a merged fix of the same node only when that fix was merged after the
+  reporter's newest Run started; an older fix gets a new fix node instead. `defects.per_suspected` (default 2) stops further
+  automatic fixes of one node (`defect-node-fix-cap`); `omac defect resolve` records a fix merged outside OMAC.
+
 ## [3.0.5] — 2026-11-09
 
 ### Fixed

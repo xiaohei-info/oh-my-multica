@@ -50,7 +50,9 @@
 Worker（或所有 blocker 的 `owner` 都指向已完成上游的 Reviewer）上报 `upstream-defect` 后，持锁的 `omac dag run|tick`
 在两轮 tick 之间路由它：`defects.auto_fix: design-gap`（默认；`off` 关闭）下，`design-gap` 类缺陷会插入一个 `fix.*` 修复节点，
 报告者的 `blocked_by` 加上它，修复合并后报告者自然就绪；这是一次由代码生成的系统 amendment，不经 Agent 评审也不需要人确认。
-预算：`defects.per_reporter`（默认 2）、`defects.max_auto_fixes`（默认 `auto` = max(5, ⌈0.15×节点数⌉)）。
+预算：`defects.per_reporter`（默认 2）、`defects.max_auto_fixes`（默认 `auto` = max(5, ⌈0.15×节点数⌉)）、`defects.per_suspected`（默认 2：同一疑似节点最多自动修几次）。
+
+同一节点已有合并的修复时，新指纹只有在该修复合并于「报告者最新一次 Run 开始之后」才会让报告者重跑一次（`retry-after-fix`）；更早合并的修复已包含在失败的那次运行里，重跑必然同样失败，此时按预算插入新的修复节点。读不到 Run 开始时间或修复合并时间时保持重跑，日志写明原因（`retry-after-fix-unverified`）。之所以比较时间，是因为修复的合并提交与 Run 的基线提交都没有被记录。
 
 无法自动处理时 `dag run` 以 exit 20 停下，报告的 `next_actions` 给出可复制的放行命令。停止原因：
 
@@ -60,12 +62,14 @@ Worker（或所有 blocker 的 `owner` 都指向已完成上游的 Reviewer）�
 | `defect-unroutable` | 报告无法落到已完成的上游节点或锚点 | 同上；先核对报告里的 `suspected_node` 与 `anchors` |
 | `defect-fix-generation-cap` | 修复节点自己又上报了缺陷；修复节点不会被自动再修 | 同上 |
 | `defect-recurred` | 同一缺陷（疑似节点 + 锚点）在修复合并后再次出现 | 先 `dag amend propose` 或 `node retry`，或 `abandon|accept` |
+| `defect-node-fix-cap` | 疑似节点已有 `defects.per_suspected` 个合并的修复，不再自动追加 | `dag amend propose`，或 `node abandon|accept|retry` |
 | `defect-budget-exhausted` | 报告者或整个 DAG 的自动修复预算用完 | `omac defect grant <manifest> --reporter <节点> --count 1` 追加后继续，或同上 |
 
 - `omac defect list <manifest> [--output json]`：只读，缺陷账本（指纹状态 `queued → applying → fixing → fixed → recurred | needs-owner`）、
   预算使用、待路由报告和 `pending_human_amendment`。
 - `omac defect report <manifest> --before <节点> --report-file <缺陷.yaml>`：人工上报（最多 5 条排队），与 Worker 的 `defects` 同形，`repro` 可省略。
 - `omac defect grant <manifest> --reporter <节点> [--count N]`：追加报告者的自动修复次数并重新路由其停止的报告。
+- `omac defect resolve <manifest> <指纹> --pr <url>`：登记 OMAC 之外已合并的修复，指纹变为 `fixed`（无修复节点，计入 `per_suspected`，不会成为重跑对象），并为每个 blocked 报告者打印收尾的 `omac node retry`。
 - 有待确认的人工 amendment 时，缺陷只排队（`queued`），不改 DAG；先 `dag amend accept` 或丢弃该提案。
 - 最终验收失败的 flow 的增量拆解也走系统 amendment；同一 flow 修过后再失败会停止循环，列出未通过项。
 - 已知限制：验收外层循环的内层 tick 不路由缺陷，增量节点上的上报会 exit 20，下一次 `omac dag run` 才路由；系统 amendment 文件只在本机。

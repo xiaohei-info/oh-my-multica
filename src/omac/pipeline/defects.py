@@ -14,9 +14,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+
+from datetime import datetime
 
 from ..core import logsetup
 from ..core.amendment import _node_dict, build_system_amendment
@@ -27,15 +30,16 @@ from ..core.defects import (
     new_ledger, reporter_left, routing_problem,
 )
 from ..core.manifest import Manifest, adopt_disk
-from ..errors import NeedsDecision, ValidationError
+from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import ui
 from .amendment import _acceptance_for_manifest, _write_yaml_atomic, apply_amendment, load_amendment_file
 from .apply import ManifestState, Ports, apply
 from .decide_defects import DefectFacts, Route, STOPS, decide_defect, decide_report, render_release, stop_summary
 from .decide_effects import SaveState, SetDagFact, SetNode, UpdateMetadata
+from .decide_runs import parse_platform_time
 
 log = logsetup.get_logger(__name__)
-_CODE_STOPS = {Route.NEEDS_OWNER, Route.UNROUTABLE, Route.GENERATION_CAP}
+_CODE_STOPS = {Route.NEEDS_OWNER, Route.UNROUTABLE, Route.GENERATION_CAP, Route.NODE_FIX_CAP}
 
 
 def system_amendment_path(manifest_path: str) -> str:
@@ -134,6 +138,8 @@ def _facts(ctx: "_Ctx", ledger: dict, report: _Report, defect: dict, fp: str, pa
     reporter_ok = (group is not None and report.reporter in group["reporters"]) or (
         reporter_left(ledger, report.reporter, cfg["per_reporter"]) - pass_.charges.get(report.reporter, 0) > 0)
     reporter_node = manifest.nodes.get(report.reporter)
+    fixed_others = [e for e in others if e["state"] == "fixed" and e.get("fix_node")]      # a fix node the reporter can wait for
+    done = not entry.get("retried") and bool(fixed_others)
     return DefectFacts(
         auto_fix=cfg["auto_fix"],
         unroutable=routing_problem(defect, report.reporter, manifest, anchors),
@@ -142,8 +148,50 @@ def _facts(ctx: "_Ctx", ledger: dict, report: _Report, defect: dict, fp: str, pa
         state=state,
         human_amendment_pending=ctx.human_pending,
         inflight_other_fix=any(e["state"] in ("applying", "fixing") for e in others),
-        done_other_fix=(not entry.get("retried") and any(e["state"] == "fixed" for e in others)),
+        done_other_fix=done,
+        other_fix_after_run=_other_fix_after_run(ctx, report.reporter, fixed_others) if done else None,
+        fixed_on_suspected=len({e.get("fix_node") or other for other, e in ledger["entries"].items()
+                                if other != fp and e.get("suspected") == suspected and e["state"] == "fixed"}),
+        suspected_fix_cap=cfg["per_suspected"],
         budget_left=reporter_ok and (group is not None or ledger["used_global"] + len(pass_.groups) < cfg["max_auto_fixes"]))
+
+
+def _newest_run_start(ctx: "_Ctx", reporter: str) -> datetime | None:
+    """When the reporter's newest Run started (the Run its report rests on); None when it cannot be read."""
+    if reporter in ctx.run_started:
+        return ctx.run_started[reporter]
+    node, started = ctx.manifest.nodes.get(reporter), None
+    runtime = ctx.engine.runtime
+    if node is not None and node.work_item_id and runtime is not None:
+        try:
+            times = [parse_platform_time(run.created_at) for run in runtime.list_runs(node.work_item_id)]
+        except PlatformError as exc:    # a read that fails must not change the route: unknown keeps the old behaviour
+            log.info(logsetup.EVT_DEFECT_ROUTED, kind="dag", reporter=reporter, route="run-time-unreadable", error=str(exc)[:200])
+            times = []
+        started = max((t for t in times if t is not None and t.tzinfo is not None), default=None)
+    ctx.run_started[reporter] = started
+    return started
+
+
+def _other_fix_after_run(ctx: "_Ctx", reporter: str, fixed: list[dict]) -> bool | None:
+    """Was a merged fix of the same node merged after the reporter's newest Run began? None when a time is unknown.
+
+    shortcut: time comparison only; neither the fix's merge commit nor the Run's base commit is recorded, so ancestry
+    cannot be asked. Upgrade when the code host port can return a PR's merge commit.
+    """
+    started = _newest_run_start(ctx, reporter)
+    merged = [parse_platform_time(getattr(ctx.manifest.nodes.get(e["fix_node"]), "merged_at", None)) for e in fixed]
+    merged = [m if m is None or m.tzinfo is not None else None for m in merged]
+    if started is None or all(m is None for m in merged):
+        reason = "the reporter's Run start" if started is None else "the fix's merge time"
+        log.info(logsetup.EVT_DEFECT_ROUTED, kind="dag", reporter=reporter, route="retry-after-fix-unverified",
+                 reason=f"{reason} is unknown; keeping the retry")
+        return None
+    if any(m is not None and m > started for m in merged):
+        return True
+    if any(m is None for m in merged):
+        return None
+    return False
 
 
 @dataclass
@@ -157,6 +205,7 @@ class _Ctx:
     anchors: set
     human_pending: bool
     apply_system: Callable[..., Any]
+    run_started: dict = field(default_factory=dict)     # reporter → start of its newest Run (None: unknown), read once per pass
 
 
 def _route_report(ctx: _Ctx, ledger: dict, report: _Report, pass_: _Pass) -> tuple[Route, str | None]:
@@ -197,7 +246,7 @@ def _fix_for(ledger: dict, route: Route, fp: str, suspected: str) -> str:
     if route is Route.ATTACH:
         return ledger["entries"][fp]["fix_node"]
     return next(e["fix_node"] for other, e in ledger["entries"].items()
-                if other != fp and e.get("suspected") == suspected and e["state"] == "fixed")
+                if other != fp and e.get("suspected") == suspected and e["state"] == "fixed" and e.get("fix_node"))
 
 
 def _record(ledger: dict, report: _Report, state: str, ctx: _Ctx) -> None:
@@ -479,6 +528,28 @@ def grant_budget(manifest: Manifest, path: str, reporter: str, count: int) -> di
         effects.append(SetNode(reporter, {"defect_pending": True}))
     apply(effects + [SaveState()], Ports(), ManifestState(manifest, path))
     return {"reporter": reporter, "granted": ledger["granted_by_reporter"][reporter], "next_action": f"omac dag run {path}"}
+
+
+def resolve_defect(manifest: Manifest, path: str, fp: str, pr_url: str) -> dict:
+    """Record a fix that was merged outside OMAC: the fingerprint becomes ``fixed`` (it has no fix node), the PR url is kept."""
+    ledger = ledger_of(manifest)
+    entry = ledger["entries"].get(fp)
+    if entry is None:
+        raise ValidationError(ui(
+            f"Unknown defect fingerprint {fp!r}; list them with `omac defect list {path}`",
+            f"未知的缺陷指纹 {fp!r};用 `omac defect list {path}` 查看"))
+    if entry["state"] in ("applying", "fixing"):
+        raise ValidationError(ui(
+            f"{fp} is already being fixed by {entry.get('fix_node')!r}; wait for that fix node instead",
+            f"{fp} 已由修复节点 {entry.get('fix_node')!r} 在修复中;请等待该节点"))
+    entry["state"], entry["external_fix"] = "fixed", pr_url
+    entry.pop("stop", None)
+    # a queued report of exactly this fingerprint has nothing left to route
+    ledger["inbox"] = [e for e in ledger["inbox"] if {fingerprint(d["suspected_node"], d["anchors"]) for d in e["defects"]} != {fp}]
+    apply([SetDagFact("defects", ledger), SaveState()], Ports(), ManifestState(manifest, path))
+    blocked = [r for r in entry["reporters"] if r in manifest.nodes and manifest.nodes[r].status == "blocked"]
+    return {"fingerprint": fp, "state": "fixed", "external_fix": pr_url, "reporters": entry["reporters"],
+            "next_actions": [f"omac node retry {shlex.quote(path)} {shlex.quote(r)}" for r in blocked] or [f"omac dag run {shlex.quote(path)}"]}
 
 
 def describe(manifest: Manifest) -> dict:
