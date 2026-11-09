@@ -657,3 +657,17 @@ def test_a_stopped_inbox_report_is_logged_once_and_a_grant_queues_it_again(world
     shell.grant_budget(world.manifest, world.path, "api", 1)
     advance(world)
     assert fix_nodes(world)
+
+
+def test_a_finished_fix_marks_its_defect_fixed_even_when_nothing_is_pending(world):
+    advance(world)
+    fix = fix_nodes(world)[0]
+    world.manifest = load_manifest(world.path)
+    world.manifest.nodes[fix].status = "done"
+    for name in ("api", "web"):
+        world.manifest.nodes[name].defect_pending = False
+    save_manifest(world.manifest, world.path)
+
+    assert advance(world) is True
+
+    assert ledger(world)["entries"][fingerprint("lib", ["FLOW-1/ACT-1"])]["state"] == "fixed"

@@ -43,3 +43,39 @@ def test_failure_cascade_leaves_a_branch_that_does_not_depend_on_the_failure_alo
 
     assert newly_blocked == {"dependent"}
     assert manifest.nodes["other-root"].status == manifest.nodes["other-child"].status == "todo"
+
+
+def _unblock_world(tmp_path, platform_status, decision=None):
+    from types import SimpleNamespace
+    from omac.core.workitem import WorkItem, WorkItemStatus
+
+    manifest = Manifest(meta={}, nodes={
+        "fixed-upstream": Node(id="fixed-upstream", worker="alice", status="done"),
+        "waiting": Node(id="waiting", worker="bob", blocked_by=["fixed-upstream"], status="blocked", work_item_id="w-1"),
+    })
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+    item = WorkItem(id="w-1", workspace_id="ws", title="t", description="", status=WorkItemStatus[platform_status],
+                    dag_key="waiting")
+    item.decision_required = decision
+
+    class Store:
+        def observe_work_item_control(self, item_id):
+            return SimpleNamespace(work_item=item)
+
+    return manifest, path, Store()
+
+
+def test_blocked_node_with_a_work_item_that_was_only_isolated_returns_to_todo_once_upstream_is_satisfied(tmp_path):
+    manifest, path, store = _unblock_world(tmp_path, "TODO")
+
+    assert loop._maybe_unblock(store, manifest, path) is True
+    assert manifest.nodes["waiting"].status == "todo" and manifest.nodes["waiting"].work_item_id == "w-1"
+
+
+def test_blocked_node_that_failed_itself_stays_blocked_for_an_explicit_retry(tmp_path):
+    for platform_status, decision in (("BLOCKED", None), ("TODO", {"schema": "omac.decision-required/v1", "reason_code": "x"})):
+        manifest, path, store = _unblock_world(tmp_path, platform_status, decision)
+
+        assert loop._maybe_unblock(store, manifest, path) is False
+        assert manifest.nodes["waiting"].status == "blocked"

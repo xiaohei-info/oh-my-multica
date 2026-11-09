@@ -8,6 +8,22 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [3.0.4] — 2026-11-09
+
+### Fixed
+
+- **A Reviewer's `omac work submit` no longer fails on Multica's 8KB issue-metadata limit.** `source_refs` of a develop issue grows
+  with its upstream list and is rewritten on every dispatch, so a node with many upstreams was already near the limit before the
+  verdict was written. The shrink of recoverable fields (`source_refs`, `reviewer_run_baseline` run ids, inline
+  `review_obligations`) used to run only when a decision was written. `MulticaStore._set_metadata` now runs it when the platform
+  rejects any write at the limit, then retries once; the full values stay recoverable from the issue body and attachments. A
+  failed submit no longer leaves a duplicate report attachment per retry.
+- **A node blocked only because its upstream failed returns to `todo` once the upstream is satisfied, even when it already has a
+  work item** (a reporter that waited for a defect fix). `loop._maybe_unblock` unblocks it when its platform issue is `todo`
+  with no standing decision; a node that failed itself still needs `omac node retry`.
+- **A defect whose fix node is done becomes `fixed` in the ledger even when no report is pending** (`omac defect list` showed
+  `fixing` forever).
+
 ## [3.0.3] — 2026-11-08
 
 ### Fixed

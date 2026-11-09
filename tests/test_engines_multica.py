@@ -4052,3 +4052,31 @@ def test_create_work_item_tells_how_to_clear_an_issue_left_by_an_interrupted_run
         store.create_work_item("ws", "Node A", "body", "node-a", "alice")
 
     assert "multica issue status PROJ-7 cancelled" in str(caught.value)
+
+
+def test_multica_metadata_write_rejected_at_8kb_shrinks_recoverable_fields_and_retries(monkeypatch):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    metadata = {
+        "blocked_by": "x" * 3000,
+        "source_refs": json.dumps([{"issue_id": f"src-{i}", "label": "up" * 20} for i in range(60)]),
+    }
+    calls = []
+
+    def run(args, *a, **kw):
+        calls.append(list(args))
+        if args[:3] != ["issue", "metadata", "set"]:
+            return {"id": args[2], "metadata": metadata}
+        key, value = args[args.index("--key") + 1], args[args.index("--value") + 1]
+        if len(json.dumps({**metadata, key: value})) > 8192:
+            raise PlatformError("Invalid request: metadata exceeds the 8KB size limit")
+        metadata[key] = value
+        return {}
+
+    monkeypatch.setattr(store, "_run_multica", run)
+    monkeypatch.setattr(store, "_run_idempotent_read", lambda _l, fn: fn())
+
+    store._set_metadata("issue-1", "review_report_ref", json.dumps({"sha256": "a" * 64, "filename": "f" * 3000}))
+
+    assert metadata["source_refs"] == "[]"
+    assert "review_report_ref" in metadata
+    assert metadata["blocked_by"] == "x" * 3000
