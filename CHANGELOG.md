@@ -8,11 +8,18 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [3.0.6] — 2026-11-09
+
 ### Fixed
 
 - Upstream defects: a new fingerprint is rerun against a merged fix of the same node only when that fix was merged after the
   reporter's newest Run started; an older fix gets a new fix node instead. `defects.per_suspected` (default 2) stops further
-  automatic fixes of one node (`defect-node-fix-cap`); `omac defect resolve` records a fix merged outside OMAC.
+  automatic fixes of one node (`defect-node-fix-cap`); `omac defect resolve` records a fix merged outside OMAC (#180).
+
+### CI
+
+- The Docker job's Multica CLI and `checksums.txt` downloads retry (`--retry 5 --retry-delay 10 --retry-all-errors`) so intermittent
+  GitHub Release 5xx errors no longer fail the shard.
 
 ## [3.0.5] — 2026-11-09
 
