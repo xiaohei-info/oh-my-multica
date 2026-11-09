@@ -63,7 +63,9 @@ After a Worker (or a Reviewer whose every blocker names a finished upstream node
 locked `omac dag run|tick` routes it between two ticks. With `defects.auto_fix: design-gap` (the default; `off` disables it)
 a `design-gap` defect inserts a `fix.*` node, the reporter's `blocked_by` gains it, and the reporter becomes ready once the
 fix is merged. That is a system amendment built by code: no Agent reviews it and no person confirms it. Budgets:
-`defects.per_reporter` (default 2) and `defects.max_auto_fixes` (default `auto` = max(5, ⌈0.15 × nodes⌉)).
+`defects.per_reporter` (default 2), `defects.max_auto_fixes` (default `auto` = max(5, ⌈0.15 × nodes⌉)) and `defects.per_suspected` (default 2: fixes one suspected node may get).
+
+A new fingerprint on a node that already has a merged fix is rerun once (`retry-after-fix`) only if that fix was merged *after the reporter's newest Run started*. A fix that is older was already part of what failed, so the defect gets a new fix node instead (budget permitting). If the Run start or the fix's merge time cannot be read, the rerun is kept and the log says why (`retry-after-fix-unverified`). Time is compared because the fix's merge commit and the Run's base commit are not recorded.
 
 When it cannot be handled automatically `dag run` stops with exit 20 and `next_actions` carry copyable release commands.
 Stop reasons:
@@ -74,6 +76,7 @@ Stop reasons:
 | `defect-unroutable` | The report cannot be tied to a finished upstream node or anchor | Same; first check `suspected_node` and `anchors` in the report |
 | `defect-fix-generation-cap` | A fix node itself reported a defect; a fix is never fixed automatically | Same |
 | `defect-recurred` | The same defect (suspected node + anchors) came back after its fix was merged | `dag amend propose` or `node retry` first, or `abandon|accept` |
+| `defect-node-fix-cap` | The suspected node already has `defects.per_suspected` merged fixes; a further automatic fix is refused | `dag amend propose` (the defect is not an incremental slip), or `node abandon|accept|retry` |
 | `defect-budget-exhausted` | The reporter's or the whole DAG's automatic-fix budget is used up | `omac defect grant <manifest> --reporter <node> --count 1`, or as above |
 
 - `omac defect list <manifest> [--output json]` is read-only: the defect ledger (fingerprint states
@@ -82,6 +85,7 @@ Stop reasons:
 - `omac defect report <manifest> --before <node> --report-file <defects.yaml>` queues a person's report (at most 5 queued),
   shaped like a Worker's `defects`; `repro` may be omitted.
 - `omac defect grant <manifest> --reporter <node> [--count N]` adds automatic fixes for a reporter and routes its stopped report again.
+- `omac defect resolve <manifest> <fingerprint> --pr <url>` records a fix merged outside OMAC: the fingerprint becomes `fixed` (it has no fix node, counts toward `per_suspected`, is never a rerun target) and the command prints the closing `omac node retry` for each blocked reporter.
 - While a human amendment is pending, a defect only queues (`queued`) and the DAG is not changed; `dag amend accept` or discard that proposal first.
 - The incremental decomposition for a failed final-acceptance flow also goes through a system amendment; a flow that fails
   again after its increment was merged stops the loop and lists the failed items.

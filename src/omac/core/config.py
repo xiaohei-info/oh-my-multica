@@ -45,6 +45,7 @@ docs/design/README.md §6:配置与状态一律 YAML 进 git,不用 SQLite。
       auto_fix: design-gap                     # off | design-gap;off = 一律停在 exit 20 等人
       per_reporter: 2                          # 每个报告者可自动修复的次数(`omac defect grant` 补充)
       max_auto_fixes: auto                     # 全局自动修复次数;auto = max(5, ceil(0.15 × 节点数))
+      per_suspected: 2                         # 同一疑似节点最多自动修复几次;已达上限再报同类缺陷则停下等人
     reconcile:                                 # P3 低频全量审计调度
       full_scan_interval_ticks: 20             # 成功 active tick 数达到此值后，下轮全量读取
       full_scan_max_age_seconds: 1800          # 距上次成功全量读取的最长秒数
@@ -109,7 +110,7 @@ DEFAULT_RECONCILE = {
     "full_scan_max_age_seconds": 1800,
 }
 
-DEFAULT_DEFECTS = {"auto_fix": "design-gap", "per_reporter": 2, "max_auto_fixes": "auto"}
+DEFAULT_DEFECTS = {"auto_fix": "design-gap", "per_reporter": 2, "max_auto_fixes": "auto", "per_suspected": 2}
 DEFECT_AUTO_FIX_MODES = ("off", "design-gap")
 
 DEFAULT_GITHUB_CHECK_COMMAND = "gh pr checks {pr_url} --watch --fail-fast"
@@ -313,7 +314,7 @@ def validate_hold_live(value) -> bool:
             f"dispatch.hold_live 必须为布尔值 true/false,got {type(value).__name__}({value!r})"))
     return value
 def resolve_defects(config: dict, node_count: int) -> dict:
-    """解析 defects 块(auto_fix / per_reporter / max_auto_fixes);``auto`` 的全局上限按节点数折算成整数;非法值 fail-closed。"""
+    """解析 defects 块(auto_fix / per_reporter / max_auto_fixes / per_suspected);``auto`` 的全局上限按节点数折算成整数;非法值 fail-closed。"""
     raw = get_value(config, "defects")
     if raw is not None and not isinstance(raw, dict):
         raise ValidationError(ui(
@@ -326,7 +327,7 @@ def resolve_defects(config: dict, node_count: int) -> dict:
             f"defects.auto_fix 必须是 {' / '.join(DEFECT_AUTO_FIX_MODES)} 之一(非法值 {resolved['auto_fix']!r})"))
     if resolved["max_auto_fixes"] == "auto":
         resolved["max_auto_fixes"] = max(5, -(-node_count * 15 // 100))
-    for key in ("per_reporter", "max_auto_fixes"):
+    for key in ("per_reporter", "max_auto_fixes", "per_suspected"):
         value = resolved[key]
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValidationError(ui(

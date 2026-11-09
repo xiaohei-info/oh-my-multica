@@ -149,7 +149,7 @@ the usual report; its `next_actions` come from `decide_defects.render_release`.
 `defaults` (`max_parallel`, `poll_interval`, `coverage_gate`), `workflow` (human-in-the-loop, review, acceptance doc),
 `ci.check_command`, `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
 `retry` (`worker|ci|review|merge|environment`, `no_submit_runs`; `environment` is the automatic same-Worker retries of an
-`environment-failure` report, default 1), `defects` (`auto_fix: off|design-gap`, `per_reporter` 2, `max_auto_fixes: auto` = max(5, ⌈0.15 × nodes⌉)),
+`environment-failure` report, default 1), `defects` (`auto_fix: off|design-gap`, `per_reporter` 2, `max_auto_fixes: auto` = max(5, ⌈0.15 × nodes⌉), `per_suspected` 2),
 `dispatch.hold_live` (default false: hold each ready `evidence_mode: live` node once for a person to
 release), `review.node_nits` (`accept` default | `decide`: whether a develop
 node's `pass-with-nits` is a pass or an exit-20 stop; plan stages and amendments always stop),
@@ -339,7 +339,11 @@ fingerprints each defect (`core/defects.py::fingerprint` = suspected node + sort
 `decide_defects.DEFECT_ROUTES` — the one routing table — picks a route: stop for a person (`defect-needs-owner`,
 `-unroutable`, `-fix-generation-cap`, `-recurred`, `-budget-exhausted`, each with copyable release commands), wait
 (`queued`: a human amendment is pending, or another fix of the same node is in flight), attach the reporter to a fix that
-exists, or `auto-fix`. An auto-fix is a *system amendment* through the ordinary amendment ledger
+exists, rerun the reporter once against a fix of the same node that was merged *after the reporter's latest Run started*
+(`retry-after-fix`; `pipeline/defects.py::_other_fix_after_run` compares the fix node's `merged_at` with the newest Run
+`created_at` from `AgentRuntime.list_runs`; a fix that is older was already part of what failed, so the defect falls through
+to the next row; when either time is unknown the old behaviour is kept and the log says why), stop once the suspected node
+has `defects.per_suspected` merged fixes (`defect-node-fix-cap`), or `auto-fix`. An auto-fix is a *system amendment* through the ordinary amendment ledger
 (`core/amendment.py::build_system_amendment`, identity `…/v3-system`): code builds it, no Agent reviews it and no person
 confirms it, and its trust is a fixed whitelist — `add` fix nodes (each with `contract.defect_refs`, `blocked_by` only
 finished or added nodes), append-only `update` of a reporter's `blocked_by`, `resume` of a reporter's authoring. A fix node
@@ -347,7 +351,7 @@ copies the suspected node's worker, reviewer, scope and gates; its review is the
 it through `blocked_by`, so it cannot be retried before the fix merges. Order and crash safety: intent
 (`_dag.defects.applying`, saved) → `<name>.system-amendment.yaml` → `apply_amendment` → reload → `fixing`; fingerprint
 states (`queued → applying → fixing → fixed → recurred | needs-owner`) only move forward, budgets are charged when a fix
-becomes `fixing`, and a restart finishes or withdraws the intent. Operators use `omac defect list|report|grant`.
+becomes `fixing`, and a restart finishes or withdraws the intent. Operators use `omac defect list|report|grant|resolve` (`resolve` records a fix merged outside OMAC: the fingerprint becomes `fixed` with its PR url and counts toward `per_suspected`).
 
 ### 7.6 Acceptance and amendments
 

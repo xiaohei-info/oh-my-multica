@@ -19,13 +19,14 @@ class Route(str, Enum):
     GENERATION_CAP = "defect-fix-generation-cap"        # a fix node itself reported a defect: never fix a fix automatically
     RECURRED = "defect-recurred"                        # the same defect again after its fix was merged
     BUDGET_EXHAUSTED = "defect-budget-exhausted"
+    NODE_FIX_CAP = "defect-node-fix-cap"                # the suspected node was already fixed `per_suspected` times: a person looks
     QUEUED = "queued"                                   # wait: a person's amendment is pending or a fix is in flight
     ATTACH = "attach"                                   # the reporter waits for the fix that already exists
     RETRY_AFTER_FIX = "retry-after-fix"                 # a fix on the same node was merged meanwhile: rerun the reporter once
     AUTO_FIX = "auto-fix"                               # insert a fix node
 
 
-STOPS = (Route.NEEDS_OWNER, Route.UNROUTABLE, Route.GENERATION_CAP, Route.RECURRED, Route.BUDGET_EXHAUSTED)
+STOPS = (Route.NEEDS_OWNER, Route.UNROUTABLE, Route.GENERATION_CAP, Route.RECURRED, Route.BUDGET_EXHAUSTED, Route.NODE_FIX_CAP)
 FIX_CLASSES = ("design-gap",)  # the only class `defects.auto_fix: design-gap` repairs by itself
 
 
@@ -40,6 +41,9 @@ class DefectFacts:
     human_amendment_pending: bool
     inflight_other_fix: bool              # another fingerprint is being fixed on the same suspected node
     done_other_fix: bool                  # ... and that fix was merged, while this fingerprint was never retried
+    other_fix_after_run: bool | None      # ... merged after the reporter's run started (True), before it (False), unknown (None)
+    fixed_on_suspected: int               # fixes already merged for the suspected node
+    suspected_fix_cap: int                # defects.per_suspected: fixes one suspected node may get automatically
     budget_left: bool
 
 
@@ -58,7 +62,9 @@ DEFECT_ROUTES: tuple[tuple[Callable[[DefectFacts], bool], Route], ...] = (
     (lambda f: f.human_amendment_pending, Route.QUEUED),
     (_in("fixing", "applying"), Route.ATTACH),
     (lambda f: f.inflight_other_fix, Route.QUEUED),
-    (lambda f: f.done_other_fix, Route.RETRY_AFTER_FIX),
+    # A merged fix older than the reporter's run was already part of what failed: rerunning it can only fail the same way.
+    (lambda f: f.done_other_fix and f.other_fix_after_run is not False, Route.RETRY_AFTER_FIX),
+    (lambda f: f.fixed_on_suspected >= f.suspected_fix_cap, Route.NODE_FIX_CAP),
     (lambda f: not f.budget_left, Route.BUDGET_EXHAUSTED),
     (lambda f: True, Route.AUTO_FIX),
 )
@@ -99,6 +105,8 @@ def stop_summary(route: Route, detail: str | None = None) -> str:
         Route.GENERATION_CAP: ui("A fix node reported a defect; a fix is never fixed automatically.",
                                  "修复节点自己又上报了缺陷;修复节点不会被自动再修。"),
         Route.RECURRED: ui("The same defect appeared again after its fix was merged.", "同一缺陷在修复合并后再次出现。"),
+        Route.NODE_FIX_CAP: ui("The suspected node was already fixed automatically as often as defects.per_suspected allows.",
+                               "疑似节点已被自动修复到 defects.per_suspected 的上限。"),
         Route.BUDGET_EXHAUSTED: ui("The automatic fix budget for this reporter or for the whole DAG is used up.",
                                    "该报告者或整个 DAG 的自动修复预算已用完。"),
     }

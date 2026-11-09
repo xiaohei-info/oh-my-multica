@@ -21,8 +21,8 @@ from omac.core.defects import (
 )
 from omac.core.manifest import load_manifest, save_manifest
 from omac.core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
-from omac.core.workitem import WorkItem, WorkItemStatus
-from omac.errors import NeedsDecision, ValidationError
+from omac.core.workitem import AgentRunObservation, WorkItem, WorkItemStatus
+from omac.errors import NeedsDecision, PlatformError, ValidationError
 from omac.pipeline import defects as shell
 from omac.cli.commands import defect as defect_cli
 
@@ -207,6 +207,108 @@ def test_a_defect_reported_after_another_fix_on_the_same_node_was_merged_reruns_
 
     assert fix_nodes(world) == [fix] and load_manifest(world.path).nodes["api"].status == "todo"      # the merged fix is its retry
     assert ledger(world)["entries"][fingerprint("lib", ["FLOW-2/ACT-9"])]["retried"] is True
+
+
+def report_again_after_fix(world, *, merged_at, run_at, anchors="FLOW-2/ACT-9"):
+    """api's first defect got a fix node that merged at ``merged_at``; api's newest Run began at ``run_at`` and reports another."""
+    advance(world)
+    fix = fix_nodes(world)[0]
+    world.manifest = load_manifest(world.path)
+    world.manifest.nodes[fix].status, world.manifest.nodes[fix].merged_at = "done", merged_at
+    world.manifest.nodes["api"].status, world.manifest.nodes["api"].defect_pending = "blocked", True
+    world.store.items["w-api"].decision_required = blocker_decision([defect(anchors=[anchors])])
+    world.engine.runtime = SimpleNamespace(list_runs=lambda item_id: [
+        AgentRunObservation(id="r0", kind="direct", status="completed", created_at="2026-07-01T00:00:00Z"),
+        AgentRunObservation(id="r1", kind="direct", status="completed", created_at=run_at)])
+    save_manifest(world.manifest, world.path)
+    return fix
+
+
+def test_a_fix_merged_after_the_reporters_run_began_is_the_retry(world):
+    fix = report_again_after_fix(world, merged_at="2026-07-26T09:00:00Z", run_at="2026-07-26T08:00:00Z")
+
+    advance(world)
+
+    assert fix_nodes(world) == [fix] and load_manifest(world.path).nodes["api"].status == "todo"
+
+
+def test_a_fix_merged_before_the_reporters_run_began_does_not_cover_the_defect_so_a_new_fix_node_is_inserted(world):
+    fix = report_again_after_fix(world, merged_at="2026-07-26T08:00:00Z", run_at="2026-07-26T09:00:00+00:00")
+
+    advance(world)
+
+    fresh = fingerprint("lib", ["FLOW-2/ACT-9"])
+    assert len(fix_nodes(world)) == 2 and ledger(world)["entries"][fresh]["fix_node"] in set(fix_nodes(world)) - {fix}
+    assert not ledger(world)["entries"][fresh].get("retried")
+
+
+@pytest.mark.parametrize("runs", ["unreadable", "no-run-time"])
+def test_when_the_reporters_run_time_cannot_be_read_the_retry_stays(world, runs):
+    fix = report_again_after_fix(world, merged_at="2026-07-26T08:00:00Z", run_at="2026-07-26T09:00:00Z")
+    if runs == "unreadable":
+        def broken(item_id):
+            raise PlatformError("down")
+        world.engine.runtime = SimpleNamespace(list_runs=broken)
+    else:
+        world.engine.runtime = SimpleNamespace(list_runs=lambda item_id: [
+            AgentRunObservation(id="r1", kind="direct", status="completed", created_at=None)])
+
+    advance(world)
+
+    assert fix_nodes(world) == [fix] and load_manifest(world.path).nodes["api"].status == "todo"
+
+
+def test_when_the_fix_has_no_merge_time_the_retry_stays(world):
+    fix = report_again_after_fix(world, merged_at="2026-07-26T08:00:00Z", run_at="2026-07-26T09:00:00Z")
+    world.manifest.nodes[fix].merged_at = None
+    save_manifest(world.manifest, world.path)
+
+    advance(world)
+
+    assert fix_nodes(world) == [fix] and load_manifest(world.path).nodes["api"].status == "todo"
+
+
+def test_a_suspected_node_that_already_has_its_allowed_fixes_stops_a_stale_defect_for_a_person(world):
+    world.config = {"defects": {"per_suspected": 1}}
+    fix = report_again_after_fix(world, merged_at="2026-07-26T08:00:00Z", run_at="2026-07-26T09:00:00Z")
+
+    assert advance(world) is True
+
+    decision = decision_of(world, "w-api")
+    assert decision["reason_code"] == "defect-node-fix-cap" and decision["next_action"].startswith("omac dag amend propose")
+    assert fix_nodes(world) == [fix] and ledger(world)["entries"][fingerprint("lib", ["FLOW-2/ACT-9"])]["state"] == "needs-owner"
+    assert not load_manifest(world.path).nodes["api"].defect_pending
+
+
+def test_resolve_marks_an_externally_fixed_fingerprint_fixed_and_drops_its_queued_report(world):
+    manifest = load_manifest(world.path)
+    fresh = fingerprint("lib", ["FLOW-2/ACT-9"])
+    queued = {"suspected": "lib", "anchors": ["FLOW-2/ACT-9"], "reporters": ["web"], "state": "queued", "retried": True}
+    manifest.dag_state["defects"] = {**shell.ledger_of(manifest), "entries": {fresh: queued, "dfx-fixing": {**queued, "state": "fixing"}},
+                                     "inbox": [{"id": "i1", "reporter": "web", "defects": [defect(anchors=["FLOW-2/ACT-9"])]}]}
+    save_manifest(manifest, world.path)
+
+    result = shell.resolve_defect(manifest, world.path, fresh, "https://example.test/pr/9")
+
+    assert ledger(world)["entries"][fresh]["state"] == "fixed" and not ledger(world)["inbox"]
+    assert ledger(world)["entries"][fresh]["external_fix"] == "https://example.test/pr/9"
+    assert result["next_actions"] == [f"omac node retry {world.path} web"]
+    for refused in (fresh + "-x", "dfx-fixing"):         # unknown, or already being fixed by a fix node
+        with pytest.raises(ValidationError):
+            shell.resolve_defect(manifest, world.path, refused, "https://example.test/pr/9")
+
+
+def test_an_externally_fixed_defect_counts_toward_the_cap_and_is_never_a_retry_target(world):
+    world.config = {"defects": {"per_suspected": 1}}
+    manifest = load_manifest(world.path)
+    done = {"suspected": "lib", "anchors": ["FLOW-9/ACT-9"], "reporters": ["web"], "state": "fixed", "external_fix": "https://example.test/pr/9"}
+    manifest.dag_state["defects"] = {**shell.ledger_of(manifest), "entries": {fingerprint("lib", ["FLOW-9/ACT-9"]): done}}
+    save_manifest(manifest, world.path)
+    world.manifest = load_manifest(world.path)
+
+    advance(world)
+
+    assert decision_of(world, "w-api")["reason_code"] == "defect-node-fix-cap" and fix_nodes(world) == []
 
 
 def test_a_second_pass_with_nothing_pending_changes_nothing(world):
@@ -593,7 +695,7 @@ def test_anchor_ids_cover_flows_actions_and_provides(world):
 def test_the_automatic_global_fix_budget_scales_with_the_node_count(nodes, expected):
     from omac.core.config import resolve_defects
 
-    assert resolve_defects({}, nodes) == {"auto_fix": "design-gap", "per_reporter": 2, "max_auto_fixes": expected}
+    assert resolve_defects({}, nodes)["max_auto_fixes"] == expected
 
 
 @pytest.mark.parametrize("raw", [{"auto_fix": "maybe"}, {"per_reporter": -1}, {"max_auto_fixes": "many"}, {"per_reporter": True}])
