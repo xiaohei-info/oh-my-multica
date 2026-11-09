@@ -248,6 +248,13 @@ class WorkItemStore(ABC):
                 item_id, assignee, "reviewer", start_run=False)
             return True
 
+    def observe_submit_rejection(self, item_id: str):
+        """The latest `SubmitRejection` a failed `omac work submit` recorded on the item, or None.
+
+        Platform-neutral read: the rejection lives outside the metadata whose budget may have caused it.
+        """
+        return None
+
     def observe_work_item_controls(
         self, item_ids: List[str],
     ) -> Dict[str, WorkItemControlProjection]:

@@ -23,6 +23,13 @@ class ObservationConflict(PlatformError):
     """
 
 
+class MetadataBudgetError(PlatformError, ValueError):
+    """工作项 metadata 超出平台聚合上限,且无可还原的压缩空间(失败关闭)。
+
+    也是 ValueError:兼容此前直接抛 ValueError 的预算检查调用方。
+    """
+
+
 class WorkItemNotFoundError(PlatformError, RuntimeError):
     """适配器已明确证明目标工作单元不存在。"""
 

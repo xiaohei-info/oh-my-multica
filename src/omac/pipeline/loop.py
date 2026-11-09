@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, List, Set, Tuple
 import yaml
 
 from ..core import graph, logsetup
+from ..core.submit_rejection import REASON_REVIEWER_SUBMIT_REJECTED
 from ..core.defects import UPSTREAM_DEFECT, defect_errors, review_origin_defects
 from ..core.amendment import ensure_amendment_apply_complete
 from ..core.config import DEFAULT_RETRY, resolve_defects, resolve_hold_live, resolve_no_submit_runs, resolve_node_nits
@@ -102,6 +103,7 @@ from .decide_recovery import (
 from .decide_reviewer import (
     BaselineAction, BaselineObservation, DispatchBaselineObservation, NoSubmitAction, RunAction, RunObservation, decide_baseline,
     decide_dispatch_baseline, decide_no_submit, decide_reviewer_run, no_submit_grace, prior_run_active,
+    submit_rejection_applies,
 )
 from .decide_runs import (
     foreign_unbaselined_runs, is_active_formal_run,
@@ -850,6 +852,7 @@ def _block_reviewer(
     reason_code: str,
     detail: str,
     run_id: str | None = None,
+    failure_class: str = "unproven-reviewer-run-causality",
 ) -> str:
     retry = node_retry_action(manifest_path, key, TaskPhase.REVIEW)
     reason = ui(
@@ -859,7 +862,7 @@ def _block_reviewer(
         f"`{retry}`。",
     )
     decision = reviewer_recovery_decision(
-        manifest_path, key, item, reason_code, run_id=run_id)
+        manifest_path, key, item, reason_code, run_id=run_id, failure_class=failure_class)
     manifest._recovery_manifest_path = manifest_path
     _apply_plan(Ports(store=store), manifest, plan_block(
         key, item.id, decision=decision, mark=True, persist_marker=True))
@@ -3499,6 +3502,18 @@ def _observe_reviewer_run(c: _Collect, n: _Node) -> bool:
         retry_kind = "infrastructure_retry"
     else:
         reviewer_terminal = observed.terminal
+        rejection = c.store.observe_submit_rejection(n.item.id)
+        if submit_rejection_applies(
+            rejection, subject_digest=n.item.review_subject_digest,
+            cutoff_created_at=baseline.cutoff_created_at,
+        ):
+            # The Reviewer finished and tried to submit; spending the no-submit budget would only repeat it.
+            c.failures[key] = _block_reviewer(
+                c.store, c.manifest, c.manifest_path, key, n.item,
+                REASON_REVIEWER_SUBMIT_REJECTED,
+                f"the platform rejected the Reviewer's submission ({rejection.failure_class})",
+                reviewer_terminal.run.id, failure_class=rejection.failure_class)
+            return True
         no_submit = decide_no_submit(
             _reviewer_no_submit_grace_state(
                 c.store, c.runtime, n.item, baseline, reviewer_terminal),

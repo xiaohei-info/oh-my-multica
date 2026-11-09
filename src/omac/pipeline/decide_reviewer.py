@@ -200,6 +200,17 @@ def no_submit_grace(ended_at: str | None, now: datetime, grace_seconds: float) -
     return "elapsed" if age >= grace_seconds else "waiting"
 
 
+def submit_rejection_applies(rejection, *, subject_digest: str | None, cutoff_created_at: str | None) -> bool:
+    """A recorded platform rejection belongs to this Reviewer attempt: same review subject, written after its cutoff.
+
+    Without a usable cutoff time the answer is no: a stale rejection must never block a fresh attempt.
+    """
+    if rejection is None or not subject_digest or rejection.subject_digest != subject_digest:
+        return False
+    cutoff, written = parse_platform_time(cutoff_created_at), parse_platform_time(rejection.created_at)
+    return bool(cutoff and written and cutoff.tzinfo and written.tzinfo and written >= cutoff)
+
+
 class NoSubmitAction(Enum):
     WAIT = "wait"                              # a late verdict may still arrive, or one already did
     STOP_BLOCKED = "stop-blocked"              # persisted control stopped the dispatch

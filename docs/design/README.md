@@ -459,6 +459,14 @@ Issue = work item; typed values live in issue metadata (bounded; large text is a
 direct Runs carry an attribution (`issue_assignment`) the controller treats as formal; the `multica` CLI is used for all
 writes, with exact-UUID `curl` as a documented fallback for atomic projection updates.
 
+Issue metadata has a platform-wide 8KB aggregate limit. Every metadata write goes through `MulticaStore._set_metadata`; when the
+platform rejects it (or a control reference does not fit), `_free_metadata_budget` makes room in a fixed order: recoverable
+reductions (compacted baseline run ids, obligations, source refs), then inline `delivery_identity` / `reviewer_run_baseline` /
+`worker_handoff` become `omac.control-payload/v1` attachment references (read back by `_json_control_metadata`). If that is not
+enough the write fails with `MetadataBudgetError` (`platform-metadata-budget`). A Reviewer submit that fails this way leaves a
+comment (`core/submit_rejection.py`, outside the metadata budget); the Loop blocks the stage with
+`reviewer-submit-rejected-by-platform` rather than counting a no-submit Run (§7).
+
 ### 12.4 Platform boundary
 
 Pipeline, core, cli and web never execute a platform CLI and never depend on its command syntax or on Agent transcript

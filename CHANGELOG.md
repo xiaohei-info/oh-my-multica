@@ -8,6 +8,17 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every metadata write now shares one 8KB budget, and a Reviewer submit the platform rejects is a named, recoverable block.**
+  When the platform rejects a write at the limit (any key, including `review_report_ref` / `review_ledger_ref` /
+  `verification_ref`), `MulticaStore._free_metadata_budget` first applies the recoverable reductions, then moves inline
+  `delivery_identity`, `reviewer_run_baseline` and `worker_handoff` to immutable attachments (same reference mechanism as the
+  handoff; the one reader is `_json_control_metadata`). Still no room: `MetadataBudgetError` (`platform-metadata-budget`), nothing
+  silently dropped. `omac work submit` records that rejection as a comment (`core/submit_rejection.py`); the Loop reads it
+  (`WorkItemStore.observe_submit_rejection`) and blocks with `reviewer-submit-rejected-by-platform` instead of spending the
+  no-submit budget; the printed `omac node retry <manifest> <node> --stage review` clears it.
+
 ## [3.0.4] — 2026-11-09
 
 ### Fixed

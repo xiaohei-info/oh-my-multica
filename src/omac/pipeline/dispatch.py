@@ -34,6 +34,9 @@ from omac.core.review_convergence import (
     open_blockers,
     required_closures,
 )
+from omac.core.submit_rejection import (
+    FAILURE_CLASS_METADATA_BUDGET, SubmitRejection, format_submit_rejection,
+)
 from omac.core.taskmeta import TaskKind, TaskPhase, current_review_ledger
 from omac.core.workitem import (
     PullRequestReadiness,
@@ -44,12 +47,12 @@ from omac.core.workitem import (
     WorkItemStatus,
 )
 from omac.engines.store import WorkItemStore, reviewer_dispatch_stopped
-from omac.errors import AuthError, NeedsDecision, PlatformError, ValidationError
+from omac.errors import AuthError, MetadataBudgetError, NeedsDecision, OmacError, PlatformError, ValidationError
 from omac.i18n import CN, EN, t, ui
 from ..engines.codehost import CodeHost
 from .convergence import ConvergenceResolution, ResolutionState, resolve_convergence
 from .apply import Ports, apply
-from .decide_effects import UpdateMetadata
+from .decide_effects import AddComment, UpdateMetadata
 from .decide_transitions import advance_to_review, block_with_decision, finish_with_delivery
 
 
@@ -1235,20 +1238,45 @@ def _review_ledger_metadata(item, kind: TaskKind, report: Any, verdict: Optional
     }
 
 
+def _record_rejected_review_submit(store, issue_id, item, verdict, error) -> MetadataBudgetError:
+    """Leave the rejection where the Loop can read it (a comment, not metadata); return the error to raise."""
+    try:
+        apply([AddComment(issue_id, format_submit_rejection(SubmitRejection(
+            failure_class=FAILURE_CLASS_METADATA_BUDGET, phase=TaskPhase.REVIEW.value,
+            subject_digest=item.review_subject_digest or "", verdict=verdict or "",
+            detail=str(error))))], Ports(store=store))
+        recorded = True
+    except OmacError:
+        recorded = False
+    return MetadataBudgetError(ui(
+        f"{error}\nThe review was NOT stored. "
+        + ("OMAC recorded the rejection on the issue; the Loop will block the stage with "
+           "`platform-metadata-budget` and print the recovery command. " if recorded else
+           "Recording the rejection also failed. ")
+        + "Stop now: do not retry the submit or write anything else to the platform.",
+        f"{error}\n评审结果未保存。"
+        + ("OMAC 已把拒绝原因记录在 issue 上,Loop 会以 `platform-metadata-budget` 阻塞该阶段并给出恢复命令。"
+           if recorded else "记录拒绝原因也失败了。")
+        + "请立即停止：不要重试 submit,也不要再写平台。"))
+
+
 def _submit_review(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
     report = _validate_review(kind, a.verdict, a.report_file, item)
     metadata = _review_ledger_metadata(item, kind, report, a.verdict)
-    apply([
-        UpdateMetadata(issue_id, {
-            'review_comment': "",
-            'machine_feedback': {},
-            'review_report': report,
-            'review_report_source': _read_text(a.report_file),
-            'review_verdict': a.verdict,
-            'phase': TaskPhase.REVIEW,
-            **metadata,
-        }),
-    ], Ports(store=store))
+    try:
+        apply([
+            UpdateMetadata(issue_id, {
+                'review_comment': "",
+                'machine_feedback': {},
+                'review_report': report,
+                'review_report_source': _read_text(a.report_file),
+                'review_verdict': a.verdict,
+                'phase': TaskPhase.REVIEW,
+                **metadata,
+            }),
+        ], Ports(store=store))
+    except MetadataBudgetError as exc:
+        raise _record_rejected_review_submit(store, issue_id, item, a.verdict, exc) from exc
     # 状态保持 IN_REVIEW,由 loop / plan 流水线收割判定 done / blocked。
     return SubmitResult(
         kind, phase, "review_report", WorkItemStatus.IN_REVIEW,

@@ -9,6 +9,7 @@ import pytest
 from _support.loopkit import HANG, contract
 from _support.rework import delayed_verdict
 from omac.core.manifest import load_manifest
+from omac.core.submit_rejection import FAILURE_CLASS_METADATA_BUDGET, SubmitRejection, format_submit_rejection
 from omac.core.taskmeta import TaskPhase
 from omac.core.workitem import AgentRunObservation, WorkItemStatus
 from omac.errors import PlatformError, ValidationError
@@ -411,6 +412,24 @@ def test_reviewer_runs_without_a_verdict_are_bounded_and_cost_no_business_bounce
     assert blocked.status is WorkItemStatus.BLOCKED and blocked.phase is TaskPhase.REVIEW
     assert blocked.bounces.review == 0
     assert blocked.decision_required["reason_code"] == "reviewer-run-no-submit-retry-exhausted"
+
+
+def test_a_submit_the_platform_rejected_blocks_with_its_own_reason_and_spends_no_no_submit_budget(kit):
+    manifest, path, item = kit.in_review(IDLE, IDLE)
+    kit.wait_runs_ended(item.id)
+    current = kit.store.get_work_item(item.id)
+    kit.store.add_comment(item.id, format_submit_rejection(SubmitRejection(
+        FAILURE_CLASS_METADATA_BUDGET, "review", current.review_subject_digest, "pass")))
+    kit.forbid(kit.runtime, "wake")
+
+    result = kit.tick(manifest, path, max_parallel=1)
+
+    blocked = kit.store.get_work_item(item.id)
+    assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked"
+    assert blocked.decision_required["reason_code"] == "reviewer-submit-rejected-by-platform"
+    assert blocked.decision_required["failure_class"] == "platform-metadata-budget"
+    assert blocked.decision_required["next_action"].endswith(" a --stage review")
+    assert len(kit.reviewer_runs(item.id)) == 1
 
 
 def test_a_larger_no_submit_budget_keeps_dispatching(kit):

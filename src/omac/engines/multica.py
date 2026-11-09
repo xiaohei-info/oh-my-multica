@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 import yaml
 
 from ..core import logsetup
+from ..core.submit_rejection import parse_submit_rejection
 from ..core.review_convergence import (
     bounded_decision_required, _review_report_digest, validate_review_ledger,
 )
@@ -49,7 +50,7 @@ from ..core.taskmeta import (
     parse_phase, parse_reviewer_run_baseline, parse_worker_handoff,
 )
 from ..errors import (
-    AuthError, PlatformError, ValidationError, WorkItemNotFoundError,
+    AuthError, MetadataBudgetError, PlatformError, ValidationError, WorkItemNotFoundError,
 )
 from ..i18n import ui
 from .models import (
@@ -153,7 +154,21 @@ _EMPTY_OBJECT_METADATA = frozenset({
     REVIEW_NITS_ACCEPTANCE_KEY,
 })
 _CONTROL_PAYLOAD_SCHEMA = "omac.control-payload/v1"
+
+
+def _is_control_ref(value: Any) -> bool:
+    decoded = _decode_json_metadata_value(value)
+    return isinstance(decoded, dict) and decoded.get("schema") == _CONTROL_PAYLOAD_SCHEMA
+
+
+def _is_metadata_budget_rejection(error: Exception) -> bool:
+    return "8KB size limit" in str(error)
+
+
 _HANDOFF_CHECKPOINT_FIELDS = frozenset({"state", "target_run_id", "terminal_observed_at"})
+# Control facts that may move to an immutable attachment (wrapper ref in metadata) when the
+# 8KB aggregate budget needs room; the one reader is `_json_control_metadata`.
+_CONTROL_REF_KEYS = frozenset({WORKER_HANDOFF_KEY, DELIVERY_IDENTITY_KEY, REVIEWER_RUN_BASELINE_KEY})
 
 _INVALID_OBJECT_METADATA_SCHEMA = "omac.invalid-object-metadata/v1"
 
@@ -662,6 +677,13 @@ class MulticaStore(WorkItemStore):
             return _project_object_metadata(value)
         return _decode_json_metadata_value(value)
 
+    def _json_control_metadata(self, item_id: str, metadata: Dict, key: str):
+        """Read a `_CONTROL_REF_KEYS` fact whether it is inline or an attachment reference."""
+        decoded = _decode_json_metadata_value(metadata.get(key))
+        if isinstance(decoded, dict) and str(decoded.get("schema") or "").startswith("omac.control-payload/"):
+            return self._control_payload_value(item_id, key, decoded)
+        return self._json_metadata(metadata, key)
+
     @staticmethod
     def _optional_text_metadata(metadata: Dict, key: str) -> Optional[str]:
         value = metadata.get(key)
@@ -1069,13 +1091,15 @@ class MulticaStore(WorkItemStore):
             review_continuation=_nonempty_dict(
                 self._json_metadata(metadata, REVIEW_CONTINUATION_KEY)),
             reviewer_run_baseline=parse_reviewer_run_baseline(
-                self._json_metadata(metadata, REVIEWER_RUN_BASELINE_KEY)),
+                self._json_control_metadata(
+                    issue_data["id"], metadata, REVIEWER_RUN_BASELINE_KEY)),
             worker_handoff=parse_worker_handoff(
                 self._control_payload_value(
                     issue_data["id"], WORKER_HANDOFF_KEY,
                     metadata.get(WORKER_HANDOFF_KEY))),
             delivery_identity=parse_delivery_identity(
-                self._json_metadata(metadata, DELIVERY_IDENTITY_KEY)),
+                self._json_control_metadata(
+                    issue_data["id"], metadata, DELIVERY_IDENTITY_KEY)),
             decision_required=self._json_metadata(metadata, DECISION_REQUIRED_KEY),
             review_nits_acceptance=_nonempty_dict(
                 self._json_metadata(metadata, REVIEW_NITS_ACCEPTANCE_KEY)),
@@ -1504,7 +1528,16 @@ class MulticaStore(WorkItemStore):
 
         if self._decision_metadata_object_bytes(
             candidate, decision) > _MULTICA_METADATA_TOTAL_MAX_BYTES:
-            raise ValueError(
+            # Last resort, shared with every other write: move inline control facts to attachments.
+            for key, value in reductions:
+                self._set_metadata(item_id, key, value)
+            reductions = []
+            if self._free_metadata_budget(item_id, DECISION_REQUIRED_KEY):
+                _, candidate = self._read_issue_metadata(item_id)
+                candidate = {**candidate, DECISION_REQUIRED_KEY: decision}
+        if self._decision_metadata_object_bytes(
+            candidate, decision) > _MULTICA_METADATA_TOTAL_MAX_BYTES:
+            raise MetadataBudgetError(
                 "Issue metadata remains above Multica's 8KB aggregate limit after "
                 "safe decision projection; preserve attachments and fail closed")
 
@@ -1518,7 +1551,7 @@ class MulticaStore(WorkItemStore):
             self._decision_metadata_object_bytes(observed, decision)
             > _MULTICA_METADATA_TOTAL_MAX_BYTES
         ):
-            raise ValueError(
+            raise MetadataBudgetError(
                 "Issue metadata changed during decision preparation and exceeds "
                 "Multica's 8KB aggregate limit; fail closed")
         return decision
@@ -1607,15 +1640,20 @@ class MulticaStore(WorkItemStore):
             )
         return payload
 
-    def _bounded_control_metadata(self, item_id: str, key: str, value: Any, *, metadata=None):
+    def _bounded_control_metadata(
+        self, item_id: str, key: str, value: Any, *, metadata=None, force: bool = False,
+    ):
         if metadata is None:
             _, metadata = self._read_issue_metadata(item_id)
         target = _decode_json_metadata_value(value)
         previous = metadata.get(key)
-        if self._control_payload_value(item_id, key, previous) == target:
-            return previous
         previous_ref = _decode_json_metadata_value(previous)
-        if isinstance(previous_ref, dict) and previous_ref.get("schema") == _CONTROL_PAYLOAD_SCHEMA:
+        previous_is_ref = (
+            isinstance(previous_ref, dict) and previous_ref.get("schema") == _CONTROL_PAYLOAD_SCHEMA)
+        # force: an inline value must still be moved out even though it equals the target.
+        if (previous_is_ref or not force) and self._control_payload_value(item_id, key, previous) == target:
+            return previous
+        if previous_is_ref:
             # Mutable progress uses a tiny atomic overlay; it must not publish
             # system comments or unassign an already-running Worker.
             base = self._control_payload_value(item_id, key, {**previous_ref, "overlay": {}})
@@ -1629,12 +1667,12 @@ class MulticaStore(WorkItemStore):
                     if target.get(name) != base.get(name)
                 }}
                 if self._control_metadata_bytes({**metadata, key: checkpoint}) > _MULTICA_METADATA_TOTAL_MAX_BYTES:
-                    raise ValueError("Mutable handoff checkpoint exceeds the 8KB aggregate limit; preserve its original reference")
+                    raise MetadataBudgetError("Mutable handoff checkpoint exceeds the 8KB aggregate limit; preserve its original reference")
                 if self._control_payload_value(item_id, key, checkpoint) != target:
                     raise PlatformError("Mutable checkpoint changes the source handoff")
                 return checkpoint
         candidate = {**metadata, key: encode_metadata_value(value)}
-        if self._control_metadata_bytes(candidate) <= _MULTICA_METADATA_TOTAL_MAX_BYTES:
+        if not force and self._control_metadata_bytes(candidate) <= _MULTICA_METADATA_TOTAL_MAX_BYTES:
             return value
         text = encode_metadata_value(target)
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -1658,7 +1696,7 @@ class MulticaStore(WorkItemStore):
             self._control_metadata_bytes({**metadata, key: wrapper})
             > _MULTICA_METADATA_TOTAL_MAX_BYTES
         ):
-            raise ValueError(
+            raise MetadataBudgetError(
                 "Issue metadata cannot fit the complete control reference within the 8KB aggregate limit; preserve all facts"
             )
         # An upload can succeed before a crash/lost reply. Its SHA-indexed
@@ -1711,48 +1749,105 @@ class MulticaStore(WorkItemStore):
             self._control_metadata_bytes({**fresh, key: wrapper})
             > _MULTICA_METADATA_TOTAL_MAX_BYTES
         ):
-            raise ValueError(
+            raise MetadataBudgetError(
                 "Issue metadata drift exceeds the 8KB aggregate limit; preserve the complete control attachment"
             )
         return wrapper
 
-    def _set_metadata(self, item_id: str, key: str, value: Any):
+    def _set_metadata(self, item_id: str, key: str, value: Any, *, free_room: bool = True):
         # capture 默认开:吃掉 multica 的确认表格,不漏进编排者终端(进度靠事件流)。
         if key == DECISION_REQUIRED_KEY:
             value = bounded_decision_required(value)
-        bounded_control = key == WORKER_HANDOFF_KEY and _decode_json_metadata_value(value) not in (None, {})
+        bounded_control = key in _CONTROL_REF_KEYS and _decode_json_metadata_value(value) not in (None, {})
         if bounded_control:
             _, before_metadata = self._read_issue_metadata(item_id)
             previous_control = self._control_payload_value(item_id, key, before_metadata.get(key))
             target_control = _decode_json_metadata_value(value)
-            value = self._bounded_control_metadata(item_id, key, value, metadata=before_metadata)
+            try:
+                value = self._bounded_control_metadata(item_id, key, value, metadata=before_metadata)
+            except MetadataBudgetError:
+                # Even the attachment reference does not fit: make room, then retry once.
+                if not free_room or not self._free_metadata_budget(item_id, key):
+                    raise
+                _, before_metadata = self._read_issue_metadata(item_id)
+                value = self._bounded_control_metadata(item_id, key, value, metadata=before_metadata)
         assert_metadata_write_allowed(key, value)
         encoded = encode_metadata_value(value)
         if bounded_control:
             _, current = self._read_issue_metadata(item_id)
             current_control = self._control_payload_value(item_id, key, current.get(key))
             if current_control not in (previous_control, target_control):
-                raise PlatformError("Worker handoff changed immediately before metadata commit")
+                raise PlatformError(f"Control fact {key} changed immediately before metadata commit")
             if self._control_metadata_bytes({**current, key: encoded}) > _MULTICA_METADATA_TOTAL_MAX_BYTES:
-                raise ValueError("Control write exceeds the fresh 8KB aggregate metadata budget")
+                raise MetadataBudgetError("Control write exceeds the fresh 8KB aggregate metadata budget")
             if current.get(key) == encoded:
                 return
         command = ["issue", "metadata", "set", item_id, "--key", key, "--value", encoded]
         try:
             self._run_multica(command)
         except PlatformError as exc:
-            if "8KB size limit" not in str(exc) or not self._free_metadata_budget(item_id, key):
+            if not _is_metadata_budget_rejection(exc):
                 raise
-            self._run_multica(command)
+            if not free_room or not self._free_metadata_budget(item_id, key, encoded):
+                raise self._unrecoverable_budget(item_id, key) from exc
+            try:
+                self._run_multica(command)
+            except PlatformError as retry_exc:
+                if _is_metadata_budget_rejection(retry_exc):
+                    raise self._unrecoverable_budget(item_id, key) from retry_exc
+                raise
 
-    def _free_metadata_budget(self, item_id: str, key: str) -> bool:
-        """Platform rejected a write at 8KB: shrink recoverable fields (never `key`); True if any shrank."""
+    @staticmethod
+    def _unrecoverable_budget(item_id: str, key: str) -> MetadataBudgetError:
+        return MetadataBudgetError(ui(
+            f"platform-metadata-budget: issue {item_id} metadata is at the platform's 8KB limit and "
+            f"nothing recoverable is left to move to attachments, so `{key}` cannot be written. "
+            "Nothing was lost; no other metadata was changed beyond reversible attachment references.",
+            f"platform-metadata-budget: issue {item_id} 的 metadata 已到平台 8KB 上限,且没有可还原为"
+            f"附件引用的内容,无法写入 `{key}`。未丢失任何事实,仅做过可还原的附件引用压缩。"))
+
+    def _free_metadata_budget(
+        self, item_id: str, key: str, encoded: Optional[str] = None,
+    ) -> bool:
+        """The one room-making step for every metadata write (never touches `key`); True if anything shrank.
+
+        Recoverable reductions first (compacted baseline, obligations, source refs), then inline control facts move
+        to immutable attachments (largest first). With `encoded`, stop once the pending write is estimated to fit.
+        """
         _, metadata = self._read_issue_metadata(item_id)
+        metadata = dict(metadata)
+
+        def fits() -> bool:
+            return encoded is not None and self._control_metadata_bytes(
+                {**metadata, key: encoded}) <= _MULTICA_METADATA_TOTAL_MAX_BYTES
+
         _, reductions = self._recoverable_reductions(metadata, self._metadata_object_bytes)
-        reductions = [(k, v) for k, v in reductions if k != key]
-        for k, v in reductions:
-            self._set_metadata(item_id, k, v)
-        return bool(reductions)
+        changed = False
+        for k, v in ((k, v) for k, v in reductions if k != key):
+            if fits():
+                return changed
+            self._set_metadata(item_id, k, v, free_room=False)
+            metadata[k] = v
+            changed = True
+        inline = sorted(
+            (
+                k for k in _CONTROL_REF_KEYS - {key}
+                if _decode_json_metadata_value(metadata.get(k)) not in (None, {})
+                and not _is_control_ref(metadata.get(k))
+            ),
+            key=lambda k: -len(encode_metadata_value(metadata[k])),
+        )
+        for k in inline:
+            if fits():
+                break
+            wrapper = self._bounded_control_metadata(
+                item_id, k, metadata[k], metadata=metadata, force=True)
+            self._run_multica([
+                "issue", "metadata", "set", item_id, "--key", k,
+                "--value", encode_metadata_value(wrapper)])
+            metadata[k] = wrapper
+            changed = True
+        return changed
 
     def _read_issue_metadata(self, item_id: str) -> tuple[Dict, Dict]:
         issue = self._run_idempotent_read(
@@ -1809,6 +1904,24 @@ class MulticaStore(WorkItemStore):
         projection = self.observe_work_item_control(item_id)
         return self.hydrate_work_item_evidence(
             projection, frozenset(WorkItemPayload))
+
+    def observe_submit_rejection(self, item_id: str):
+        comments = self._run_idempotent_read(
+            "submit rejection comments",
+            lambda: self._run_multica([
+                "issue", "comment", "list", item_id, "--output", "json", "--full"]),
+        )
+        if not isinstance(comments, list):
+            raise PlatformError(ui(
+                f"Could not read comments of issue {item_id}", f"无法读取 issue {item_id} 的评论"))
+        latest = None
+        for comment in comments:
+            parsed = parse_submit_rejection(
+                comment.get("content") if isinstance(comment, dict) else None)
+            if parsed is not None:
+                latest = replace(
+                    parsed, created_at=comment.get("created_at"), comment_id=comment.get("id"))
+        return latest
 
     def observe_work_item_control(
         self, item_id: str,
