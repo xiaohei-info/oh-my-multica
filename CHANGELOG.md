@@ -8,6 +8,8 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [3.0.5] — 2026-11-09
+
 ### Fixed
 
 - **Every metadata write now shares one 8KB budget, and a Reviewer submit the platform rejects is a named, recoverable block.**
