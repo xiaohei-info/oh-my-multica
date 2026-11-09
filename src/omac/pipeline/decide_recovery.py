@@ -12,6 +12,7 @@ from typing import Callable
 
 from ..core.manifest import Manifest, _dump_contract
 from ..core.stage_recovery import stage_recovery_subject, validate_stage_recovery
+from ..core.submit_rejection import FAILURE_CLASS_METADATA_BUDGET, REASON_REVIEWER_SUBMIT_REJECTED
 from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
 from ..core.review_convergence import review_subject_digest
 from ..core.workitem import WorkItemControlProjection, WorkItemHydrationPlan, WorkItemPayload, WorkItemStatus
@@ -105,6 +106,7 @@ def reviewer_recovery_decision(
     reason_code: str,
     *,
     run_id: str | None = None,
+    failure_class: str = "unproven-reviewer-run-causality",
 ) -> dict:
     """Build the one canonical reviewer recovery decision marker."""
     decision = {
@@ -115,7 +117,7 @@ def reviewer_recovery_decision(
         "gate": "reviewer",
         "resume_issue_id": item.id,
         "node_id": key,
-        "failure_class": "unproven-reviewer-run-causality",
+        "failure_class": failure_class,
         "next_action": node_retry_action(
             manifest_path, key, TaskPhase.REVIEW),
     }
@@ -179,6 +181,8 @@ def reviewer_runtime_failure_decision_variants(
         # _block_reviewer writes these with the Run id; both are reset by the explicit retry.
         "reviewer-run-no-submit-retry-exhausted": "unproven-reviewer-run-causality",
         "reviewer-run-terminal-time-unavailable": "unproven-reviewer-run-causality",
+        # The Reviewer finished but the platform refused its submit; the retry re-runs the review with room made.
+        REASON_REVIEWER_SUBMIT_REJECTED: FAILURE_CLASS_METADATA_BUDGET,
     }
     reason_code = decision.get("reason_code")
     failure_class = failure_classes.get(reason_code)

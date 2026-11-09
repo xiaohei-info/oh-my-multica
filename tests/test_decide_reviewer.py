@@ -267,3 +267,24 @@ def test_only_another_agents_unfinished_direct_run_holds_the_reviewer_back(kind,
 
 def test_no_runs_hold_nothing_back():
     assert prior_run_active([], "reviewer") is False
+
+
+# ---- a submit the platform rejected -----------------------------------------------------------------------------
+
+def rejection(subject="subj", created="2026-08-01T01:05:00Z"):
+    from omac.core.submit_rejection import FAILURE_CLASS_METADATA_BUDGET, SubmitRejection
+    return SubmitRejection(FAILURE_CLASS_METADATA_BUDGET, "review", subject, created_at=created)
+
+
+@pytest.mark.parametrize(("found", "subject", "cutoff", "applies"), [
+    pytest.param(rejection(), "subj", CUTOFF, True, id="same-subject-after-cutoff"),
+    pytest.param(None, "subj", CUTOFF, False, id="nothing-recorded"),
+    pytest.param(rejection(), "other", CUTOFF, False, id="another-review-subject"),
+    pytest.param(rejection(created="2026-08-01T00:59:00Z"), "subj", CUTOFF, False, id="written-before-this-attempt"),
+    pytest.param(rejection(created=None), "subj", CUTOFF, False, id="no-platform-time"),
+    pytest.param(rejection(), "subj", None, False, id="no-cutoff-never-blocks-a-fresh-attempt"),
+    pytest.param(rejection(), None, CUTOFF, False, id="no-current-subject"),
+])
+def test_a_recorded_platform_rejection_blocks_only_the_attempt_it_belongs_to(found, subject, cutoff, applies):
+    from omac.pipeline.decide_reviewer import submit_rejection_applies
+    assert submit_rejection_applies(found, subject_digest=subject, cutoff_created_at=cutoff) is applies
