@@ -1432,18 +1432,12 @@ class MulticaStore(WorkItemStore):
             cls._metadata_object_bytes(encoded),
         )
 
-    def _prepare_decision_metadata_budget(
-        self, item_id: str, decision: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Make the complete Issue metadata object fit before writing a decision."""
-        decision = bounded_decision_required(decision)
-        _, metadata = self._read_issue_metadata(item_id)
+    def _recoverable_reductions(
+        self, metadata: Dict, size: Callable[[Dict], int],
+    ) -> tuple[Dict, list[tuple[str, Any]]]:
+        """Metadata fields whose full value is recoverable elsewhere, shrunk (§5.1 bounded metadata)."""
         candidate = dict(metadata)
-        candidate[DECISION_REQUIRED_KEY] = decision
-        if self._decision_metadata_object_bytes(
-            metadata, decision) <= _MULTICA_METADATA_TOTAL_MAX_BYTES:
-            return decision
-
+        metadata = dict(metadata)
         reductions: list[tuple[str, Any]] = []
 
         def consider(key: str, value: Any) -> None:
@@ -1451,9 +1445,7 @@ class MulticaStore(WorkItemStore):
                 return
             reduced = dict(candidate)
             reduced[key] = value
-            if self._decision_metadata_object_bytes(
-                reduced, decision) >= self._decision_metadata_object_bytes(
-                    candidate, decision):
+            if size(reduced) >= size(candidate):
                 return
             candidate[key] = value
             reductions.append((key, value))
@@ -1493,6 +1485,22 @@ class MulticaStore(WorkItemStore):
         ):
             # The full obligation set is already in the referenced attachment.
             consider(REVIEW_OBLIGATIONS_KEY, [])
+        return candidate, reductions
+
+    def _prepare_decision_metadata_budget(
+        self, item_id: str, decision: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Make the complete Issue metadata object fit before writing a decision."""
+        decision = bounded_decision_required(decision)
+        _, metadata = self._read_issue_metadata(item_id)
+        candidate = dict(metadata)
+        candidate[DECISION_REQUIRED_KEY] = decision
+        if self._decision_metadata_object_bytes(
+            metadata, decision) <= _MULTICA_METADATA_TOTAL_MAX_BYTES:
+            return decision
+
+        candidate, reductions = self._recoverable_reductions(
+            candidate, lambda m: self._decision_metadata_object_bytes(m, decision))
 
         if self._decision_metadata_object_bytes(
             candidate, decision) > _MULTICA_METADATA_TOTAL_MAX_BYTES:
@@ -1729,10 +1737,22 @@ class MulticaStore(WorkItemStore):
                 raise ValueError("Control write exceeds the fresh 8KB aggregate metadata budget")
             if current.get(key) == encoded:
                 return
-        self._run_multica([
-            "issue", "metadata", "set", item_id,
-            "--key", key, "--value", encoded,
-        ])
+        command = ["issue", "metadata", "set", item_id, "--key", key, "--value", encoded]
+        try:
+            self._run_multica(command)
+        except PlatformError as exc:
+            if "8KB size limit" not in str(exc) or not self._free_metadata_budget(item_id, key):
+                raise
+            self._run_multica(command)
+
+    def _free_metadata_budget(self, item_id: str, key: str) -> bool:
+        """Platform rejected a write at 8KB: shrink recoverable fields (never `key`); True if any shrank."""
+        _, metadata = self._read_issue_metadata(item_id)
+        _, reductions = self._recoverable_reductions(metadata, self._metadata_object_bytes)
+        reductions = [(k, v) for k, v in reductions if k != key]
+        for k, v in reductions:
+            self._set_metadata(item_id, k, v)
+        return bool(reductions)
 
     def _read_issue_metadata(self, item_id: str) -> tuple[Dict, Dict]:
         issue = self._run_idempotent_read(

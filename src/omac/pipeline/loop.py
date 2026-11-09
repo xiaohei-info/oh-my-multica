@@ -4141,20 +4141,37 @@ def _dispatch(
 
 # ==================== tick(单轮完整推进) ====================
 
-def _maybe_unblock(manifest: Manifest, manifest_path: str) -> bool:
+def _isolated_by_upstream(store: WorkItemStore, node) -> bool:
+    """Platform proof that a blocked node with a work item was only isolated (§2.2): its issue is `todo` with no decision.
+
+    A node that failed itself keeps a blocked issue or a standing decision, so it is never matched here.
+    """
+    try:
+        item = store.observe_work_item_control(node.work_item_id).work_item
+    except PlatformError:
+        return False        # unknown: stay blocked, the next tick asks again
+    return (
+        item.id == node.work_item_id
+        and item.status == WorkItemStatus.TODO
+        and not item.requires_decision
+    )
+
+
+def _maybe_unblock(store: WorkItemStore, manifest: Manifest, manifest_path: str) -> bool:
     """将「因上游失败而被隔离的 blocked 下游」解锁回 todo,使其可被重派。
 
     判断依据:
       - status == blocked
       - 所有 blocked_by 依赖均已满足(done 或 abandoned,见 graph.SATISFIED)
-      - 该节点自身从未真正派发过(work_item_id 为空,说明是上游失败在 todo 阶段标 blocked)
-    自身失败(work_item_id 非空)的节点不在此处自动解锁——必须经 ``omac node retry`` 显式决策,
-    捍卫 §2.4「重试是显式决策,废除自动重试」的红线。
+      - 没有 work_item_id(上游失败在 todo 阶段标 blocked),或者有 work_item_id 但平台 issue
+        仍是 todo 且没有待决 decision(等缺陷修复而被隔离的节点,见 `_isolated_by_upstream`)
+    自身失败的节点(平台 issue 为 blocked 或带 decision)不在此处自动解锁——必须经 ``omac node retry``
+    显式决策,捍卫 §2.4「重试是显式决策,废除自动重试」的红线。解锁保留 work_item_id,由派单复用。
     """
     changed = False
     newly_unblocked: List[str] = []
     for key, node in list(manifest.nodes.items()):
-        if node.status != "blocked" or node.work_item_id:
+        if node.status != "blocked":
             continue
         deps = node.blocked_by
         if not deps:
@@ -4163,7 +4180,9 @@ def _maybe_unblock(manifest: Manifest, manifest_path: str) -> bool:
             b in manifest.nodes and manifest.nodes[b].status in graph.SATISFIED
             for b in deps
         ):
-            set_node(manifest, key, work_item_id=None, status="todo")
+            if node.work_item_id and not _isolated_by_upstream(store, node):
+                continue
+            set_node(manifest, key, status="todo")
             newly_unblocked.append(key)
             changed = True
     if changed:
@@ -4449,7 +4468,7 @@ def tick(
 
     # 3.5 失败解锁: 上游已满足(done/abandon)的「未派发 blocked 下游」解封回 todo
     #    自身失败的节点(work_item_id 非空)不经此处自活——须显式 omac node retry。
-    _maybe_unblock(manifest, manifest_path)
+    _maybe_unblock(store, manifest, manifest_path)
 
     # 4. DECIDE: 计算就绪节点
     snapshot = _build_snapshot(manifest)

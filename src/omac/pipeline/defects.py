@@ -322,19 +322,30 @@ def resume_system_amendment(engine, manifest: Manifest, path: str, config: dict,
     return _resume(ctx, ledger_of(manifest))
 
 
+def _promote_fixed(manifest: Manifest, ledger: dict) -> bool:
+    """A merged (or abandoned) fix makes its defect `fixed`. Returns whether any entry changed."""
+    promoted = False
+    for entry in ledger["entries"].values():
+        fix = manifest.nodes.get(entry.get("fix_node"))
+        if entry["state"] == "fixing" and fix is not None and fix.status in SATISFIED:
+            entry["state"] = "fixed"
+            promoted = True
+    return promoted
+
+
 def advance(engine, manifest: Manifest, path: str, config: dict, *, apply_system=None) -> bool:
     """Route every pending defect report once. Returns True when the manifest or a platform decision changed."""
     ledger = ledger_of(manifest)
+    promoted = _promote_fixed(manifest, ledger)
     if not (ledger.get("applying") or ledger["inbox"] or any(n.defect_pending for n in manifest.nodes.values())):
-        return False                    # nothing reported: a tick costs no extra reads
+        if promoted:                    # nothing reported, but a fix finished: make `fixed` durable
+            _save(manifest, path, ledger, store=engine.store)
+        return promoted                 # nothing reported: a tick costs no extra reads
     ctx = _context(engine, manifest, path, config, apply_system)
     changed = _resume(ctx, ledger)
     if changed:
         ledger = ledger_of(manifest)
-    for entry in ledger["entries"].values():       # a merged (or abandoned) fix makes its defect `fixed`
-        fix = manifest.nodes.get(entry.get("fix_node"))
-        if entry["state"] == "fixing" and fix is not None and fix.status in SATISFIED:
-            entry["state"] = "fixed"
+    _promote_fixed(manifest, ledger)
     reports, flags = _pending_reports(engine.store, manifest, ledger)
     before, decisions, pass_ = copy.deepcopy(ledger), [], _Pass()
     consumed: list[_Report] = []
