@@ -105,3 +105,31 @@ def test_abandon_writes_nothing_to_an_issue_that_carries_neither_fact(tmp_path, 
     assert main(["node", "abandon", path, "a"]) == exit_codes.OK
 
     assert store.writes == []
+
+
+# ---------------- owner answer to a Worker blocker ----------------
+
+BLOCKER = {"schema": "omac.decision-required/v1", "reason_code": "worker-decision-required",
+           "blocker": {"handoff_generation": "handoff-1"}}
+
+
+def test_retry_answer_is_bound_to_the_blockers_generation_and_reaches_the_worker(tmp_path, monkeypatch):
+    store, path = _setup(tmp_path, monkeypatch)
+    store.item = replace(store.item, decision_required=BLOCKER)
+    store.comments = []
+    store.add_comment = lambda item_id, text: store.comments.append(text)
+    monkeypatch.setattr(node_cmd, "_retry_on_platform", lambda *a, **k: None)
+
+    assert main(["node", "retry", path, "a", "--answer", "take option 2"]) == exit_codes.OK
+
+    assert store.item.owner_answer == {"handoff_generation": "handoff-1", "text": "take option 2"}
+    assert store.comments and "OWNER ANSWER to blocker handoff-1: take option 2" in store.comments[0]
+    assert load_manifest(path).nodes["a"].retry_note == "OWNER ANSWER to blocker handoff-1: take option 2"
+
+
+def test_retry_answer_needs_an_open_blocker_and_excludes_note(tmp_path, monkeypatch):
+    store, path = _setup(tmp_path, monkeypatch)            # decision without a Worker blocker
+    assert main(["node", "retry", path, "a", "--answer", "x"]) == exit_codes.VALIDATION
+    store.item = replace(store.item, decision_required=BLOCKER)
+    assert main(["node", "retry", path, "a", "--answer", "x", "--note", "y"]) == exit_codes.VALIDATION
+    assert store.writes == []

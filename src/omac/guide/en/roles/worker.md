@@ -197,6 +197,13 @@ control.report_blocker to submit a v2 structured blocker. Preserve failed eviden
 and the worktree. Stop after confirming exit20, terminal=true, next_action=stop.
 Ordinary reject rework remains unchanged; see `omac guide recovery`.
 
+### Owner answer
+
+`work show` `control.owner_answer` (`{handoff_generation, text}`) is the owner's answer to your last blocker (that
+`handoff_generation`); the same `OWNER ANSWER` text is also an issue comment. It is a decision: execute it and rerun.
+Do not re-block because there is no new commit, no fix node, or no answer. Block again only if the answer itself cannot be
+executed or running it produced new failure evidence, and cite the answer in the summary.
+
 ### Upstream defects and environment failures
 
 - When the design or acceptance document already says what is needed but **a finished upstream node did not deliver

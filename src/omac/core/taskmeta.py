@@ -154,6 +154,7 @@ WORKER_REWORK_FEEDBACK_SCHEMA = "omac.worker-rework-feedback/v1"
 DELIVERY_IDENTITY_KEY = "delivery_identity"
 DELIVERY_IDENTITY_SCHEMA = "omac.delivery-identity/v1"
 DECISION_REQUIRED_KEY = "decision_required"
+OWNER_ANSWER_KEY = "owner_answer"   # {handoff_generation, text}: the owner's answer to that Worker blocker
 DECISION_REQUIRED_SCHEMA = "omac.decision-required/v1"
 AMENDMENT_ATTEMPT_KEY = "amendment_attempt"
 SOURCE_REFS_KEY = "source_refs"

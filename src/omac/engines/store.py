@@ -353,6 +353,7 @@ class WorkItemStore(ABC):
         review_nits_acceptance: Optional[Dict[str, Any]] = None,
         amendment_attempt: Optional[Dict[str, Any]] = None,
         plan_profile: Optional[Dict[str, Any]] = None,
+        owner_answer: Optional[Dict[str, Any]] = None,
         phase: Optional[TaskPhase] = None,
         worker_bounce: Optional[int] = None,
         ci_bounce: Optional[int] = None,
@@ -377,6 +378,7 @@ class WorkItemStore(ABC):
         - worker_handoff:有界的内部 review→worker 交接意图；空 dict 清除。
         - review_nits_acceptance:绑定当前 pass-with-nits 事实的有界 operator marker；
           空 dict 清除，不改写 reviewer verdict/report。
+        - owner_answer:{handoff_generation, text},owner 对该 Worker blocker 的答复;空 dict 清除。
         - plan_profile:plan 流水线的形态(来源、是否评审/验收/确认),只写在来源 issue 上。
         - deliverable:按 kind 承载 plan/acceptance/manifest 等交付正文。
         - project_rules:plan 的项目级开发规范交付正文。

@@ -145,6 +145,12 @@ exit_code: 5
 保留真实失败证据和工作树。确认 exit20、terminal=true、next_action=stop 后停止。
 普通 reject 仍正常返工；细节见 `omac guide recovery`。
 
+### Owner 答复
+
+`work show` 的 `control.owner_answer`（`{handoff_generation, text}`）是 owner 对你上一次阻塞（该 `handoff_generation`）的答复，
+issue 评论里也有同文的 `OWNER ANSWER`。它就是决定：照做并重跑，不要再以“没有新提交 / 没有修复节点 / 没有收到答复”为由重复阻塞。
+只有答复本身不可执行或执行后出现新的失败证据时，才提交新的阻塞，并在 summary 引用该答复。
+
 ### 上游缺陷与环境故障
 
 - 设计或验收已写明、但**已完成的上游节点没做到**（缺字段、缺路由、缺登记）时，用 `reason_code: upstream-defect`

@@ -547,6 +547,8 @@ def _show_blocker_control(item: Any, kind: TaskKind, phase: TaskPhase, control: 
         template = blocker_template(item)
         if template is not None:
             control["blocker_report_template"] = template
+        if item.owner_answer:
+            control["owner_answer"] = deepcopy(item.owner_answer)
     elif kind == TaskKind.AMENDMENT and phase == TaskPhase.AUTHORING:
         from .amendment_scope_gap import scope_gap_template
         control["report_blocker"] = f"omac work block {item.id} --report-file <scope-gap.yaml>"
