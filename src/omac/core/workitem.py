@@ -225,6 +225,8 @@ class WorkItem:
     review_nits_acceptance: Optional[Dict[str, Any]] = None
     # Shape of a plan pipeline (omac.plan-profile/v1); only on its source issue (doc-/plan-).
     plan_profile: Optional[Dict[str, Any]] = None
+    # Owner answer to a Worker blocker: {"handoff_generation", "text"} (set by `omac node retry --answer`).
+    owner_answer: Optional[Dict[str, Any]] = None
 
     @property
     def requires_decision(self) -> bool:

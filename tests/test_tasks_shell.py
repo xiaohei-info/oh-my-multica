@@ -78,6 +78,7 @@ _AMENDMENT_ACTIVITY_FIELD_CASES = [
         "bounce_baseline",
     ),
     ("review_continuation", {"authorized_rounds": 1}, "review_continuation"),
+    ("owner_answer", {"handoff_generation": "handoff-1", "text": "go"}, "owner_answer"),
     (
         "review_nits_acceptance",
         {

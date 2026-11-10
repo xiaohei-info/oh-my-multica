@@ -8,6 +8,15 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+## [3.0.7] — 2026-11-10
+
+### Fixed
+
+- A Worker blocker (`owner-decision-required`) can now be answered: `omac node retry <manifest> <node> --answer "<text>"` binds the
+  answer to the blocker's `handoff_generation`, stores it on the work item, exposes it as `omac work show` `control.owner_answer`,
+  and posts it as an issue comment so a resumed Worker session sees it. The Worker guide says to execute the answer instead of
+  re-blocking for lack of a new commit or fix node.
+
 ## [3.0.6] — 2026-11-09
 
 ### Fixed

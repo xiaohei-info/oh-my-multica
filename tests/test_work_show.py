@@ -610,3 +610,12 @@ def test_show_treats_in_review_status_as_review_phase():
     assert "env_setup" in out["context"]
     assert "--verdict" in out["submit"]
 
+
+
+def test_show_exposes_the_owner_answer_to_a_develop_worker():
+    from dataclasses import replace
+    answer = {"handoff_generation": "handoff-1", "text": "take option 2"}
+    item = replace(make_item(TaskKind.DEVELOP, TaskPhase.AUTHORING, with_contract=True), owner_answer=answer)
+    assert build_show_output(item, f"worker:{item.worker}")["control"]["owner_answer"] == answer
+    plain = make_item(TaskKind.DEVELOP, TaskPhase.AUTHORING, with_contract=True)
+    assert "owner_answer" not in build_show_output(plain, f"worker:{plain.worker}")["control"]
