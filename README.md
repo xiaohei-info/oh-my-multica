@@ -105,20 +105,34 @@ models can handle the largest number of development and testing nodes and consum
 Engineering provides constraints before action and feedback after action; results that fail their contract,
 verification, review, or final acceptance return to rework and cannot enter the delivery chain.
 
-### A real end-to-end delivery
+### A real delivery: awesome-personal-agent
 
-We used oh-my-multica to deliver a production-constrained Webhook Inbox that authenticates, stores, and
-deduplicates third-party webhook events. Planner and Orchestrator Agents planned the DAG, Worker Agents
-implemented its nodes in parallel, and Reviewer and Acceptor Agents verified the integrated result. The
-deterministic Loop controlled scheduling, evidence, merge, and convergence. The result is a runnable FastAPI and
-SQLite service with signature verification, transaction-safe deduplication, event lookup, health checks, and a
-non-root container. See the
-[demo README](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox#readme) for the requirement,
-collaboration details, and delivery evidence.
+[awesome-personal-agent](https://github.com/xiaohei-info/awesome-personal-agent) (APA) is an open-source,
+self-hosted personal-assistant layer on top of agent harnesses: a Go kernel, a CLI, an API, a web UI, a Hermes
+plugin, and source packs. It is not a demo; it was too large to hold in one conversation, which is why it was
+delivered with oh-my-multica. The orchestration record is public in the repository's
+[`.omac/`](https://github.com/xiaohei-info/awesome-personal-agent/tree/main/.omac) directory: the manifest
+(`apa.yaml`), the acceptance document (`apa.acceptance.yaml`), and the per-node state.
 
-<p align="center">
-  <img src="docs/assets/oh-my-multica-webhook-inbox-demo.svg" alt="Real Webhook Inbox delivery: a five-node DAG, signed event ingestion, idempotent retry, and final acceptance" width="100%">
-</p>
+The path from requirement to release candidate:
+
+1. **Requirement → design → DAG.** Planner and Orchestrator Agents turned the requirement into a design, an
+   acceptance document of 61 business flows, and a DAG of about 200 nodes, split along real module boundaries
+   (kernel, API, CLI, web, plugin, sources).
+2. **Parallel development and review.** Worker Agents implemented independent nodes in parallel, each in its own
+   pull request; an independent Reviewer had to pass every one before the Loop would merge it. The repository
+   ended up with over 240 merged pull requests.
+3. **Defects flow back.** When review, CI, or acceptance exposed a defect, the DAG was amended with a dedicated
+   fix node (the `fix.*` nodes in the manifest) instead of patching around it silently, so the repair got its own
+   contract, review, and merge.
+4. **Live acceptance and closeout.** The `e2e-*-live` nodes ran the acceptance flows against a real environment,
+   and a closeout node gathers release readiness. A few nodes were abandoned after the plan changed, and the
+   closeout node is currently blocked, waiting on a decision; those states are visible in the records rather
+   than hidden.
+
+Run `omac dag status` on the repository's `.omac/apa.yaml` to see the current node states; the numbers keep
+changing while delivery closes out. For a minimal example you can reproduce locally, see the
+[Webhook Inbox demo](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox#readme).
 
 ## Who it is for
 
