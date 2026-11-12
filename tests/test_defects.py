@@ -407,6 +407,33 @@ def test_a_fix_node_that_reports_a_defect_is_never_fixed_automatically(world):
     assert decision_of(world, "w-fix")["reason_code"] == "defect-fix-generation-cap" and fix_nodes(world) == [fix]
 
 
+def test_the_applied_amendment_clears_its_pending_human_marker_in_the_same_save(world, tmp_path, monkeypatch):
+    from functools import partial
+
+    import omac.core.amendment as amendment_core
+
+    real = amendment_core.apply_amendment
+    saves = []
+
+    def apply_with_marker(path, amendment, *args, **kwargs):
+        manifest = load_manifest(path)
+        manifest.dag_state["pending_human_amendment"] = {"amendment_id": amendment["amendment_id"], "file": str(tmp_path / "gone.yaml")}
+        save_manifest(manifest, path)
+        return real(path, amendment, *args, **kwargs)
+
+    original_save = amendment_core.save_manifest
+    monkeypatch.setattr(amendment_core, "save_manifest", lambda m, p: (original_save(m, p), saves.append(
+        ("last_amendment_id" in m.meta, "pending_human_amendment" in load_manifest(p).dag_state)))[0])
+    world.manifest.nodes["web"].defect_pending = False
+    save_manifest(world.manifest, world.path)
+    world.manifest = load_manifest(world.path)
+
+    advance(world, apply_system=partial(apply_with_marker, recover=recover_to_authoring))
+
+    assert "pending_human_amendment" not in load_manifest(world.path).dag_state
+    assert saves[0] == (True, False)            # already gone after the first save that records the amendment as applied
+
+
 def test_s14_while_a_human_amendment_is_pending_the_defect_only_queues(world, tmp_path):
     pending = tmp_path / "human.amendment.yaml"
     pending.write_text(yaml.safe_dump({"amendment_id": "amend-x", "human_confirmation": "pending"}))

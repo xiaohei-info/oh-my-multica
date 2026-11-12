@@ -386,3 +386,62 @@ def test_s17_with_hold_live_a_ready_live_node_is_held_once_and_the_report_names_
     assert main(["node", "release", path, "a"]) == exit_codes.OK
     released = load_manifest(path)
     assert loop._auto_hold_live(released, path, graph.ready_nodes(loop._build_snapshot(released))) == ["a", "c"]   # not held again
+
+
+def test_node_retry_during_a_live_dag_run_is_refused_and_the_loop_keeps_the_state(tmp_path, monkeypatch, capsys):
+    """The retry arrives while the Loop holds the write lock (inside a tick): refused, so the Loop cannot overwrite it later."""
+    from omac.cli.main import main
+
+    run = WaitingRun(tmp_path, monkeypatch)
+    original, attempts = run.dag_cmd._scheduled_tick, []
+
+    def retry_mid_tick(engine, manifest, path, **kw):
+        if not attempts:
+            attempts.append(main(["node", "retry", path, "a"]))
+            assert load_manifest(path).nodes["a"].status == "blocked"      # nothing was written behind the Loop's back
+        return original(engine, manifest, path, **kw)
+
+    monkeypatch.setattr(run.dag_cmd, "_scheduled_tick", retry_mid_tick)
+    run.acts[1] = WaitingRun.person_retries                                 # after the Loop parks (lock free) the retry goes through
+
+    assert run.run() == exit_codes.OK
+    assert attempts == [exit_codes.VALIDATION]
+    assert "Stop the running `omac dag run`" in capsys.readouterr().err
+    assert {node.status for node in load_manifest(run.path).nodes.values()} == {"done"}
+
+
+@pytest.mark.parametrize("sig, ignored_at_start", [("SIGINT", False), ("SIGINT", True), ("SIGTERM", False)])
+def test_sigint_and_sigterm_stop_dag_run_after_the_current_tick(tmp_path, monkeypatch, sig, ignored_at_start):
+    """A background job starts with SIGINT ignored; the Loop must still stop on it exactly like on SIGTERM."""
+    import os
+    import signal
+
+    from omac.pipeline.loop import TickResult
+
+    number = getattr(signal, sig)
+    run = WaitingRun(tmp_path, monkeypatch)
+    run.args.wait_decisions = False
+    ticks = []
+
+    def tick(_engine, manifest, path, **_kw):
+        ticks.append(1)
+        os.kill(os.getpid(), number)                       # delivered while the tick is running
+        manifest.nodes["a"].status = "in_progress"         # the tick still finishes and saves its state
+        from omac.core.manifest import save_manifest
+        save_manifest(manifest, path)
+        return TickResult(state="in_progress")
+
+    monkeypatch.setattr(run.dag_cmd, "_scheduled_tick", tick)
+    before = signal.getsignal(signal.SIGINT)
+    if ignored_at_start:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    previous = signal.getsignal(signal.SIGINT)
+    try:
+        assert run.run() == exit_codes.IN_PROGRESS
+        assert signal.getsignal(signal.SIGINT) is previous           # the caller's disposition is put back
+    finally:
+        signal.signal(signal.SIGINT, before)
+    assert ticks == [1]
+    assert load_manifest(run.path).nodes["a"].status == "in_progress"
+    with run.lock(run.path):                                         # the write lock was released on exit
+        pass

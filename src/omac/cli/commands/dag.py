@@ -4,6 +4,9 @@ from typing import Optional
 
 import argparse
 import os
+import signal
+import sys
+import threading
 from dataclasses import dataclass, field, replace
 import time
 
@@ -808,16 +811,59 @@ class _Waiting:
     keys: frozenset
 
 
+class _StopRequested(Exception):
+    """Raised by the stop handler only while the run is parked without the lock (nothing is half written)."""
+
+
+class _Stop:
+    """Graceful stop of ``dag run|tick``: SIGINT and SIGTERM both ask for it (设计 §7.3).
+
+    The first signal finishes the tick in progress (state saved, nothing new dispatched) and exits 10 with the lock
+    released; a second one is a forced KeyboardInterrupt. Installing the handler also revives SIGINT in a background
+    job, where the shell starts the process with SIGINT ignored and Python therefore never maps it to Ctrl-C.
+    """
+
+    def __init__(self):
+        self.requested = False
+        self.parked = False           # waiting for a decision: no lock, no write in progress → leave at once
+        self._saved: dict = {}
+
+    def _handle(self, signum, _frame):
+        if self.requested:
+            raise KeyboardInterrupt
+        self.requested = True
+        print(ui(
+            f"Signal {signum}: stopping after the current tick; send it again to abort at once.",
+            f"收到信号 {signum}:当前 tick 结束后停止;再发一次则立即中止。"), file=sys.stderr)
+        if self.parked:
+            raise _StopRequested
+
+    def __enter__(self):
+        if threading.current_thread() is threading.main_thread():
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                self._saved[sig] = signal.signal(sig, self._handle)
+        return self
+
+    def __exit__(self, *_exc):
+        for sig, previous in self._saved.items():
+            signal.signal(sig, previous)
+
+
+_STOP = _Stop()
+
+
 def _loop_or_single(args, single_round: bool) -> int:
+    global _STOP
     clock, notified = _Clock(), set()
-    while True:
-        with manifest_write_lock(args.manifest):
-            outcome = _loop_or_single_locked(args, single_round, clock, notified)
-        if not isinstance(outcome, _Waiting):
-            return outcome
-        code = _wait_for_decision_change(args, outcome, clock)
-        if code is not None:
-            return code
+    with _Stop() as _STOP:
+        while True:
+            with manifest_write_lock(args.manifest):
+                outcome = _loop_or_single_locked(args, single_round, clock, notified)
+            if not isinstance(outcome, _Waiting):
+                return outcome
+            code = _wait_for_decision_change(args, outcome, clock)
+            if code is not None:
+                return code
 
 
 def _decision_keys(manifest, manifest_path: str) -> frozenset:
@@ -843,10 +889,16 @@ def _wait_for_decision_change(args, waiting: _Waiting, clock: _Clock) -> Optiona
     max_minutes = getattr(args, "max_minutes", None)
     poll = _load_config_for_manifest(args.manifest).get("defaults", {}).get("poll_interval", DEFAULTS["poll_interval"])
     while True:
-        if clock.minutes_up(max_minutes):
+        if clock.minutes_up(max_minutes) or _STOP.requested:
             _emit(waiting.result, load_manifest(args.manifest), args)
             return exit_codes.IN_PROGRESS
-        time.sleep(poll)
+        _STOP.parked = True
+        try:
+            time.sleep(poll)
+        except _StopRequested:
+            continue
+        finally:
+            _STOP.parked = False
         try:
             current = load_manifest(args.manifest)
         except ValidationError:
@@ -974,7 +1026,7 @@ def _loop_or_single_locked(args, single_round: bool, clock: Optional[_Clock] = N
         if last_result.state in ("needs_decision", "held"):
             return _stop_for_decision(args, manifest, last_result, wait)
 
-        if single_round:
+        if single_round or _STOP.requested:
             _emit(last_result, manifest, args)
             return exit_codes.IN_PROGRESS
 

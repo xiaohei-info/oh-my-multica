@@ -705,14 +705,12 @@ def run(args) -> int:
         return _cmd_hold_release(args)
     if args.action == "show":
         return _cmd_show(args)
-    if args.action == "retry":
-        return _cmd_retry(args)
-    if args.action == "accept-nits":
-        return _cmd_accept_nits(args)
-    if args.action == "accept":
-        return _cmd_accept(args)
-    if args.action == "abandon":
-        return _cmd_abandon(args)
+    writers = {"retry": _cmd_retry, "accept-nits": _cmd_accept_nits, "accept": _cmd_accept, "abandon": _cmd_abandon}
+    if args.action in writers:
+        # Same single-writer lock as hold/release and the Loop: with a `dag run` alive this is refused (exit 5)
+        # instead of succeeding and being overwritten by the Loop's in-memory state on its next save.
+        with manifest_write_lock(args.manifest):
+            return writers[args.action](args)
     raise ValidationError(ui(
         f"Unknown node subcommand: {args.action}",
         f"未知 node 子命令: {args.action}"))
