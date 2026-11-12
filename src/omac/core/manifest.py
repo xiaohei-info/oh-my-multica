@@ -690,11 +690,13 @@ def manifest_write_lock(path: str):
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ValidationError(ui(
-                "Another `omac dag run`, `tick`, `dag amend propose`, or "
-                f"`dag amend accept` is already operating on manifest: {path}\n"
-                "Wait for it to exit, or confirm the stale process has stopped before retrying.",
-                f"已有另一个 omac dag run/tick/amend propose/accept 正在操作 manifest: {path}\n"
-                "提示:等待现有进程退出,或确认旧进程已停止后再重试。")) from exc
+                "Another `omac dag run`, `tick`, `dag amend propose|accept`, or `node retry|abandon|accept|hold` "
+                f"is already operating on manifest: {path}\n"
+                "Stop the running `omac dag run` first (Ctrl-C or SIGTERM stops it after the current tick), "
+                "or confirm the stale process has stopped, then retry.",
+                f"已有另一个 omac dag run/tick/amend/node 写命令正在操作 manifest: {path}\n"
+                "提示:先停掉正在运行的 `omac dag run`(Ctrl-C 或 SIGTERM,当前 tick 结束后退出),"
+                "或确认旧进程已停止后再重试。")) from exc
         yield
     finally:
         try:

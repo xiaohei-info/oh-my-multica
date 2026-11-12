@@ -1837,6 +1837,10 @@ def _apply_new_amendment(current: Manifest, manifest_path: str, amendment: dict,
     if amendment.get("identity_schema") == SYSTEM_IDENTITY_SCHEMA:
         amended.meta["amendment_apply"]["system"] = True
     amended.meta["last_amendment_id"] = amendment.get("amendment_id")
+    # The human-confirmation marker is spent by this very save: one write, so no crash leaves it stale.
+    pending = amended.dag_state.get("pending_human_amendment")
+    if isinstance(pending, dict) and pending.get("amendment_id") == amendment.get("amendment_id"):
+        del amended.dag_state["pending_human_amendment"]
     save_manifest(amended, manifest_path)
     return amended, minimal, runtime_rebased
 

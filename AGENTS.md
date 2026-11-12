@@ -325,7 +325,7 @@ DAG 级事实（审计计划、缺陷账本、`pending_human_amendment`、`auto_
   区别于漂移：同一工作项两次观察之间被并发写入是 `ObservationConflict`，该项本轮跳过、下轮重观察。
 - **成功只看观察到的事实**：合并成功只由观察到的 PR 判定，不看命令退出码。
 - **`apply` 不重试、不吞异常**；业务失败不自动重试，只有有界计数的回退（§2.2）。
-- **并发**：manifest 写锁是非阻塞 `flock`，被占用时立即报错（exit 5）；锁随进程释放，没有租约 / TTL。
+- **并发**：manifest 写锁是非阻塞 `flock`，被占用时立即报错（exit 5）；所有改节点状态的命令（`node retry|abandon|accept|accept-nits|hold|release`、`dag amend`）与 `dag run|tick` 共用它，`dag run` 活着时这些命令被拒绝而不是被 Loop 覆盖；`dag run|tick` 收到 SIGINT/SIGTERM 时做完当前 tick、释放锁后以 exit 10 退出（第二次信号强制中止）；锁随进程释放，没有租约 / TTL。
   同一工作项的 Worker 控制与 Reviewer 派单用本机锁（`worker_control_lock`、`reviewer_dispatch_lock`），
   持锁后仍必须做一次权威读取；这些锁不是平台级 CAS。多机经 `origin/main` 同步；推送冲突只在每个未推送提交
   都只涉及 manifest 定义与状态目录时才自动 rebase（不 rebase 用户业务提交），推送退避 10 s 起、上限 300 s。
