@@ -97,7 +97,7 @@ Demo；体量大到无法在一次对话里完成，所以用 oh-my-multica 交�
 [`.omac/`](https://github.com/xiaohei-info/awesome-personal-agent/tree/main/.omac) 目录：manifest
 （`apa.yaml`）、验收文档（`apa.acceptance.yaml`）和各节点状态。
 
-从需求到发布候选的路径：
+从需求到发布的路径：
 
 1. **需求 → 方案 → DAG。** Planner 和 Orchestrator Agent 把需求拆成设计方案、包含 61 个业务流程的验收文档，
    以及约 200 个节点的 DAG，按真实模块边界（内核、API、CLI、Web、插件、信息源）划分。
@@ -105,11 +105,9 @@ Demo；体量大到无法在一次对话里完成，所以用 oh-my-multica 交�
    Reviewer 评审，Loop 才会合并。仓库最终累计超过 240 个已合并 PR。
 3. **缺陷回流。** 评审、CI 或验收暴露缺陷时，通过修订在 DAG 中插入专门的修复节点（manifest 中的 `fix.*`
    节点），而不是悄悄绕过，让修复拥有自己的 contract、评审和合并。
-4. **真实环境验收与收口。** `e2e-*-live` 节点在真实环境中执行验收流程，收口节点汇总发布就绪情况。少数节点
-   在计划变化后被放弃，收口节点目前处于 blocked、等待决策；这些状态都在记录里可见，没有被掩盖。
+4. **真实环境验收与收口。** `e2e-*-live` 节点在真实环境中执行验收流程，收口节点汇总发布就绪情况。
 
-对仓库中的 `.omac/apa.yaml` 运行 `omac dag status` 可以看到当前各节点状态；收口期间数字仍会变化。想先在本地
-复现一个最小例子，可参考 [Webhook Inbox Demo](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/blob/main/README.zh-CN.md)。
+想先在本地复现一个最小例子，可参考 [Webhook Inbox Demo](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/blob/main/README.zh-CN.md)。
 
 ## 适合谁
 
