@@ -114,7 +114,7 @@ delivered with oh-my-multica. The orchestration record is public in the reposito
 [`.omac/`](https://github.com/xiaohei-info/awesome-personal-agent/tree/main/.omac) directory: the manifest
 (`apa.yaml`), the acceptance document (`apa.acceptance.yaml`), and the per-node state.
 
-The path from requirement to release candidate:
+The path from requirement to release:
 
 1. **Requirement → design → DAG.** Planner and Orchestrator Agents turned the requirement into a design, an
    acceptance document of 61 business flows, and a DAG of about 200 nodes, split along real module boundaries
@@ -126,12 +126,9 @@ The path from requirement to release candidate:
    fix node (the `fix.*` nodes in the manifest) instead of patching around it silently, so the repair got its own
    contract, review, and merge.
 4. **Live acceptance and closeout.** The `e2e-*-live` nodes ran the acceptance flows against a real environment,
-   and a closeout node gathers release readiness. A few nodes were abandoned after the plan changed, and the
-   closeout node is currently blocked, waiting on a decision; those states are visible in the records rather
-   than hidden.
+   and a closeout node gathers release readiness.
 
-Run `omac dag status` on the repository's `.omac/apa.yaml` to see the current node states; the numbers keep
-changing while delivery closes out. For a minimal example you can reproduce locally, see the
+For a minimal example you can reproduce locally, see the
 [Webhook Inbox demo](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox#readme).
 
 ## Who it is for
