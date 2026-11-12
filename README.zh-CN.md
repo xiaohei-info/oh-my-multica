@@ -89,18 +89,27 @@ oh-my-multica 产出的是面向生产软件交付的版本化 DAG，它不仅�
 消耗最大的开发与测试节点。Harness Engineering 提供行动前约束与行动后反馈，未通过 contract、
 验证、评审或最终验收的结果会进入返工，不能进入交付链。
 
-### 一次真实的端到端交付
+### 一次真实的交付：awesome-personal-agent
 
-我们使用 oh-my-multica 交付了一个满足生产约束的 Webhook Inbox，用于验证、保存并去重第三方
-系统发送的 Webhook 事件。Planner 和 Orchestrator Agent 规划 DAG，Worker Agent 并行实现各个节点，
-Reviewer 和 Acceptor Agent 验证集成结果。确定性交付 Loop 负责调度、证据、合并和收敛。最终得到一个
-可运行的 FastAPI + SQLite 服务，支持签名验证、事务安全去重、事件查询、
-健康检查和非 root 容器交付。具体需求、协作过程和交付证据见
-[Demo README](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/blob/main/README.zh-CN.md)。
+[awesome-personal-agent](https://github.com/xiaohei-info/awesome-personal-agent)（APA）是一个开源、可自部署的
+个人助手层，架在 agent harness 之上，包含 Go 内核、CLI、API、Web 界面、Hermes 插件和信息源包。它不是
+Demo；体量大到无法在一次对话里完成，所以用 oh-my-multica 交付。编排记录公开在仓库的
+[`.omac/`](https://github.com/xiaohei-info/awesome-personal-agent/tree/main/.omac) 目录：manifest
+（`apa.yaml`）、验收文档（`apa.acceptance.yaml`）和各节点状态。
 
-<p align="center">
-  <img src="docs/assets/oh-my-multica-webhook-inbox-demo.svg" alt="Real Webhook Inbox delivery: a five-node DAG, signed event ingestion, idempotent retry, and final acceptance" width="100%">
-</p>
+从需求到发布候选的路径：
+
+1. **需求 → 方案 → DAG。** Planner 和 Orchestrator Agent 把需求拆成设计方案、包含 61 个业务流程的验收文档，
+   以及约 200 个节点的 DAG，按真实模块边界（内核、API、CLI、Web、插件、信息源）划分。
+2. **并行开发与评审。** Worker Agent 并行实现互不依赖的节点，每个节点一个 Pull Request；每个都必须通过独立
+   Reviewer 评审，Loop 才会合并。仓库最终累计超过 240 个已合并 PR。
+3. **缺陷回流。** 评审、CI 或验收暴露缺陷时，通过修订在 DAG 中插入专门的修复节点（manifest 中的 `fix.*`
+   节点），而不是悄悄绕过，让修复拥有自己的 contract、评审和合并。
+4. **真实环境验收与收口。** `e2e-*-live` 节点在真实环境中执行验收流程，收口节点汇总发布就绪情况。少数节点
+   在计划变化后被放弃，收口节点目前处于 blocked、等待决策；这些状态都在记录里可见，没有被掩盖。
+
+对仓库中的 `.omac/apa.yaml` 运行 `omac dag status` 可以看到当前各节点状态；收口期间数字仍会变化。想先在本地
+复现一个最小例子，可参考 [Webhook Inbox Demo](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/blob/main/README.zh-CN.md)。
 
 ## 适合谁
 
