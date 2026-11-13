@@ -68,6 +68,7 @@ def next_worker_retry_command(manifest_path: str, node_key: str, current: str, w
 class AfterCi(Enum):
     BOUNCE = "bounce"                  # already returned to the Worker; do not advance this tick
     BLOCK = "block"                    # CI retry budget exhausted
+    WAIT = "wait"                      # the check is still running: nothing changes, observe again next tick
     MERGE_PASSED_REVIEW = "merge-passed-review"   # current delivery already has a passing verdict
     QUEUE_REVIEW = "queue-review"
     CONFIRM_MERGE = "confirm-merge"    # no reviewer configured
@@ -85,6 +86,8 @@ def decide_after_ci(obs: AfterCiObservation) -> AfterCi:
         return AfterCi.BOUNCE
     if obs.ci_action == "blocked":
         return AfterCi.BLOCK
+    if obs.ci_action == "pending":
+        return AfterCi.WAIT
     if obs.review_passed:
         return AfterCi.MERGE_PASSED_REVIEW
     return AfterCi.QUEUE_REVIEW if obs.has_reviewer else AfterCi.CONFIRM_MERGE

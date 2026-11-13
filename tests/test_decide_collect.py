@@ -22,6 +22,7 @@ def test_worker_no_submit(has_handoff, limit, consumed, expected):
 @pytest.mark.parametrize("ci,passed,reviewer,expected", [
     ("bounce", True, True, A.BOUNCE),
     ("blocked", True, True, A.BLOCK),
+    ("pending", True, True, A.WAIT),     # a check still running outranks a passing verdict: nothing moves yet
     ("pass", True, True, A.MERGE_PASSED_REVIEW),
     ("pass", True, False, A.MERGE_PASSED_REVIEW),
     ("pass", False, True, A.QUEUE_REVIEW),

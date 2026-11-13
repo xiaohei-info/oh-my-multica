@@ -8,6 +8,13 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- CI observation no longer blocks the tick. The default CI command is now `gh pr checks {pr_url}` (no `--watch`); exit code
+  8 (`ci.pending_exit_code`) means the checks are still running, so the node stays in place, other nodes keep being
+  dispatched and defects keep being routed, and the check is observed again next tick. `ci.timeout_minutes` counts from the
+  first pending observation. A custom `ci.check_command` stays blocking unless `ci.pending_exit_code` is set.
+
 ### Fixed
 
 - Paths and branch names in committed content: `pending_human_amendment.file`, the amendment apply ledger's `amendment_file`, the
@@ -37,6 +44,9 @@ This file records public changes to oh-my-multica. The format follows
   the same head rule (`decide_worker.head_proves_new_delivery`) the Loop applies.
 
 ### Fixed
+- A pull request that conflicts with its base never gets CI ("no checks reported"). The CI gate now detects the conflict
+  (`PullRequestObservation.conflicting`) and returns the delivery to the Worker with a rebase instruction instead of waiting
+  out `ci.timeout_minutes` or reporting a CI failure.
 
 - `omac dag run` waited for nothing between two ticks, so a DAG that only waited for Agents re-read the platform as fast as a tick
   could run. A tick that changed no node status and dispatched nothing is now followed by a wait of `defaults.poll_interval`

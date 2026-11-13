@@ -61,6 +61,7 @@ class PullRequestCheckResult:
     exit_code: Optional[int]
     output: str = ""
     timed_out: bool = False
+    pending: bool = False          # 检查仍在进行:既不是通过也不是失败,下一轮再观察
 
 
 class PullRequestReadinessFailureKind(Enum):
@@ -91,6 +92,7 @@ class PullRequestObservation:
     state: PullRequestState
     merged_at: Optional[str] = None
     detail: str = ""
+    conflicting: bool = False      # OPEN PR 与其 base 有合并冲突:平台不会为它运行 CI
 
 
 @dataclass(frozen=True)

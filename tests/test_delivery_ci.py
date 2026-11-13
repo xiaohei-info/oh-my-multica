@@ -61,8 +61,8 @@ def test_a_ci_block_without_a_command_is_not_a_ci_gate_when_there_is_no_workflow
 def test_a_github_workflow_turns_on_gh_pr_checks_with_the_default_timeout(repo):
     with_workflow(repo)
 
-    assert get_ci_config({}, repo) == {"check_command": DEFAULT_GITHUB_CHECK_COMMAND, "timeout_minutes": 30}
-    assert DEFAULT_GITHUB_CHECK_COMMAND == "gh pr checks {pr_url} --watch --fail-fast"
+    assert get_ci_config({}, repo) == {
+        "check_command": DEFAULT_GITHUB_CHECK_COMMAND, "pending_exit_code": 8, "timeout_minutes": 30}
 
 
 def test_a_configured_timeout_applies_to_the_default_workflow_command(repo):

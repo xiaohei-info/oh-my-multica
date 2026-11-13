@@ -26,6 +26,24 @@ def plan_ci_start(*, node_key: str, item_id: str, pr_url: str) -> Plan:
     return Plan((SetNode(node_key, {"status": "ci_check"}), UpdateStatus(item_id, WorkItemStatus.IN_PROGRESS)))
 
 
+def ci_wait_expired(waited_seconds: float, timeout_seconds: int) -> bool:
+    """A pending check is observed once per tick; ``timeout_minutes`` counts from the first pending observation."""
+    return waited_seconds >= timeout_seconds
+
+
+def ci_unpassed_is_conflict(*, passed: bool, conflicting: bool) -> bool:
+    """A conflicting PR never gets CI ("no checks reported"): waiting or counting it as red hides the real cause."""
+    return conflicting and not passed
+
+
+def conflict_summary() -> str:
+    return ui(
+        "The pull request conflicts with its base branch, so GitHub does not run CI for it. Rebase (or merge) the base "
+        "branch into the PR branch, resolve the conflicts, push, then resubmit with `omac work submit`.",
+        "PR 与其 base 分支存在合并冲突，GitHub 因冲突不会运行 CI。请把 base 分支 rebase(或 merge)进 PR 分支、解决冲突、"
+        "推送后用 `omac work submit` 重新提交。")
+
+
 def plan_ci_result(
     *, node_key: str, item_id: str, worker: str, passed: bool, label: str, summary: str,
     bounces: int, limit: int,
