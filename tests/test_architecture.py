@@ -30,6 +30,7 @@ TRANSITIONAL: dict[str, set[str]] = {
     "engine_assembly": set(),
     "function_length": set(),
     "inline_effects": set(),
+    "persisted_paths": set(),
 }
 # Direct manifest writes (set_node / save_manifest outside SetNode/SaveState) per file. May only shrink: lower the
 # number when you remove calls; a new file or a higher number fails. New code uses SetNode + SaveState in a Plan.
@@ -63,7 +64,7 @@ def _violations():
         found["project_names"] += rules.project_names(rel, source)
         if path.suffix == ".py":
             for name in ("captured_literals", "id_comparisons", "subprocess_use", "platform_argv", "engine_assembly",
-                         "function_length", "inline_effects"):
+                         "function_length", "inline_effects", "persisted_paths"):
                 found[name] += getattr(rules, name)(rel, source)
     return {n: [v for v in vs if v.split(":")[0] not in TRANSITIONAL[n]] for n, vs in found.items()}
 
@@ -172,6 +173,13 @@ def test_rule_accepts_generic_code(rule, snippet):
 def test_create_engine_is_allowed_inside_engines_only():
     assert rules.engine_assembly("src/omac/engines/__init__.py", "x = create_engine(a, b)\n") == []
     assert rules.engine_assembly("src/omac/cli/commands/dag.py", "x = engines.create_engine(a, b)\n")
+
+
+def test_persisted_path_rule_accepts_persist_path_and_rejects_a_raw_path():
+    ok = "def f(t, m):\n    return {'file': persist_path(t, m), 'amendment_file': None}\n"
+    bad = "def f(t):\n    return {'file': os.path.abspath(t)}\n"
+    assert rules.persisted_paths("src/omac/pipeline/x.py", ok) == []
+    assert rules.persisted_paths("src/omac/pipeline/x.py", bad)
 
 
 def test_function_length_limit_is_inclusive_and_covers_methods():
