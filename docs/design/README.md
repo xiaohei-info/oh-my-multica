@@ -148,7 +148,6 @@ the usual report; its `next_actions` come from `decide_defects.render_release`.
 (required: every issue belongs to a project), `roles` (planner, orchestrator, workers, reviewers, acceptor),
 `defaults` (`max_parallel`, `poll_interval`, `coverage_gate`), `workflow` (human-in-the-loop, review, acceptance doc),
 `ci.check_command`, `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
-`ci.check_command`, `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
 `retry` (`worker|ci|review|merge|environment`, `no_submit_runs`, `capacity_wait_hours` default 12: how long a Run that failed on quota / rate limit is waited out before the node blocks; `environment` is the automatic same-Worker retries of an
 `environment-failure` report, default 1), `defects` (`auto_fix: off|design-gap`, `per_reporter` 2, `max_auto_fixes: auto` = max(5, ⌈0.15 × nodes⌉) — raised by `omac defect grant --global`, which adds to `_dag.defects.granted_global` and does not edit the config —, `per_suspected` 2),
 `dispatch.hold_live` (default false: hold each ready `evidence_mode: live` node once for a person to
