@@ -382,10 +382,36 @@ def _promote_fixed(manifest: Manifest, ledger: dict) -> bool:
     return promoted
 
 
+# manifest path → what the last pass saw when every pending report only waited (``queued``). Process-local on purpose:
+# losing it (a restart) costs one more routing pass, never a wrong route.
+_QUEUED_SEEN: dict[str, str] = {}
+
+
+def _wait_signature(manifest: Manifest, ledger: dict, cfg: dict) -> str:
+    """Everything that can end a ``queued`` wait, read from the manifest alone (no platform read).
+
+    A wait ends when a human amendment settles, a fix of the same node changes state or finishes, a report appears or
+    goes, or the defect config (budgets) changes.
+    """
+    entries = {fp: (e.get("state"), e.get("fix_node"), e.get("retried"), e.get("stop")) for fp, e in ledger["entries"].items()}
+    fixes = {e["fix_node"]: getattr(manifest.nodes.get(e["fix_node"]), "status", None)
+             for e in ledger["entries"].values() if e.get("fix_node")}
+    pending = {k: (n.status, n.work_item_id) for k, n in manifest.nodes.items() if n.defect_pending}
+    return json.dumps([entries, fixes, pending, ledger["inbox"], ledger.get("applying"), _human_amendment_pending(manifest),
+                       cfg, ledger.get("used_global")], sort_keys=True, default=str)
+
+
 def advance(engine, manifest: Manifest, path: str, config: dict, *, apply_system=None) -> bool:
-    """Route every pending defect report once. Returns True when the manifest or a platform decision changed."""
+    """Route every pending defect report once. Returns True when the manifest or a platform decision changed.
+
+    Reports that only wait (``queued``) are not routed again, and cost no platform read, until what they wait for changes.
+    """
     ledger = ledger_of(manifest)
     promoted = _promote_fixed(manifest, ledger)
+    signature = _wait_signature(manifest, ledger, resolve_defects(config, len(manifest.nodes)))
+    if _QUEUED_SEEN.get(path) == signature and not promoted:
+        return False
+    _QUEUED_SEEN.pop(path, None)
     if not (ledger.get("applying") or ledger["inbox"] or any(n.defect_pending for n in manifest.nodes.values())):
         if promoted:                    # nothing reported, but a fix finished: make `fixed` durable
             _save(manifest, path, ledger, store=engine.store)
@@ -398,10 +424,12 @@ def advance(engine, manifest: Manifest, path: str, config: dict, *, apply_system
     reports, flags = _pending_reports(engine.store, manifest, ledger)
     before, decisions, pass_ = copy.deepcopy(ledger), [], _Pass()
     consumed: list[_Report] = []
+    waiting = bool(reports)
     for report in reports:
         if report.source == "inbox" and manifest.nodes.get(report.reporter) is None:
             continue
         verdict, detail = _route_report(ctx, ledger, report, pass_)
+        waiting = waiting and verdict is Route.QUEUED
         if verdict in STOPS:
             _stop(ctx, ledger, report, verdict, detail, decisions, flags)
         elif verdict is Route.QUEUED:
@@ -412,7 +440,9 @@ def advance(engine, manifest: Manifest, path: str, config: dict, *, apply_system
             log.info(logsetup.EVT_DEFECT_ROUTED, kind="dag", reporter=report.reporter, route=verdict.value, fps=report.fps)
     if ledger != before or decisions or flags:
         _save(manifest, path, ledger, flags, store=engine.store, decisions=decisions)
-        changed = True
+        changed = not waiting or bool(decisions)        # a pass that only recorded `queued` is not a change to observe again
+    if waiting and not consumed and not changed and not decisions:
+        _QUEUED_SEEN[path] = _wait_signature(manifest, ledger_of(manifest), ctx.cfg)    # after the save: what we now wait on
     if consumed:
         return _commit(ctx, ledger_of(manifest), pass_, consumed) or changed
     return changed

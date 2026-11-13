@@ -10,6 +10,9 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Fixed
 
+- A defect report that only waits (`queued`: a fix of the same node is in flight, or a person's amendment is pending) is no
+  longer routed, logged (`defect_routed`) and re-read from the platform on every tick. `defects.advance` remembers what the
+  wait depends on (fix states, pending reports, human amendment, defect config) and skips the pass until that changes.
 - A node-level delivery or control inconsistency no longer makes `omac dag run` exit. Such failures raise
   `errors.NodeFailure` (a `PlatformError` subclass, so an uncaught one is still exit 2) and the Loop settles them per node:
   the node stops with a `decision_required` carrying a `reason_code` and a copyable `omac node retry`, and every other node
