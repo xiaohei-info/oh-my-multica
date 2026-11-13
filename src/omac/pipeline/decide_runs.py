@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Tuple
 
 from ..core.workitem import AgentRunObservation
@@ -22,17 +22,30 @@ BASELINE_MAX_DIRECT_RUN_IDS = 20
 
 TRANSIENT_RUNTIME_MAX_RUNS = 2
 
+# Capacity / rate-limit failures are waited out, not counted: the wait is bounded by time (retry.capacity_wait_hours).
+DEFAULT_CAPACITY_WAIT_MAX_SECONDS = 12 * 3600
+CAPACITY_BACKOFF_BASE_SECONDS = 300
+CAPACITY_BACKOFF_MAX_SECONDS = 1800
+CAPACITY_RESET_MARGIN_SECONDS = 60
+
+# Run failure classes (the one definition; ``DirectRunAttempt`` outcomes are "<class>-failure").
+FAILURE_TRANSIENT = "transient"
+FAILURE_CAPACITY = "capacity"
+FAILURE_NONRETRYABLE = "nonretryable"
+
 
 @dataclass(frozen=True)
 class RunFailure:
     run: AgentRunObservation
     classification: str
     consecutive_runs: int
+    chain_started_at: str | None = None   # creation time of the oldest Run in the consecutive same-class chain
 
     @property
     def exhausted(self) -> bool:
+        # Capacity is bounded by wall-clock (``decide_capacity_wait``), never by a Run count.
         return (
-            self.classification == "transient"
+            self.classification == FAILURE_TRANSIENT
             and self.consecutive_runs >= TRANSIENT_RUNTIME_MAX_RUNS
         )
 
@@ -44,6 +57,7 @@ class ExpectedTerminalRun:
     run: AgentRunObservation
     outcome: str
     consecutive_runs: int
+    chain_started_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +156,96 @@ def is_retryable_transient_run_failure(run: AgentRunObservation) -> bool:
         signature.fullmatch(error)
         for signature in _RETRYABLE_RUN_ERROR_SIGNATURES
     )
+
+
+_CAPACITY_ERROR_TEXT = re.compile(
+    r"hit your .{0,40}limit|rate.?limit|usage limit|too many requests|(?<!\d)429(?!\d)",
+    re.IGNORECASE,
+)
+_RESET_CLOCK = re.compile(
+    r"resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]m)\s*(?:\(([^)]{1,40})\))?", re.IGNORECASE)
+_RESET_ISO = re.compile(
+    r"resets?\s+(?:at\s+)?(\d{4}-\d{2}-\d{2}T[0-9:.]+(?:Z|[+-]\d{2}:?\d{2}))", re.IGNORECASE)
+_RETRY_AFTER = re.compile(
+    r"(?:retry|try again)[^0-9]{0,24}(\d{1,6})\s*(seconds?|secs?|minutes?|mins?|hours?|s|m|h)\b", re.IGNORECASE)
+
+
+def classify_run_failure(run: AgentRunObservation) -> str | None:
+    """The one classification of a failed Run: capacity (wait), transient (bounded rerun) or non-retryable (decision)."""
+    if run.status != "failed":
+        return None
+    # Known short-lived provider overload keeps its bounded rerun even when the platform labels it capacity-like;
+    # the platform label and the quota wording only lift a failure that would otherwise need a person.
+    if is_retryable_transient_run_failure(run):
+        return FAILURE_TRANSIENT
+    if run.failure_class == FAILURE_CAPACITY:
+        return FAILURE_CAPACITY
+    if run.error and _CAPACITY_ERROR_TEXT.search(run.error):
+        return FAILURE_CAPACITY
+    return FAILURE_NONRETRYABLE
+
+
+def _zone(name: str | None):
+    if not name or name.strip().upper() in {"UTC", "UTC+0", "GMT", "Z"}:
+        return timezone.utc
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name.strip())
+    except Exception:    # unknown zone name: the caller falls back to backoff
+        return None
+
+
+def parse_capacity_reset(error: str | None, reference: datetime) -> datetime | None:
+    """When the provider says capacity returns ("resets 12:10pm (UTC)", ISO instant, "retry in 90 seconds")."""
+    if not error:
+        return None
+    iso = _RESET_ISO.search(error)
+    if iso:
+        parsed = parse_platform_time(iso.group(1))
+        if parsed is not None and parsed.tzinfo is not None:
+            return parsed
+    clock = _RESET_CLOCK.search(error)
+    if clock:
+        zone = _zone(clock.group(4))
+        hour = int(clock.group(1))
+        if zone is not None and 1 <= hour <= 12:
+            hour = hour % 12 + (12 if clock.group(3).lower() == "pm" else 0)
+            local = reference.astimezone(zone)
+            candidate = local.replace(hour=hour, minute=int(clock.group(2) or 0), second=0, microsecond=0)
+            if candidate <= local:
+                candidate += timedelta(days=1)
+            return candidate
+    after = _RETRY_AFTER.search(error)
+    if after:
+        unit = after.group(2).lower()[0]
+        seconds = int(after.group(1)) * {"s": 1, "m": 60, "h": 3600}[unit]
+        return reference + timedelta(seconds=seconds)
+    return None
+
+
+@dataclass(frozen=True)
+class CapacityWait:
+    step: str                      # "wait" | "retry" | "exhausted" | "unavailable"
+    not_before: datetime | None = None
+
+
+def decide_capacity_wait(failure: RunFailure, now: datetime, max_wait_seconds: float) -> CapacityWait:
+    """Pure: wait for the reset time (or a bounded backoff when none is stated), rerun after it, give up past the ceiling."""
+    reference = parse_platform_time(failure.run.updated_at) or parse_platform_time(failure.run.created_at)
+    started = parse_platform_time(failure.chain_started_at) or reference
+    if reference is None or reference.tzinfo is None or started is None or started.tzinfo is None:
+        return CapacityWait("unavailable")
+    reset = parse_capacity_reset(failure.run.error, reference)
+    if reset is not None:
+        not_before = reset + timedelta(seconds=CAPACITY_RESET_MARGIN_SECONDS)
+    else:
+        backoff = min(
+            CAPACITY_BACKOFF_BASE_SECONDS * 2 ** max(failure.consecutive_runs - 1, 0),
+            CAPACITY_BACKOFF_MAX_SECONDS)
+        not_before = reference + timedelta(seconds=backoff)
+    if (not_before - started).total_seconds() > max_wait_seconds or (now - started).total_seconds() > max_wait_seconds:
+        return CapacityWait("exhausted", not_before)
+    return CapacityWait("retry" if now >= not_before else "wait", not_before)
 
 
 def ordered_direct_runs(
@@ -302,32 +406,26 @@ def observe_direct_run_attempt(
         return DirectRunAttempt("active", target_run_id)
     if not latest.terminal:
         return DirectRunAttempt("missing", target_run_id)
-    if latest.status == "failed":
-        outcome = (
-            "transient-failure"
-            if is_retryable_transient_run_failure(latest)
-            else "nonretryable-failure"
-        )
+    failure_class = classify_run_failure(latest) if latest.status == "failed" else None
+    if failure_class is not None:
+        outcome = f"{failure_class}-failure"
     else:
         outcome = "finished-without-submit"
 
     consecutive = 0
+    chain_started = None
     for run in expected:
         if not run.terminal:
             break
-        if outcome == "transient-failure":
-            matches = is_retryable_transient_run_failure(run)
-        elif outcome == "nonretryable-failure":
-            matches = (
-                run.status == "failed"
-                and not is_retryable_transient_run_failure(run)
-            )
+        if failure_class is not None:
+            matches = classify_run_failure(run) == failure_class
         else:
             matches = run.status in {"completed", "cancelled"}
         if not matches:
             break
         consecutive += 1
-    terminal = ExpectedTerminalRun(latest, outcome, max(consecutive, attempt))
+        chain_started = run.created_at or chain_started
+    terminal = ExpectedTerminalRun(latest, outcome, max(consecutive, attempt), chain_started)
     return DirectRunAttempt("terminal", target_run_id, terminal)
 
 

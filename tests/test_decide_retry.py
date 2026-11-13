@@ -126,3 +126,23 @@ def test_the_head_to_measure_against_comes_from_the_most_authoritative_source_le
     handoff = replace(prior_handoff(), baseline_pr_head_sha=prior) if prior else None
 
     assert retry_baseline_head(item, handoff) == expected
+
+
+# ---- the verdict a retry carries may have judged an earlier delivery ---------------------------------------------------------
+
+def after_machine_gate():
+    """Rejected at the old head, reworked to HEAD, then bounced by CI: the live verdict is gone, the feedback is only carried."""
+    ci_handoff = replace(prior_handoff(), gate="explicit-dispatch", source_review_verdict=None, baseline_pr_head_sha=None)
+    return rejected(review_verdict=None, worker_handoff=ci_handoff)
+
+
+@pytest.mark.parametrize(("item", "superseded"), [
+    pytest.param(rejected(), False, id="a-live-reject-judged-the-delivery-on-the-item"),
+    pytest.param(after_machine_gate(), True, id="a-machine-gate-bounced-the-delivery-that-followed-the-rework"),
+    pytest.param(rejected(review_verdict=None, worker_handoff=prior_handoff(source_review_superseded=True)), True,
+                 id="a-superseded-retry-stays-superseded"),
+    pytest.param(rejected(review_verdict=None, worker_handoff=prior_handoff()), False, id="a-retry-of-the-reject-itself-is-not"),
+    pytest.param(rejected(review_verdict=None, worker_handoff=None), False, id="no-prior-handoff-fails-closed"),
+])
+def test_a_retry_after_a_machine_gate_does_not_hold_the_worker_to_the_rejected_head(item, superseded):
+    assert plan(item).source_review_superseded is superseded

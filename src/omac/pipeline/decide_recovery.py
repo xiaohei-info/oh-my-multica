@@ -177,6 +177,7 @@ def reviewer_runtime_failure_decision_variants(
         return ()
     failure_classes = {
         "transient-runtime-retry-exhausted": "transient-provider-or-transport",
+        "capacity-wait-exhausted": "provider-capacity-or-rate-limit",
         "nonretryable-runtime-failure": "nonretryable-agent-run",
         # _block_reviewer writes these with the Run id; both are reset by the explicit retry.
         "reviewer-run-no-submit-retry-exhausted": "unproven-reviewer-run-causality",

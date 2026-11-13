@@ -521,3 +521,14 @@ class TestRenderReviewRolloutComment:
         assert "命名修正" in c
         assert "ITEM-1" in c  # 定位评审对象
         assert "朝评审目标修" in c or "目标修" in c
+
+
+def test_a_resubmission_at_the_unmoved_head_is_refused_with_the_reason_instead_of_charging_the_budget():
+    from omac.core.taskmeta import WorkerHandoffIntent
+    from omac.pipeline.dispatch import _refuse_unmoved_head
+    from omac.errors import ValidationError
+    intent = WorkerHandoffIntent(gate="review", source_review_verdict="reject", baseline_pr_head_sha="head-old0000000")
+    with pytest.raises(ValidationError, match="rebase"):
+        _refuse_unmoved_head(SimpleNamespace(worker_handoff=intent), "head-old0000000")
+    _refuse_unmoved_head(SimpleNamespace(worker_handoff=intent), "head-new0000000")
+    _refuse_unmoved_head(SimpleNamespace(worker_handoff=None), "head-old0000000")

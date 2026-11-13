@@ -107,6 +107,18 @@ def retry_baseline_head(current, prior_handoff):
         or None)
 
 
+def retry_verdict_superseded(current, prior_handoff) -> bool:
+    """The review feedback a retry carries judged an earlier delivery than the one now on the item.
+
+    A live verdict judges the delivery on the item. Without one, the feedback is only carried context: when the prior
+    handoff was an explicit authoring dispatch (a machine gate bounced the delivery that followed the rework) or was
+    itself superseded, the Worker has already moved past the judged head.
+    """
+    if current.review_verdict in {"reject", "pass-with-nits"} or prior_handoff is None:
+        return False
+    return prior_handoff.gate == "explicit-dispatch" or prior_handoff.source_review_superseded
+
+
 def plan_rework_handoff(
     node, current, facts: RetryFacts, recovered_context: dict, *, store, list_runs: Callable[[], list],
     agent_id_of: Callable[[str], str], generation: str,
@@ -154,6 +166,7 @@ def plan_rework_handoff(
         baseline_verification_attachment_id=str(
             (current.verification_ref or {}).get("attachment_id") or "") or None,
         baseline_pr_head_sha=retry_baseline_head(current, prior_handoff),
+        source_review_superseded=retry_verdict_superseded(current, prior_handoff),
         target_worker_bounce=current.bounces.worker,
         review_context_binding=review_context_binding(current),
     )

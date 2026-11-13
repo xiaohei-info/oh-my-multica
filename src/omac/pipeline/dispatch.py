@@ -53,6 +53,7 @@ from ..engines.codehost import CodeHost
 from .convergence import ConvergenceResolution, ResolutionState, resolve_convergence
 from .apply import Ports, apply
 from .decide_effects import AddComment, UpdateMetadata
+from .decide_worker import head_proves_new_delivery
 from .decide_transitions import advance_to_review, block_with_decision, finish_with_delivery
 
 
@@ -1182,6 +1183,21 @@ def _worker_control_moved(current: Any, reference: Any) -> bool:
             or current.review_generation != reference.review_generation)
 
 
+def _refuse_unmoved_head(current, pr_head_sha: Optional[str]) -> None:
+    """Refuse, with the reason, a resubmission the Loop could only count as "no delivery" (and charge to the budget)."""
+    intent = current.worker_handoff
+    if intent is None or not pr_head_sha or head_proves_new_delivery(intent, pr_head_sha):
+        return
+    raise ValidationError(ui(
+        f"PR head {pr_head_sha[:12]} is the head this rework was asked to change "
+        f"(baseline {str(intent.baseline_pr_head_sha)[:12]}); submitting it again cannot count as a delivery. "
+        "Push a new commit to the PR branch (for a merge conflict or CI failure: rebase onto the base branch and push) "
+        "and submit again. If no code change is possible, run `omac work block` and say why.",
+        f"PR head {pr_head_sha[:12]} 正是本轮返工要求改动的 head（基线 {str(intent.baseline_pr_head_sha)[:12]}），"
+        "再次提交不会被计为交付。请向 PR 分支推送新提交（合并冲突或 CI 失败时：rebase 到 base 分支后推送）再提交；"
+        "若确实无法改动代码，请执行 `omac work block` 并说明原因。"))
+
+
 def _submit_develop(store, issue_id, item, kind, phase, a: _SubmitArgs) -> SubmitResult:
     with store.worker_control_lock(issue_id):
         current = store.observe_work_item_control(issue_id).work_item
@@ -1193,6 +1209,7 @@ def _submit_develop(store, issue_id, item, kind, phase, a: _SubmitArgs) -> Submi
             a.code_host, a.pr_url, a.verification_file, item)
         verification_source = _read_text(a.verification_file)
         pr_head_sha = readiness.head_sha if readiness is not None else None
+        _refuse_unmoved_head(current, pr_head_sha)
         artifacts = {"pr_url": a.pr_url}
         if pr_head_sha:
             artifacts["head_sha"] = pr_head_sha

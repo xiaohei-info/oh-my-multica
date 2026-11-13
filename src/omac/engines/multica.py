@@ -360,6 +360,15 @@ def _direct_run_ids(runs: List[Dict[str, Any]]) -> set[str]:
     }
 
 
+_CAPACITY_FAILURE_REASON_PREFIX = "agent_error.provider_capacity_or_rate_limit"
+
+
+def _run_failure_class(run: Dict[str, Any]) -> Optional[str]:
+    """Map Multica's ``failure_reason`` to the platform-neutral class the Loop classifies on."""
+    reason = str(run.get("failure_reason") or "")
+    return "capacity" if reason.startswith(_CAPACITY_FAILURE_REASON_PREFIX) else None
+
+
 def _run_trigger_kind(run: Dict[str, Any]) -> str | None:
     attribution = run.get("attribution")
     if not isinstance(attribution, dict):
@@ -2839,6 +2848,7 @@ class MulticaRuntime(AgentRuntime):
                     else None
                 ),
                 trigger_kind=_run_trigger_kind(run),
+                failure_class=_run_failure_class(run),
             )
             for run in runs
             if isinstance(run, dict) and run.get("id")

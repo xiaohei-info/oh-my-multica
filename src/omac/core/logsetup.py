@@ -39,6 +39,7 @@ EVT_AUTO_HOLD = "auto_hold"              # dispatch.hold_live:就绪的 live 节
 EVT_DECISION_PENDING = "decision_pending"  # --wait-decisions:新出现一个等人的决策(按 decision_key 去重,每个只发一次)
 EVT_DEFINITION_RELOADED = "definition_reloaded"  # tick 开始时发现定义文件被外部改动,已从磁盘重载
 EVT_DEFECT_ROUTED = "defect_routed"      # 上游缺陷回流:一份缺陷被路由(route: auto-fix / attach / queued / defect-*)
+EVT_CAPACITY_WAIT = "capacity_wait"      # Run 因额度/限流失败:等重置时间或退避后自动重跑(不耗回退,每个失败 Run 只发一次)
 EVT_CONFIG_SYNCED = "config_synced"      # 派单前 config 自动同步到 main
 EVT_OBSERVATION_CONFLICT = "observation_conflict"  # 并发写使该项乐观读失效:本轮跳过,下轮重新观察
 

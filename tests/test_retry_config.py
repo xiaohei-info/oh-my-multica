@@ -297,3 +297,22 @@ def test_dispatch_hold_live_defaults_to_off(config, expected):
 def test_dispatch_hold_live_rejects_anything_but_a_boolean(dispatch):
     with pytest.raises(ValidationError, match="dispatch"):
         config_mod.resolve_hold_live({"dispatch": dispatch})
+
+
+def test_resolve_capacity_wait_seconds_defaults_and_reads_hours():
+    assert config_mod.resolve_capacity_wait_seconds({}) == 12 * 3600
+    assert config_mod.resolve_capacity_wait_seconds({"retry": {"review": 5}}) == 12 * 3600
+    assert config_mod.resolve_capacity_wait_seconds({"retry": {"capacity_wait_hours": 0.5}}) == 1800
+
+
+@pytest.mark.parametrize("bad", [0, -1, "6", True, None])
+def test_resolve_capacity_wait_seconds_rejects_non_positive_or_non_numbers(bad):
+    with pytest.raises(ValidationError, match="capacity_wait_hours"):
+        config_mod.resolve_capacity_wait_seconds({"retry": {"capacity_wait_hours": bad}})
+
+
+def test_config_set_validates_the_capacity_wait_like_the_resolver():
+    from omac.cli.commands.config_cmd import _validate_set_value
+    _validate_set_value("retry.capacity_wait_hours", 6)
+    with pytest.raises(ValidationError, match="capacity_wait_hours"):
+        _validate_set_value("retry.capacity_wait_hours", 0)

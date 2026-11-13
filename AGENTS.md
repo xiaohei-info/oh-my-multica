@@ -237,6 +237,7 @@ DAG 级事实（审计计划、缺陷账本、`pending_human_amendment`、`auto_
 | 评审收敛 / review convergence | Reviewer 处置有限的义务集合，由代码判断评审往返是否停止；与 DAG 收敛无关 | `core/review_convergence.py`、`decide_task.Fact.CONVERGENCE_STOP` |
 | 阶段终态 / stage terminal | 编写型任务阶段机的 `STOPPED`、`DONE` | `decide_task.TERMINAL` |
 | Run 终态 / run terminal | Run 已 `completed`、`failed` 或 `cancelled` | `AgentRunObservation.terminal` |
+| Run 失败类 / run failure class | 失败 Run 的唯一分类：`capacity`（额度/限流，等重置时间或退避后自动重跑，只受 `retry.capacity_wait_hours` 约束）、`transient`（传输类，有界重跑）、`nonretryable`（显式决策） | `decide_runs.classify_run_failure`、`decide_capacity_wait`、`AgentRunObservation.failure_class` |
 | 派单 / dispatch | 为就绪节点创建或复用工作项并唤醒 Agent | `pipeline/dispatch.py` |
 | 门 / gate | 机器检查：lint、证据 schema、CI、合并观察、覆盖率 | `core/lint.py`、`core/evidence.py`、`pipeline/delivery.py` |
 | 回退 / rework（bounce） | 有界、计数地把交付退回产出者 | `retry.worker|ci|review|merge`，`WorkItem.bounces` |

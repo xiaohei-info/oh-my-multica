@@ -66,16 +66,27 @@ def test_a_matching_submit_waits_until_the_workers_run_is_over(kit):
     assert kit.store.get_work_item(item.id).worker_handoff is not None
 
 
-def test_a_revision_on_the_rejected_head_returns_to_the_worker_not_to_the_reviewer(kit):
-    manifest, path, item = rejected(kit, [kit.stack.tool("worker-submit", "--no-push")], *HANG)
-    kit.tick(manifest, path)
+def test_a_revision_on_the_rejected_head_is_refused_at_submit_and_never_reaches_the_reviewer(kit):
+    from _support.deliveries import verification_for
+    from _support.loopkit import contract
+    import yaml
+    from omac.errors import ValidationError
+    from omac.pipeline.dispatch import submit as submit_work
+
+    manifest, path, item = rejected(kit, IDLE, *HANG)
+    kit.tick(manifest, path, retry_limits={"worker": 5})
     kit.wait_runs_ended(item.id)
+    current = kit.store.get_work_item(item.id)
+    document = kit.tmp_path / "verification.yaml"
+    document.write_text(yaml.safe_dump({**verification_for(contract(), "a"), "revision": "same head"}))
     assigns = kit.record(kit.store, "assign_work_item")
 
-    result = kit.tick(manifest, path)
+    with pytest.raises(ValidationError, match="rebase"):
+        submit_work(kit.store, item.id, code_host=kit.code_host, pr_url=current.artifacts["pr_url"], verification_file=str(document))
 
-    assert result.state == "running" and manifest.nodes["a"].status == "in_progress"
-    assert not reviewers(assigns) and kit.store.get_work_item(item.id).worker_handoff is not None
+    after = kit.store.get_work_item(item.id)
+    assert after.verification_ref == current.verification_ref and after.worker_handoff is not None
+    assert not reviewers(assigns)
 
 
 def test_a_pr_head_that_moves_after_the_submit_voids_the_delivery_before_the_reviewer(kit):

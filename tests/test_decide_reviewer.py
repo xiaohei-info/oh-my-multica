@@ -145,6 +145,16 @@ def test_reviewer_run_decision(runs, kw, action):
     assert decide(runs, **kw).action is action
 
 
+def test_a_quota_or_rate_limit_failure_is_waited_out_instead_of_spending_the_budget():
+    limited = run("r1", "failed", error="429 You've hit your 5-hour limit, resets 12:10pm (UTC)")
+    repeated = [replace(run(f"r{n}", "failed", created=f"2026-08-01T01:0{n}:00Z", error="rate limit exceeded"),
+                        failure_class="capacity", retry_of_run_id=f"r{n - 1}" if n > 1 else None) for n in (3, 2, 1)]
+
+    assert decide([limited]).action is A.CAPACITY_FAILURE
+    decided = decide(repeated, target="r1")
+    assert decided.action is A.CAPACITY_FAILURE and decided.failure.consecutive_runs == 3 and not decided.failure.exhausted
+
+
 def test_a_provider_failure_carries_its_classification_for_the_block_reason():
     decided = decide([run("r1", "failed", error="quota exhausted for this account")])
     assert decided.action is A.BLOCK_RUNTIME_FAILURE and decided.failure.classification == "nonretryable"

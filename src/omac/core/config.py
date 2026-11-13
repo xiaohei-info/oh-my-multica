@@ -96,6 +96,9 @@ DEFAULT_MAX_ROUNDS = 3
 # 基础设施瞬时失败(连续 transient-failure Run)预算不用此值,仍固定为 2。
 DEFAULT_NO_SUBMIT_RUNS = 2
 
+# 容量/限流类 Run 失败(配额、限流)的最长等待小时数:按重置时间或退避自动重跑,不消耗回退/审计轮数。
+DEFAULT_CAPACITY_WAIT_HOURS = 12
+
 # DAG develop 节点的 pass-with-nits:accept = 视为通过(nits 原文留在评审报告);decide = 停下等 `omac node accept-nits`。
 DEFAULT_REVIEW = {"node_nits": "accept", "invalid_evidence_restarts": 2}
 NODE_NITS_MODES = ("accept", "decide")
@@ -193,6 +196,26 @@ def resolve_retry(config: dict) -> dict:
                 f"retry.{key} 不能为负数(非法值 {val});需 ≥ 0"))
         resolved[key] = val
     return resolved
+
+
+def resolve_capacity_wait_seconds(config: dict) -> float:
+    """解析 retry.capacity_wait_hours:容量/限流类 Run 失败(配额、限流)最长等待时长,缺省 12 小时。
+
+    等待只受时间约束、不消耗任何回退计数;超过上限才 blocked(capacity-wait-exhausted)。
+    必须为 > 0 的数字,非法值在校验期报 ValidationError(→ exit 5)。
+    """
+    raw = get_value(config, "retry")
+    if not isinstance(raw, dict) or "capacity_wait_hours" not in raw:
+        return DEFAULT_CAPACITY_WAIT_HOURS * 3600.0
+    val = raw["capacity_wait_hours"]
+    if isinstance(val, bool) or not isinstance(val, (int, float)) or val <= 0:
+        raise ValidationError(ui(
+            f"retry.capacity_wait_hours must be a number > 0; got {val!r}. It bounds how long a Run that failed on "
+            f"quota / rate limit is waited out before the node blocks; remove the key for the default "
+            f"{DEFAULT_CAPACITY_WAIT_HOURS}.",
+            f"retry.capacity_wait_hours 必须为大于 0 的数字,got {val!r}。它约束额度/限流失败的 Run 最长等待多久,"
+            f"超过才 blocked;删除该键即恢复缺省 {DEFAULT_CAPACITY_WAIT_HOURS}。"))
+    return float(val) * 3600.0
 
 
 def resolve_no_submit_runs(config: dict) -> int:

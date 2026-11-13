@@ -146,6 +146,7 @@ class RunAction(Enum):
     QUEUE_INITIAL_DISPATCH = "queue-initial-dispatch"           # a prepared subject was never dispatched
     BLOCK_RUNTIME_FAILURE = "block-runtime-failure"             # non-retryable, or the infrastructure budget is spent
     RETRY_INFRASTRUCTURE = "retry-infrastructure"               # one bounded rerun that costs no review bounce
+    CAPACITY_FAILURE = "capacity-failure"                       # quota / rate limit: wait for the reset (decide_capacity_wait)
     CHECK_NO_SUBMIT = "check-no-submit"                         # ended without a verdict: apply decide_no_submit
     WAIT = "wait"                                               # active, or nothing observable yet
 
@@ -178,8 +179,10 @@ def decide_reviewer_run(obs: RunObservation) -> RunDecision:
         return RunDecision(RunAction.WAIT)
     if terminal.outcome == "finished-without-submit":
         return RunDecision(RunAction.CHECK_NO_SUBMIT)
-    failure = RunFailure(terminal.run, "transient" if terminal.outcome == "transient-failure" else "nonretryable",
-                         terminal.consecutive_runs)
+    failure = RunFailure(terminal.run, terminal.outcome.removesuffix("-failure"), terminal.consecutive_runs,
+                         terminal.chain_started_at)
+    if failure.classification == "capacity":
+        return RunDecision(RunAction.CAPACITY_FAILURE, failure=failure)
     if failure.classification == "nonretryable" or failure.exhausted:
         return RunDecision(RunAction.BLOCK_RUNTIME_FAILURE, failure=failure)
     return RunDecision(RunAction.RETRY_INFRASTRUCTURE, failure=failure)

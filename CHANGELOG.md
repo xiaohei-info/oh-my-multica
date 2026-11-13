@@ -23,6 +23,21 @@ This file records public changes to oh-my-multica. The format follows
   {used, limit}, global: {used, limit}}` and one copyable `omac defect grant` per spent layer. New `omac defect grant --global
   [--count N]` raises the DAG-wide `defects.max_auto_fixes` (ledger `granted_global`) and re-queues every report the global limit
   stopped; `--reporter` and `--global` are mutually exclusive. The `reason_code` is unchanged.
+- A Worker or Reviewer Run that failed on provider quota or rate limit (Multica `failure_reason` `agent_error.provider_capacity_or_rate_limit`,
+  or a `429` / "hit your … limit" message) was judged non-retryable and asked a person to decide. Run failures now share one classification
+  (`capacity` / `transient` / `nonretryable`); capacity failures are waited out until the reset time in the error (or a bounded backoff), then
+  rerun, with no bounce, audit round or Run budget spent and without holding other nodes. `retry.capacity_wait_hours` (default 12) bounds the wait;
+  past it the node stops as `capacity-wait-exhausted`.
+- After a CI bounce of the rework, `omac node retry` measured the Worker's next submit against the head of that (never reviewed) delivery,
+  so a Worker that had nothing left to change submitted successfully, was counted as "finished without submit" and exhausted `retry.worker`. The
+  handoff now records `source_review_superseded` and then only requires a fresh verification attachment.
+- A Worker that resubmitted the same PR head a rework asked it to change (for example after a merge conflict it did not rebase) got a
+  successful `omac work submit`, but the Loop could not count it as a delivery, so each attempt silently spent one `retry.worker` bounce.
+  `omac work submit` now refuses such a submission with the reason and the way out (push a new commit / rebase, or `omac work block`), using
+  the same head rule (`decide_worker.head_proves_new_delivery`) the Loop applies.
+
+### Fixed
+
 - `omac dag run` waited for nothing between two ticks, so a DAG that only waited for Agents re-read the platform as fast as a tick
   could run. A tick that changed no node status and dispatched nothing is now followed by a wait of `defaults.poll_interval`
   (default 30 s); a tick that moved something is followed at once, and a stop signal ends the wait. The final-acceptance loop
