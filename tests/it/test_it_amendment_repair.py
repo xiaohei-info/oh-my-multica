@@ -2,6 +2,7 @@
 import copy
 
 import pytest
+from omac.core.pathrefs import persist_path
 import yaml
 
 import omac.core.amendment as amendment_mod
@@ -118,7 +119,7 @@ def test_a_failed_baseline_read_in_a_legacy_repair_has_no_side_effect(kit, legac
     # the only thing the repeated accept records before it reads the baseline is the file it was given
     assert yaml.safe_load(path.read_text()) == {**yaml.safe_load(before_manifest), "meta": {
         **yaml.safe_load(before_manifest)["meta"], "amendment_apply": {
-            **yaml.safe_load(before_manifest)["meta"]["amendment_apply"], "amendment_file": str(amendment_file)}}}
+            **yaml.safe_load(before_manifest)["meta"]["amendment_apply"], "amendment_file": persist_path(str(amendment_file), str(path))}}}
     assert amendment_file.read_bytes() == before_amendment
     assert entry["state"] == "synced" and "attempt_baseline" not in entry and "expected_review_generation" not in entry
     assert kit.store.get_work_item(target.id) == before_item
