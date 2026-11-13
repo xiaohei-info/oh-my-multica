@@ -24,7 +24,7 @@ from ..core import graph, logsetup
 from ..core.submit_rejection import REASON_REVIEWER_SUBMIT_REJECTED
 from ..core.defects import UPSTREAM_DEFECT, defect_errors, review_origin_defects
 from ..core.amendment import ensure_amendment_apply_complete
-from ..core.config import DEFAULT_RETRY, resolve_defects, resolve_hold_live, resolve_no_submit_runs, resolve_node_nits
+from ..core.config import DEFAULT_RETRY, resolve_capacity_wait_seconds, resolve_defects, resolve_hold_live, resolve_no_submit_runs, resolve_node_nits
 from ..core.contract_boundaries import (
     build_contract_boundary_decision,
     contract_boundary_conflicts,
@@ -109,8 +109,8 @@ from .decide_reviewer import (
 )
 from .decide_runs import (
     foreign_unbaselined_runs, is_active_formal_run,
-    TRANSIENT_RUNTIME_MAX_RUNS, ExpectedTerminalRun, RunFailure,
-    bounded_direct_run_baseline, formal_dispatch_target, is_retryable_transient_run_failure,
+    TRANSIENT_RUNTIME_MAX_RUNS, ExpectedTerminalRun, RunFailure, classify_run_failure, decide_capacity_wait,
+    bounded_direct_run_baseline, formal_dispatch_target,
     observe_direct_run_attempt, parse_baseline_cutoff, parse_platform_time, run_created_within_baseline,
 )
 from .decide_effects import (
@@ -275,13 +275,9 @@ def _latest_run_failure(
     terminal = observed.terminal
     if terminal is None or terminal.outcome == "finished-without-submit":
         return None
-    classification = (
-        "transient"
-        if terminal.outcome == "transient-failure"
-        else "nonretryable"
-    )
     return RunFailure(
-        terminal.run, classification, terminal.consecutive_runs)
+        terminal.run, terminal.outcome.removesuffix("-failure"), terminal.consecutive_runs,
+        terminal.chain_started_at)
 
 
 
@@ -299,7 +295,7 @@ def _resolved_worker_handoff_dispatch(
 ) -> _WorkerHandoffResult | None:
     if result.state in {
         "complete", "complete-unsealed", "finished-without-submit", "transient-failure",
-        "nonretryable-failure", "needs-decision",
+        "capacity-failure", "nonretryable-failure", "needs-decision",
     }:
         return result
     if result.state in {"waiting", "pending-submit"}:
@@ -808,6 +804,27 @@ def _resume_reviewer_run(
     return resumed
 
 
+_capacity_wait_logged: set = set()
+
+
+def _settle_capacity_failure(c, key: str, item, role: str, failure: RunFailure) -> str:
+    """One capacity / rate-limit failure: "retry" (reset passed), "wait" (nothing spent, next tick looks again) or "blocked"."""
+    wait = decide_capacity_wait(failure, _utcnow(), resolve_capacity_wait_seconds(c.config or {}))
+    if wait.step == "retry":
+        return "retry"
+    if wait.step == "wait":
+        if failure.run.id not in _capacity_wait_logged:
+            _capacity_wait_logged.add(failure.run.id)
+            log.info(
+                logsetup.EVT_CAPACITY_WAIT, kind=_DAG_KIND, node=key, id=item.id, gate=role,
+                run_id=failure.run.id, not_before=wait.not_before.isoformat())
+        return "wait"
+    c.failures[key] = _block_runtime_failure(
+        c.store, c.manifest, c.manifest_path, key, item, role, failure)
+    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key, id=item.id, reason=c.failures[key], run_id=failure.run.id)
+    return "blocked"
+
+
 def _block_runtime_failure(
     store: WorkItemStore,
     manifest: Manifest,
@@ -820,7 +837,16 @@ def _block_runtime_failure(
     """Stop in the current business stage without consuming business bounce."""
     retry = node_retry_action(manifest_path, key, item.phase)
     exhausted = failure.classification == "transient"
-    if exhausted:
+    if failure.classification == "capacity":
+        reason_code = "capacity-wait-exhausted"
+        failure_class = "provider-capacity-or-rate-limit"
+        reason = ui(
+            f"{role.title()} Run {failure.run.id} kept failing on provider quota / rate limit past the wait ceiling "
+            f"(retry.capacity_wait_hours) or its reset time is unreadable. Run `{retry}` once capacity is back.",
+            f"{role} Run {failure.run.id} 持续因额度/限流失败，已超过等待上限(retry.capacity_wait_hours)"
+            f"或无法确定重置时间。额度恢复后请执行 `{retry}`。",
+        )
+    elif exhausted:
         reason_code = "transient-runtime-retry-exhausted"
         failure_class = "transient-provider-or-transport"
         reason = ui(
@@ -2366,11 +2392,7 @@ def _observe_worker_handoff(
     if observed.state == "terminal":
         target_run = observed.terminal.run
         if target_run.status == "failed":
-            state = (
-                "transient-failure"
-                if is_retryable_transient_run_failure(target_run)
-                else "nonretryable-failure"
-            )
+            state = f"{classify_run_failure(target_run)}-failure"
             return _WorkerHandoffResult(
                 state, intent, projection)
         if (
@@ -2444,7 +2466,7 @@ def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path):
         return item, None
     if (
         not has_facts and not wrong_actor and observed.state == "terminal"
-        and observed.terminal.outcome == "transient-failure"
+        and observed.terminal.outcome in {"transient-failure", "capacity-failure"}
         and observed.terminal.consecutive_runs == 1
     ):
         intent = WorkerHandoffIntent(
@@ -3077,7 +3099,7 @@ def _collect_worker_handoff(c: _Collect, n: _Node) -> bool:
             c.failures[key] = "worker-decision-required"
             return True
         if n.handoff.state in {
-            "transient-failure", "nonretryable-failure",
+            "transient-failure", "capacity-failure", "nonretryable-failure",
         }:
             failure = _latest_run_failure(
                 c.runtime,
@@ -3094,6 +3116,13 @@ def _collect_worker_handoff(c: _Collect, n: _Node) -> bool:
                 raise ObservationConflict(
                     f"Failed Worker Run facts changed for work item "
                     f"{node.work_item_id}")
+            capacity = (
+                _settle_capacity_failure(c, key, n.item, "worker", failure)
+                if failure.classification == "capacity" else None)
+            if capacity == "blocked":
+                return True
+            if capacity == "wait":
+                return True    # nothing spent; the node stays in progress and the next tick looks again
             if failure.classification == "nonretryable" or failure.exhausted:
                 reason = _block_runtime_failure(
                     c.store, c.manifest, c.manifest_path, key, n.item,
@@ -3108,9 +3137,10 @@ def _collect_worker_handoff(c: _Collect, n: _Node) -> bool:
                     run_id=failure.run.id,
                 )
                 return True
-            time.sleep(
-                _TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS
-                * failure.consecutive_runs)
+            if capacity is None:
+                time.sleep(
+                    _TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS
+                    * failure.consecutive_runs)
             n.handoff = _retry_worker_handoff(
                 c.store, c.runtime, c.code_host, c.manifest, key, n.item, consume_business_bounce=False)
             if n.handoff.state == "needs-decision":
@@ -3589,7 +3619,12 @@ def _observe_reviewer_run(c: _Collect, n: _Node) -> bool:
                 "reviewer", decision.failure)
         )
         return True
-    if decision.action is RunAction.RETRY_INFRASTRUCTURE:
+    if decision.action is RunAction.CAPACITY_FAILURE:
+        settled = _settle_capacity_failure(c, key, n.item, "reviewer", decision.failure)
+        if settled != "retry":
+            return True
+        retry_kind = "infrastructure_retry"
+    elif decision.action is RunAction.RETRY_INFRASTRUCTURE:
         time.sleep(_TRANSIENT_RUNTIME_RETRY_BACKOFF_SECONDS)
         retry_kind = "infrastructure_retry"
     else:

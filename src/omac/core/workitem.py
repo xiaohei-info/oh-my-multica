@@ -105,6 +105,8 @@ class AgentRunObservation:
     error: Optional[str] = None
     retry_of_run_id: Optional[str] = None
     trigger_kind: Optional[str] = None
+    # Platform-neutral failure class the adapter already knows ("capacity" = quota / rate limit / provider capacity).
+    failure_class: Optional[str] = None
 
     @property
     def active(self) -> bool:

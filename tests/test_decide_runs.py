@@ -367,3 +367,95 @@ def test_a_capped_handoff_fits_the_platforms_metadata_limit():
 
     assert_metadata_write_allowed(WORKER_HANDOFF_KEY, intent.as_dict())
     assert len(intent.baseline_direct_run_ids) == 20 and replace(intent, target_run_id=None).baseline_direct_run_ids == ids
+
+
+# ---- quota / rate-limit failures are waited out, never counted ------------------------------------------------------
+
+from datetime import datetime, timezone  # noqa: E402
+
+QUOTA = ("429 {\"error\":{\"message\":\"Claude Code: You've hit your 5-hour limit \u00b7 resets 12:10pm (UTC) "
+         "(out of its allowance: not asked again before 11:07 UTC+0)\"},\"type\":\"error\"}")
+
+
+def failed_run(error=QUOTA, failure_class="capacity", run_id="run-1", created="2026-11-13T10:13:53Z", ended="2026-11-13T10:14:51Z"):
+    return AgentRunObservation(id=run_id, kind="direct", status="failed", agent_id="agent-1", created_at=created,
+                               updated_at=ended, error=error, failure_class=failure_class)
+
+
+@pytest.mark.parametrize(("run", "expected"), [
+    pytest.param(failed_run(), "capacity", id="the-platform-says-capacity"),
+    pytest.param(failed_run(failure_class=None), "capacity", id="the-message-says-limit-without-a-platform-class"),
+    pytest.param(failed_run(error="read timeout while waiting for provider response", failure_class=None), "transient",
+                 id="a-transport-timeout-stays-a-bounded-rerun"),
+    pytest.param(failed_run(error="Selected model is at capacity. Please try a different model.", failure_class=None), "transient",
+                 id="the-model-at-capacity-signature-stays-transient"),
+    pytest.param(failed_run(error="panic: nil pointer", failure_class=None), "nonretryable", id="an-unknown-error-needs-a-person"),
+    pytest.param(failed_run(error=None, failure_class=None), "nonretryable", id="no-error-text-needs-a-person"),
+    pytest.param(replace(failed_run(), status="completed"), None, id="a-finished-run-is-not-a-failure"),
+])
+def test_a_failed_run_is_capacity_transient_or_nonretryable(run, expected):
+    assert decide_runs.classify_run_failure(run) == expected
+
+
+@pytest.mark.parametrize(("error", "expected"), [
+    pytest.param(QUOTA, "2026-11-13T12:10:00+00:00", id="clock-time-with-utc-after-the-failure"),
+    pytest.param("limit reached, resets 9am (Asia/Shanghai)", "2026-11-14T09:00:00+08:00", id="named-zone-next-occurrence-in-that-zone"),
+    pytest.param("limit reached, resets 2026-11-14T01:00:00Z", "2026-11-14T01:00:00+00:00", id="iso-instant"),
+    pytest.param("rate limited, retry in 90 seconds", "2026-11-13T10:16:21+00:00", id="relative-seconds"),
+    pytest.param("limit reached, resets 9am (Mars/Olympus)", None, id="unknown-zone-is-not-guessed"),
+    pytest.param("limit reached", None, id="no-reset-stated"),
+])
+def test_the_reset_time_is_read_from_the_error_when_it_is_stated(error, expected):
+    reference = datetime(2026, 11, 13, 10, 14, 51, tzinfo=timezone.utc)
+    reset = decide_runs.parse_capacity_reset(error, reference)
+
+    assert (reset.isoformat() if reset else None) == expected
+
+
+def test_a_clock_time_that_already_passed_today_means_tomorrow():
+    reference = datetime(2026, 11, 13, 13, 0, tzinfo=timezone.utc)
+
+    assert decide_runs.parse_capacity_reset("resets 12:10pm (UTC)", reference).isoformat() == "2026-11-14T12:10:00+00:00"
+
+
+def waiting(run=None, consecutive=1, started="2026-11-13T10:13:53Z"):
+    return decide_runs.RunFailure(run or failed_run(), "capacity", consecutive, started)
+
+
+DAY = 24 * 3600
+
+
+@pytest.mark.parametrize(("failure", "now", "ceiling", "step"), [
+    pytest.param(waiting(), "2026-11-13T11:00:00+00:00", 12 * 3600, "wait", id="before-the-reset"),
+    pytest.param(waiting(), "2026-11-13T12:11:30+00:00", 12 * 3600, "retry", id="after-the-reset-plus-margin"),
+    pytest.param(waiting(failed_run(error="limit", failure_class="capacity")), "2026-11-13T10:15:00+00:00", 12 * 3600, "wait",
+                 id="no-reset-stated-backs-off-first"),
+    pytest.param(waiting(failed_run(error="limit", failure_class="capacity")), "2026-11-13T10:20:00+00:00", 12 * 3600, "retry",
+                 id="no-reset-stated-retries-after-the-backoff"),
+    pytest.param(waiting(), "2026-11-13T11:00:00+00:00", 3600, "exhausted", id="the-stated-reset-lies-beyond-the-ceiling"),
+    pytest.param(waiting(failed_run(error="limit"), 4), "2026-11-13T23:00:00+00:00", 12 * 3600, "exhausted",
+                 id="waiting-has-lasted-past-the-ceiling"),
+    pytest.param(waiting(replace(failed_run(), updated_at=None, created_at=None), started=None), "2026-11-13T11:00:00+00:00",
+                 12 * 3600, "unavailable", id="no-usable-timestamps"),
+])
+def test_a_capacity_failure_waits_for_the_reset_then_reruns_until_the_ceiling(failure, now, ceiling, step):
+    assert decide_runs.decide_capacity_wait(failure, datetime.fromisoformat(now), ceiling).step == step
+
+
+def test_the_backoff_without_a_stated_reset_doubles_and_is_capped():
+    ended = datetime(2026, 11, 13, 10, 0, tzinfo=timezone.utc)
+    run = failed_run(error="limit", ended=ended.isoformat())
+    waits = [decide_runs.decide_capacity_wait(waiting(run, n, run.created_at), ended, DAY).not_before - ended for n in (1, 2, 3, 4, 9)]
+
+    assert [int(w.total_seconds()) for w in waits] == [300, 600, 1200, 1800, 1800]
+
+
+def test_capacity_runs_in_a_row_are_one_chain_that_never_exhausts_by_count():
+    runs = [replace(failed_run(run_id=f"run-{n}", created=f"2026-11-13T1{n}:00:00Z", ended=f"2026-11-13T1{n}:01:00Z"),
+                    retry_of_run_id=f"run-{n - 1}" if n else None) for n in range(5)]
+    observed = decide_runs.observe_direct_run_attempt(runs, "agent-1", target_run_id="run-0")
+
+    assert observed.state == "terminal" and observed.terminal.outcome == "capacity-failure"
+    assert observed.terminal.consecutive_runs == 5 and observed.terminal.chain_started_at == "2026-11-13T10:00:00Z"
+    failure = decide_runs.RunFailure(observed.terminal.run, "capacity", 5)
+    assert not failure.exhausted

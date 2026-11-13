@@ -379,6 +379,9 @@ class WorkerHandoffIntent:
     # Worker Run cannot send the unchanged rejected code straight to Reviewer.
     # Optional for legacy handoffs and evidence-only/nits compatibility paths.
     baseline_pr_head_sha: Optional[str] = None
+    # The carried review verdict judged an EARLIER delivery than the one on the item (a machine gate sent the Worker back
+    # after the rework, so the current head was never reviewed). An unchanged head then cannot be "the rejected code".
+    source_review_superseded: bool = False
     target_run_id: Optional[str] = None
     target_worker_bounce: Optional[int] = None
     terminal_observed_at: Optional[str] = None
@@ -413,6 +416,7 @@ class WorkerHandoffIntent:
             "terminal_observed_at": self.terminal_observed_at,
             **({"authoring_recovery": deepcopy(self.authoring_recovery)}
                if self.authoring_recovery is not None else {}),
+            **({"source_review_superseded": True} if self.source_review_superseded else {}),
             **({"transient_retries": self.transient_retries} if self.transient_retries else {}),
         }
 
@@ -674,6 +678,7 @@ def parse_worker_handoff(value: Any) -> Optional[WorkerHandoffIntent]:
         baseline_verification_attachment_id=text_field(
             "baseline_verification_attachment_id"),
         baseline_pr_head_sha=text_field("baseline_pr_head_sha"),
+        source_review_superseded=value.get("source_review_superseded") is True,
         target_run_id=text_field("target_run_id"),
         target_worker_bounce=int_field("target_worker_bounce"),
         terminal_observed_at=text_field("terminal_observed_at"),

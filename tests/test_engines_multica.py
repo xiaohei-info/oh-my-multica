@@ -3348,6 +3348,21 @@ def test_multica_runtime_lists_typed_run_identity(monkeypatch):
     ]
 
 
+@pytest.mark.parametrize(("reason", "failure_class"), [
+    ("agent_error.provider_capacity_or_rate_limit", "capacity"),
+    ("agent_error.provider_capacity_or_rate_limit.five_hour", "capacity"),
+    ("agent_error.model_not_found_or_unavailable", None),
+    (None, None),
+])
+def test_multica_runtime_maps_the_platform_failure_reason_to_a_neutral_failure_class(monkeypatch, reason, failure_class):
+    store = MulticaStore(EngineConfig(engine_type="multica", workspace_id="ws"))
+    runtime = MulticaRuntime(store, active_observation_interval=0)
+    run = {"id": "run-1", "kind": "direct", "status": "failed", "agent_id": "agent-1", "error": "429 limit"}
+    monkeypatch.setattr(store, "_run_multica", lambda _args: [{**run, **({"failure_reason": reason} if reason else {})}])
+
+    assert runtime.list_runs("issue-1")[0].failure_class == failure_class
+
+
 @pytest.mark.parametrize(
     "status",
     ["queued", "dispatched", "running", "waiting_local_directory", "deferred"],

@@ -95,6 +95,9 @@ def _validate_set_value(key: str, value):
                     "no-submit 续跑预算;删除该键即恢复缺省 "
                     f"{config_mod.DEFAULT_NO_SUBMIT_RUNS}。"))
             return
+        if sub == "capacity_wait_hours":
+            config_mod.resolve_capacity_wait_seconds({"retry": {sub: value}})
+            return
         if sub not in config_mod.DEFAULT_RETRY:
             return
         if isinstance(value, bool) or not isinstance(value, int):

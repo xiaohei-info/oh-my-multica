@@ -148,7 +148,8 @@ the usual report; its `next_actions` come from `decide_defects.render_release`.
 (required: every issue belongs to a project), `roles` (planner, orchestrator, workers, reviewers, acceptor),
 `defaults` (`max_parallel`, `poll_interval`, `coverage_gate`), `workflow` (human-in-the-loop, review, acceptance doc),
 `ci.check_command`, `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
-`retry` (`worker|ci|review|merge|environment`, `no_submit_runs`; `environment` is the automatic same-Worker retries of an
+`ci.check_command`, `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
+`retry` (`worker|ci|review|merge|environment`, `no_submit_runs`, `capacity_wait_hours` default 12: how long a Run that failed on quota / rate limit is waited out before the node blocks; `environment` is the automatic same-Worker retries of an
 `environment-failure` report, default 1), `defects` (`auto_fix: off|design-gap`, `per_reporter` 2, `max_auto_fixes: auto` = max(5, ⌈0.15 × nodes⌉) — raised by `omac defect grant --global`, which adds to `_dag.defects.granted_global` and does not edit the config —, `per_suspected` 2),
 `dispatch.hold_live` (default false: hold each ready `evidence_mode: live` node once for a person to
 release), `review.node_nits` (`accept` default | `decide`: whether a develop
@@ -386,6 +387,29 @@ reviewed under 2.x was bound to the old digest and must be proposed again. While
 `_dag.pending_human_amendment` is set and defect routing only queues (7.5); the marker clears itself once the file is gone,
 applied or recorded as the last amendment. Known limits: the acceptance outer loop's inner ticks do not route defects (a report
 from an increment node stops with exit 20 and is routed by the next `dag run`), and the system-amendment file is local.
+
+### 7.7 Batch fix 2026-11-13: Run failure classes and the delivery guard
+
+Two failures of one APA run (a Claude 5-hour quota stop, then three accepted submits that never advanced the node) share one mechanism: what a
+terminal Run and a Worker's re-submission *mean* was judged from text and from a head compared against the wrong delivery.
+
+* **One Run failure classification** (`decide_runs.classify_run_failure`): `capacity` (quota / rate limit / provider capacity), `transient`
+  (transport; bounded by `TRANSIENT_RUNTIME_MAX_RUNS`) or `nonretryable` (a person decides). The adapter maps the platform's `failure_reason` to
+  the neutral `AgentRunObservation.failure_class`; the message text is only a fallback, and a text match never overrides a transient signature.
+  Worker (`loop._collect_worker_handoff`) and Reviewer (`decide_reviewer_run` → `RunAction.CAPACITY_FAILURE`) use the same classification.
+* **Capacity is waited out, not counted** (`decide_runs.decide_capacity_wait`, pure): the wait ends at the reset time the error states
+  ("resets 12:10pm (UTC)", an ISO instant, "retry in N seconds") plus a 60 s margin, else after a doubling backoff (300 s … 1800 s) from the failed
+  Run. Nothing is persisted: the decision is a function of the Run facts and `now`, so a restarted runner reaches the same answer. While waiting,
+  the node stays `in_progress`, no bounce, audit round or Run budget is spent and the tick continues with other nodes (`capacity_wait` event, once per
+  Run). The only bound is time: when the stated reset (or the waiting so far) passes `retry.capacity_wait_hours`, or the Run has no usable
+  timestamps, the node stops with `capacity-wait-exhausted` and the usual `omac node retry` command.
+* **A verdict that judged an earlier delivery** (`WorkerHandoffIntent.source_review_superseded`, `decide_retry.retry_verdict_superseded`): an
+  operator retry used the head of the *last submitted* delivery as "the rejected head". When a machine gate (CI) had already bounced the rework,
+  that head was never reviewed, so an unchanged head could not satisfy the guard and every accepted submit was counted as a no-delivery Worker bounce
+  until `retry.worker` was spent. A retry whose prior handoff was an explicit authoring dispatch (or itself superseded) and whose live verdict is
+  gone now requires only the fresh verification attachment (`handoff_has_new_delivery`); a live `reject` still requires a moved head.
+* Not changed: an accepted submit that the guard still judges "not new" stays silent to the Worker (`omac work submit` reports `ok`); a
+  per-submit explanation needs a platform-side read of the guard and is left out of this change.
 
 ## 8. Acceptance documents
 

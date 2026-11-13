@@ -117,6 +117,10 @@ def handoff_has_new_delivery(item, intent: WorkerHandoffIntent) -> bool:
     current_head = str(artifacts.get("head_sha") or "").strip()
     if not current_head:
         return False
+    if intent.source_review_superseded:
+        # The verdict judged an earlier delivery; this head was never reviewed, so "unchanged head" proves nothing
+        # against it. The fresh verification attachment (checked above) is the proof the Worker submitted again.
+        return True
     if (
         intent.gate == "explicit-dispatch"
         and intent.source_review_verdict is None
