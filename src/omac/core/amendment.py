@@ -1878,8 +1878,9 @@ def apply_amendment(
         if ledger.get("amendment_id") != amendment.get("amendment_id"):
             raise ValidationError(
                 "Manifest amendment apply ledger does not match the accepted amendment")
-        if amendment_file and ledger.get("amendment_file") != amendment_file:
-            ledger["amendment_file"] = amendment_file
+        recorded = persist_path(amendment_file, manifest_path) if amendment_file else None
+        if recorded and ledger.get("amendment_file") != recorded:    # also rewrites a legacy absolute record once
+            ledger["amendment_file"] = recorded
             _save_ledger(current, manifest_path, ledger)
 
     if budget_bindings is not None:

@@ -78,3 +78,23 @@ def test_config_sync_commit_message_and_log_carry_no_machine_path(tmp_path):
         gitsync.ensure_config_synced(str(cfg), repo_root=str(work), engine_type="multica")
     subject = subprocess.run(["git", "log", "-1", "--format=%s"], cwd=work, capture_output=True, text=True).stdout.strip()
     assert subject == "chore(omac): sync .omac/config.yaml"
+
+
+def test_resuming_an_applied_amendment_rewrites_a_legacy_absolute_ledger_path_to_relative(project, monkeypatch):
+    from omac.core import amendment as core
+    from omac.core.manifest import load_manifest, save_manifest
+    root, manifest_path = project
+    target = root / ".omac" / "dag.amendment.yaml"
+    manifest = load_manifest(manifest_path)
+    manifest.meta["last_amendment_id"] = "amend-x"
+    manifest.meta["amendment_apply"] = {"amendment_id": "amend-x", "amendment_file": str(target)}
+    save_manifest(manifest, manifest_path)
+    monkeypatch.setattr(core, "_amendment_identity", lambda a: (None, None, {}, None))
+    for stub in ("_verify_amendment_identity", "_verify_nits_acceptance", "_preflight_authoring_repair_ledger"):
+        monkeypatch.setattr(core, stub, lambda *a, **k: None)
+    monkeypatch.setattr(core, "_resume_apply_ledger", lambda *a, **k: {})
+    core.apply_amendment(manifest_path, {"amendment_id": "amend-x"}, None, set(),
+                         amendment_file=str(target), recover=lambda *a, **k: "")
+    ledger = load_manifest(manifest_path).meta["amendment_apply"]
+    assert ledger["amendment_file"] == ".omac/dag.amendment.yaml"
+    assert str(root) not in open(manifest_path).read()
