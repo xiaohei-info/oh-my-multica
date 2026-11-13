@@ -72,14 +72,14 @@ def test_a_pending_check_past_its_timeout_bounces_as_timed_out(manifest, monkeyp
     m, path = manifest
     _advance(_Host(PENDING), m, path)                       # records the first pending observation
     long_ago = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
-    write_local_runtime(path, "ci-wait", {"i1": long_ago})
+    write_local_runtime(path, "ci-wait", {"i1@": long_ago})
     seen = []
     monkeypatch.setattr(delivery, "apply", lambda plan, *a, **k: seen.append(plan))
 
     outcome = _advance(_Host(PENDING), m, path)
 
     assert outcome == "bounce" and any("timed out" in str(p) for p in seen)
-    assert "i1" not in json.load(open(local_runtime_file(path, "ci-wait")))
+    assert "i1@" not in json.load(open(local_runtime_file(path, "ci-wait")))
 
 
 def test_a_green_result_clears_the_recorded_wait(manifest):
@@ -94,7 +94,7 @@ def test_a_green_result_clears_the_recorded_wait(manifest):
         CI, m, "n", Store(), None, _Host(PullRequestCheckResult(True, 0, "ok")), {"ci": 2}, manifest_path=path)
 
     assert outcome == "pass"
-    assert "i1" not in json.load(open(local_runtime_file(path, "ci-wait")))
+    assert "i1@" not in json.load(open(local_runtime_file(path, "ci-wait")))
 
 
 @pytest.mark.parametrize("passed,conflicting,expected", [
@@ -125,3 +125,33 @@ def test_a_non_conflicting_pending_check_still_waits(manifest):
     host = _Host(PENDING)
     host.observe_pull_request = lambda _url: PullRequestObservation(PullRequestState.OPEN)
     assert _advance(host, m, path) == "pending"
+
+
+def test_a_lost_wait_record_restarts_the_clock_instead_of_expiring_or_never_expiring(manifest):
+    m, path = manifest
+    write_local_runtime(path, "ci-wait", {"i1@": "not-a-timestamp"})
+    assert _advance(_Host(PENDING), m, path) == "pending"
+    assert datetime.fromisoformat(json.load(open(local_runtime_file(path, "ci-wait")))["i1@"]).tzinfo is not None
+
+
+def test_a_wait_left_by_an_earlier_head_does_not_time_out_a_new_delivery(manifest):
+    m, path = manifest
+    long_ago = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    write_local_runtime(path, "ci-wait", {"i1@old": long_ago})
+    store = _Store()
+    store.item.artifacts["head_sha"] = "new"
+    out = delivery.advance_delivery(CI, m, "n", store, None, _Host(PENDING), {"ci": 2}, manifest_path=path)
+    assert out == "pending"
+
+
+def test_a_blocking_custom_command_keeps_its_verdict_on_a_conflicting_pr(manifest):
+    from omac.core.workitem import PullRequestObservation, PullRequestState
+    m, path = manifest
+    host = _Host(PullRequestCheckResult(False, 1, "lint failed"))
+    host.observe_pull_request = lambda _url: PullRequestObservation(PullRequestState.OPEN, conflicting=True)
+    store, comments = _Store(), []
+    store.add_comment = lambda _id, text: comments.append(text)
+    store.__class__ = type("S", (_Store,), {"__getattr__": lambda self, n: (lambda *a, **k: None)})
+    custom = {"ci": {"check_command": "sh ci.sh {pr_url}", "timeout_minutes": 1}}
+    assert delivery.advance_delivery(custom, m, "n", store, None, host, {"ci": 2}, manifest_path=path) == "bounce"
+    assert any("lint failed" in c for c in comments) and not any("conflict" in c.lower() for c in comments)

@@ -249,16 +249,19 @@ def advance_delivery(
         pr_url, ci["check_command"], timeout_seconds,
         pending_exit_code=int(pending_code) if pending_code is not None else None,
     ))
-    if not result.passed and ci_unpassed_is_conflict(
+    # A custom blocking ``check_command`` (no pending_exit_code) keeps its own verdict and output; only the observing default
+    # reclassifies a conflicting PR.
+    wait_key = f"{item_id}@{item.artifacts.get('head_sha') or ''}" if isinstance(item.artifacts, dict) else item_id
+    if pending_code is not None and not result.passed and ci_unpassed_is_conflict(
             passed=result.passed, conflicting=_observe_pull_request(code_host, pr_url).conflicting):
         # Conflict, not red CI and not a wait: bounce through the same CI gate with the real cause.
         result = CIResult(False, False, result.exit_code, result.output, conflict_summary(), conflict=True)
     elif result.pending:
-        if not ci_wait_expired(_ci_wait_started(manifest_path, item_id, record=True), timeout_seconds):
+        if not ci_wait_expired(_ci_wait_started(manifest_path, wait_key, record=True), timeout_seconds):
             return "pending"
         result = CIResult(False, True, result.exit_code, result.output, _tail(result.output) or ui(
             "(still pending)", "(仍在进行)"))
-    _ci_wait_clear(manifest_path, item_id)
+    _ci_wait_clear(manifest_path, wait_key)
     apply(start, ports, state)
     plan = plan_ci_result(
         node_key=node_key, item_id=item_id, worker=node.worker, passed=result.passed,
