@@ -445,3 +445,52 @@ def test_sigint_and_sigterm_stop_dag_run_after_the_current_tick(tmp_path, monkey
     assert load_manifest(run.path).nodes["a"].status == "in_progress"
     with run.lock(run.path):                                         # the write lock was released on exit
         pass
+
+
+def _scripted_run(tmp_path, monkeypatch, steps):
+    """`dag run` whose ticks follow ``steps`` ('idle' = nothing changed, 'moves' = a node advanced, 'done' = converged)."""
+    from omac.core.manifest import save_manifest
+    from omac.pipeline.loop import TickResult
+
+    run = WaitingRun(tmp_path, monkeypatch)
+    run.args.wait_decisions = False
+    script = iter(steps)
+
+    def tick(_engine, manifest, path, **_kw):
+        run.ticks += 1
+        step = next(script)
+        if step == "done":
+            return TickResult(state="converged")
+        if step == "moves":
+            manifest.nodes["a"].status = "in_progress" if manifest.nodes["a"].status == "todo" else "todo"
+            save_manifest(manifest, path)
+        return TickResult(state="running")
+
+    monkeypatch.setattr(run.dag_cmd, "_scheduled_tick", tick)
+    monkeypatch.setattr(run.dag_cmd, "time", SimpleNamespace(sleep=run.sleeps.append, monotonic=lambda: 0.0))   # lock stays held
+    manifest = load_manifest(run.path)
+    manifest.nodes["a"].status = "todo"
+    save_manifest(manifest, run.path)
+    return run
+
+
+def test_ticks_that_change_nothing_wait_the_poll_interval_but_a_tick_that_moved_something_is_followed_at_once(tmp_path, monkeypatch):
+    run = _scripted_run(tmp_path, monkeypatch, ["idle", "idle", "moves", "done"])
+
+    assert run.run() == exit_codes.OK
+
+    assert run.ticks == 4 and run.sleeps == [30, 30]          # defaults.poll_interval; none after the tick that moved a node
+
+
+def test_the_wait_between_ticks_follows_the_configured_poll_interval(tmp_path, monkeypatch):
+    run = _scripted_run(tmp_path, monkeypatch, ["idle", "done"])
+    (tmp_path / ".omac").mkdir(exist_ok=True)
+    (tmp_path / ".omac" / "config.yaml").write_text("defaults:\n  poll_interval: 7\n", encoding="utf-8")
+
+    assert run.run() == exit_codes.OK and run.sleeps == [7]
+
+
+def test_the_final_acceptance_loop_waits_the_default_poll_interval_when_none_is_configured():
+    from omac.cli.commands.dag import _poll_interval
+
+    assert _poll_interval({}) == 30 and _poll_interval({"defaults": {}}) == 30 and _poll_interval({"defaults": {"poll_interval": 5}}) == 5

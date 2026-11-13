@@ -167,6 +167,15 @@ def test_routability_demands_a_finished_upstream_node_with_known_anchors_and_a_d
 
 # --- the system amendment ---------------------------------------------------------------------------------------------
 
+def test_the_reporters_repro_command_is_described_to_the_fix_node_but_never_gates_it(world):
+    advance(world)
+
+    fix = load_manifest(world.path).nodes[fix_nodes(world)[0]]
+    assert "pytest -q tests/e2e" not in fix.contract.verification_commands
+    assert fix.contract.verification_commands == load_manifest(world.path).nodes["lib"].contract.verification_commands
+    assert "pytest -q tests/e2e" in fix.description
+
+
 def test_s3_a_worker_report_becomes_a_fix_node_the_reporter_waits_for(world):
     assert advance(world) is True
 
