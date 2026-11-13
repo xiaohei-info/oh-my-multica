@@ -606,7 +606,7 @@ def test_a_system_amendment_file_cannot_be_edited_after_it_was_built(world):
 
 def test_a_worker_decision_is_consumable_by_a_system_amendment_only_when_it_is_an_upstream_defect(world):
     manifest = load_manifest(world.path)
-    proposal = {"operations": [{"op": "update", "node": "api", "set": {"blocked_by": ["lib", "x"]}}]}
+    proposal = {"operations": [{"op": "remove", "node": "api"}]}      # nothing recovers the node, so nothing answers its decision
     with pytest.raises(ValidationError):
         validate_affected(manifest, proposal, world.store)                                                  # a person must resolve it
     validate_affected(manifest, proposal, world.store, consume_defects=True)

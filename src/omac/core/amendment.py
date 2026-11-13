@@ -1236,6 +1236,9 @@ def _prepare_apply_ledger(
             }
             if budget is not None:
                 entry["budget_binding"] = copy.deepcopy(budget)
+            superseded = superseded_decision_record(item) if stage in {"authoring", "review"} else None
+            if superseded:    # persisted with the ledger, before the recovery that clears the decision
+                entry["superseded_decision"] = superseded
             if stage == "review":
                 entry["expected_review_subject"] = stage_recovery_subject(node, item)
             if stage == "authoring":
@@ -1408,6 +1411,26 @@ def _normalize_recovered_authoring_node(
     return True
 
 
+def decision_answering_nodes(minimal: dict[str, list[str]]) -> set[str]:
+    """Nodes whose stage recovery resets the work item's review state, which retires a held decision (``_REVIEW_CLEAR_METADATA``).
+
+    Resuming a node into authoring or review IS the answer to a worker decision it holds; a merging recovery does not reset
+    review state, so a decision held there still needs a person.
+    """
+    return {n for stage in ("authoring", "review") for n in minimal.get(stage, [])}
+
+
+def superseded_decision_record(item: Any) -> dict[str, Any] | None:
+    """The bounded audit record of a worker decision an amendment retires; ``None`` when the item holds none."""
+    decision = getattr(item, "decision_required", None)
+    if not (isinstance(decision, dict) and decision.get("reason_code") == "worker-decision-required"):
+        return None
+    blocker = decision.get("blocker") if isinstance(decision.get("blocker"), dict) else {}
+    return {k: v for k, v in {
+        "reason_code": decision["reason_code"], "gate": decision.get("gate"),
+        "blocker_reason_code": blocker.get("reason_code"), "decision_sha256": _digest(decision)}.items() if v}
+
+
 def validate_affected(manifest: Manifest, proposal: dict[str, Any], store: Any, *, consume_defects: bool = False,
                       reporters: Collection[str] = ()) -> None:
     """Fail closed when the derived affected set touches a vanished WorkItem or an unresolved held decision.
@@ -1419,6 +1442,7 @@ def validate_affected(manifest: Manifest, proposal: dict[str, Any], store: Any, 
     """
     minimal, _, _ = _minimal_rerun(manifest, proposal)
     affected = set(_changed_node_ids(proposal)) | {n for ids in minimal.values() for n in ids}
+    answered = decision_answering_nodes(minimal)
     for node_id in sorted(affected):
         node = manifest.nodes.get(node_id)
         if not (node and node.work_item_id):
@@ -1431,12 +1455,13 @@ def validate_affected(manifest: Manifest, proposal: dict[str, Any], store: Any, 
                 f"`omac node show <manifest> {node_id}` before proposing or accepting this amendment") from exc
         # A system amendment is exactly what consumes an upstream-defect report; every other worker decision still needs a person.
         blocker = decision.get("blocker") if isinstance(decision, dict) else None
-        consumable = node_id in reporters or (
+        consumable = node_id in reporters or node_id in answered or (
             consume_defects and isinstance(blocker, dict) and blocker.get("reason_code") == UPSTREAM_DEFECT)
         if isinstance(decision, dict) and decision.get("reason_code") == "worker-decision-required" and not consumable:
             raise ValidationError(
-                f"Affected node {node_id!r} holds an unresolved worker decision; resolve it first "
-                f"(`omac work show {node.work_item_id}`), then propose the amendment again")
+                f"Affected node {node_id!r} holds an unresolved worker decision, and this amendment does not recover it. "
+                f"Either add a `resume` operation (stage authoring or review) for {node_id!r}, which answers the decision "
+                f"on accept, or resolve it first (`omac work show {node.work_item_id}`) and propose again")
 
 
 @dataclass

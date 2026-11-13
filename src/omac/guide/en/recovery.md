@@ -370,6 +370,9 @@ omac dag amend propose .omac/project.yaml \
   authoring Run stopped while Store already contains a delivery, OMAC likewise exits
   20 before Runtime observation, assign, or wake and directs the operator to preserve
   the old issue and create `--new-attempt --supersedes-issue-id <old-issue-id>`.
+  When the earlier amendment issue of the same identity is already terminal (Reviewer-pass confirmation or failed-closed
+  decision, no live Run), `propose` makes the new proposal its next attempt by itself; only a live issue exits 20 with
+  `amendment-identity-conflict`.
   No current engine exposes a real atomic conditional
   restart/dispatch API. `--restart-authoring` remains only as a compatibility
   entry point: it fails closed with exit 20 before any issue read, write, or

@@ -221,7 +221,8 @@ def _validate_amendment_admission(
         )
 
 
-def _validate_superseded_amendment(engine: Any, item: Any) -> None:
+def superseded_amendment_problem(item: Any, runs: list) -> str | None:
+    """Pure: why ``item`` is not a terminal amendment that a new attempt may supersede; ``None`` when it is."""
     pass_confirmation = (
         item.phase == TaskPhase.CONFIRMATION
         and item.review_verdict == "pass"
@@ -238,22 +239,41 @@ def _validate_superseded_amendment(engine: Any, item: Any) -> None:
         and decision.get("resume_issue_id") == item.id
     )
     if not (pass_confirmation or failed_closed_decision):
-        raise ValidationError(
+        return (
             "--supersedes-issue-id must reference a terminal amendment: "
             "Reviewer-pass human confirmation or failed-closed "
             "decision-required")
-    runs = engine.runtime.list_runs(item.id)
     active_runs = [run for run in runs if run.active]
     if active_runs:
-        raise ValidationError(
+        return (
             "--supersedes-issue-id amendment still has an active Agent Run: "
             + ", ".join(run.id for run in active_runs))
     unknown_runs = [run for run in runs if not run.terminal]
     if unknown_runs:
-        raise ValidationError(
+        return (
             "--supersedes-issue-id amendment Runs are not explicitly terminal: "
             + ", ".join(
                 f"{run.id}={run.status or '(missing)'}" for run in unknown_runs))
+    return None
+
+
+def _validate_superseded_amendment(engine: Any, item: Any) -> None:
+    problem = superseded_amendment_problem(item, engine.runtime.list_runs(item.id))
+    if problem:
+        raise ValidationError(problem)
+
+
+def _historical_identity_to_supersede(engine: Any, dag_key: str):
+    """The earlier amendment issue of this identity when it is terminal, so a new proposal is its next attempt without a flag.
+
+    A live (not terminal) issue returns ``None``: that identity conflict still needs a person (设计 批量修复 2026-11-13).
+    """
+    existing = engine.store.find_work_item_by_dag_key(engine.store.config.workspace_id, dag_key)
+    if existing is None or existing.kind != TaskKind.AMENDMENT:
+        return None
+    if superseded_amendment_problem(existing, engine.runtime.list_runs(existing.id)) is not None:
+        return None
+    return existing
 
 
 def _read_document_bytes(path: Path) -> bytes:
@@ -761,13 +781,17 @@ def propose_amendment(
         raise ValidationError(
             "Amendment agents are not in the workspace pool: "
             + ", ".join(sorted(set(missing_agents))))
+    dag_key = f"amend-{Path(manifest_path).stem}"
+    if not new_attempt and resume_issue_id is None:
+        historical = _historical_identity_to_supersede(engine, dag_key)
+        if historical is not None:
+            new_attempt, supersedes_issue_id = True, historical.id
     _validate_amendment_admission(
         engine, manifest, manifest_path, blocked_nodes,
         new_attempt=new_attempt, supersedes_issue_id=supersedes_issue_id,
     )
 
     title = f"Running DAG amendment: {Path(manifest_path).name}"
-    dag_key = f"amend-{Path(manifest_path).stem}"
     attempt = None
     source_refs = None
     if new_attempt:
