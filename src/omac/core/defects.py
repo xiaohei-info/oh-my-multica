@@ -182,7 +182,12 @@ def build_system_proposal(manifest: Manifest, fix_nodes: list[dict], attach: dic
 
 def new_ledger() -> dict:
     return {"schema": LEDGER_SCHEMA, "used_global": 0, "used_by_reporter": {}, "granted_by_reporter": {},
-            "entries": {}, "inbox": []}
+            "granted_global": 0, "entries": {}, "inbox": []}
+
+
+def global_limit(ledger: dict, max_auto_fixes: int) -> int:
+    """The DAG-wide automatic-fix allowance: ``defects.max_auto_fixes`` plus what ``omac defect grant --global`` added."""
+    return max_auto_fixes + ledger.get("granted_global", 0)
 
 
 def reporter_left(ledger: dict, reporter: str, per_reporter: int) -> int:

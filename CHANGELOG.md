@@ -15,6 +15,14 @@ This file records public changes to oh-my-multica. The format follows
   repo-relative, or a bare file name for a file outside the repository (`core/pathrefs.py`); absolute records written by earlier
   versions are still read. The amendment authoring contract no longer uses the nonexistent branch `manifest-runtime` as `pr_base`:
   it takes the manifest's `meta.pr_base` (else the nodes' single `pr_base`, else `main`), so the Orchestrator can read the manifest.
+- Upstream defects: a `queued` defect now records what it waits for (`waits_on`: `amendment:<id>`, `fix:<node>`) in the ledger.
+  `defects.advance` compares the record with the manifest at the start of every tick (no platform read) and routes the report
+  again as soon as the cause changes or goes away, independent of the process-local memory that only suppresses repeats; `omac
+  defect list` shows the cause. A fix that finished is saved as `fixed` together with the rest of the pass.
+- Upstream defects: `defect-budget-exhausted` now says which budget is spent. The decision carries `budget: {layers, reporter:
+  {used, limit}, global: {used, limit}}` and one copyable `omac defect grant` per spent layer. New `omac defect grant --global
+  [--count N]` raises the DAG-wide `defects.max_auto_fixes` (ledger `granted_global`) and re-queues every report the global limit
+  stopped; `--reporter` and `--global` are mutually exclusive. The `reason_code` is unchanged.
 - `omac dag run` waited for nothing between two ticks, so a DAG that only waited for Agents re-read the platform as fast as a tick
   could run. A tick that changed no node status and dispatched nothing is now followed by a wait of `defaults.poll_interval`
   (default 30 s); a tick that moved something is followed at once, and a stop signal ends the wait. The final-acceptance loop

@@ -63,12 +63,12 @@ Worker（或所有 blocker 的 `owner` 都指向已完成上游的 Reviewer）�
 | `defect-fix-generation-cap` | 修复节点自己又上报了缺陷；修复节点不会被自动再修 | 同上 |
 | `defect-recurred` | 同一缺陷（疑似节点 + 锚点）在修复合并后再次出现 | 先 `dag amend propose` 或 `node retry`，或 `abandon|accept` |
 | `defect-node-fix-cap` | 疑似节点已有 `defects.per_suspected` 个合并的修复，不再自动追加 | `dag amend propose`，或 `node abandon|accept|retry` |
-| `defect-budget-exhausted` | 报告者或整个 DAG 的自动修复预算用完 | `omac defect grant <manifest> --reporter <节点> --count 1` 追加后继续，或同上 |
+| `defect-budget-exhausted` | 报告者或整个 DAG 的自动修复预算用完；决策里的 `budget.layers` 指出是 `reporter` 还是 `global`（含已用/上限） | 按 `budget.layers`：`omac defect grant <manifest> --reporter <节点> --count 1`（报告者层）、`omac defect grant <manifest> --global --count 1`（全局 `max_auto_fixes`），两层都用尽时两条都要，或同上 |
 
 - `omac defect list <manifest> [--output json]`：只读，缺陷账本（指纹状态 `queued → applying → fixing → fixed → recurred | needs-owner`）、
-  预算使用、待路由报告和 `pending_human_amendment`。
+  预算使用、待路由报告和 `pending_human_amendment`；`queued` 条目的 `waits_on` 写明它在等什么（`amendment:<id>`、`fix:<节点>`），等的东西一变化或消失，下一轮 `dag run|tick` 自动重新路由。
 - `omac defect report <manifest> --before <节点> --report-file <缺陷.yaml>`：人工上报（最多 5 条排队），与 Worker 的 `defects` 同形，`repro` 可省略。
-- `omac defect grant <manifest> --reporter <节点> [--count N]`：追加报告者的自动修复次数并重新路由其停止的报告。
+- `omac defect grant <manifest> (--reporter <节点> | --global) [--count N]`：追加某个报告者的自动修复次数，或（`--global`）提高全局 `max_auto_fixes`，并重新路由被预算停止的报告。
 - `omac defect resolve <manifest> <指纹> --pr <url>`：登记 OMAC 之外已合并的修复，指纹变为 `fixed`（无修复节点，计入 `per_suspected`，不会成为重跑对象），并为每个 blocked 报告者打印收尾的 `omac node retry`。
 - 有待确认的人工 amendment 时，缺陷只排队（`queued`），不改 DAG；先 `dag amend accept` 或丢弃该提案。
 - 最终验收失败的 flow 的增量拆解也走系统 amendment；同一 flow 修过后再失败会停止循环，列出未通过项。

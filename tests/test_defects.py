@@ -3,6 +3,7 @@ system amendment (设计 §7.5). Platform and the amendment's Store compensation
 amendment identity, whitelist and ledger code under test are the real ones."""
 import copy
 import json
+import shlex
 from argparse import Namespace
 from types import SimpleNamespace
 
@@ -873,3 +874,100 @@ def test_a_finished_fix_marks_its_defect_fixed_even_when_nothing_is_pending(worl
     assert advance(world) is True
 
     assert ledger(world)["entries"][fingerprint("lib", ["FLOW-1/ACT-1"])]["state"] == "fixed"
+
+
+# --- queued waits name their cause; the budget stop names its layer ------------------------------------------------------
+
+def test_a_queued_defect_records_what_it_waits_for_and_defect_list_shows_it(world, capsys):
+    fix = queue_behind_a_fix(world)
+    advance(world)
+
+    web_fp = fingerprint("lib", ["FLOW-2/ACT-9"])
+    assert ledger(world)["entries"][web_fp]["waits_on"] == [f"fix:{fix}"]
+    defect_cli.run(Namespace(action="list", manifest=world.path))
+    assert json.loads(capsys.readouterr().out)["entries"][web_fp]["waits_on"] == [f"fix:{fix}"]
+
+
+def test_a_wait_on_a_person_amendment_follows_the_amendment_it_waits_for(world, tmp_path):
+    pending = tmp_path / "human.amendment.yaml"
+    pending.write_text(yaml.safe_dump({"amendment_id": "amend-x", "human_confirmation": "pending"}))
+    world.manifest.dag_state["pending_human_amendment"] = {"amendment_id": "amend-x", "file": str(pending)}
+    save_manifest(world.manifest, world.path)
+    advance(world)
+    fp = fingerprint("lib", ["FLOW-1/ACT-1"])
+    assert ledger(world)["entries"][fp]["waits_on"] == ["amendment:amend-x"]
+
+    pending.write_text(yaml.safe_dump({"amendment_id": "amend-y", "human_confirmation": "pending"}))
+    world.manifest = load_manifest(world.path)
+    world.manifest.dag_state["pending_human_amendment"] = {"amendment_id": "amend-y", "file": str(pending)}
+    save_manifest(world.manifest, world.path)
+    advance(world)
+    assert ledger(world)["entries"][fp]["waits_on"] == ["amendment:amend-y"] and fix_nodes(world) == []
+
+
+def test_the_wait_is_asked_about_its_recorded_cause_not_only_about_this_processs_memory(world):
+    fix = queue_behind_a_fix(world)
+    advance(world)
+    assert shell._wait_ended(world.manifest, shell.ledger_of(world.manifest)) is False       # the cause still stands
+
+    world.manifest.nodes[fix].status = "done"                                                  # the fix finished
+    ledger_now = shell.ledger_of(world.manifest)
+    shell._promote_fixed(world.manifest, ledger_now)
+    assert shell._wait_ended(world.manifest, ledger_now) is True                              # the recorded cause is gone
+
+
+def budget_stop(world, config):
+    world.config = {"defects": config}
+    advance(world)
+    return decision_of(world, "w-api")
+
+
+@pytest.mark.parametrize("config,layers,grant", [
+    ({"per_reporter": 0}, ["reporter"], "--reporter api --count 1"),
+    ({"max_auto_fixes": 0}, ["global"], "--global --count 1"),
+    ({"per_reporter": 0, "max_auto_fixes": 0}, ["reporter", "global"], None),
+])
+def test_a_spent_budget_says_which_layer_with_use_and_limit_and_the_matching_grant(world, config, layers, grant):
+    stopped = budget_stop(world, config)
+
+    assert stopped["reason_code"] == "defect-budget-exhausted" and stopped["budget"]["layers"] == layers
+    assert stopped["budget"]["reporter"] == {"used": 0, "limit": config.get("per_reporter", 2)}
+    assert stopped["budget"]["global"]["used"] == 0
+    commands = [stopped["next_action"], *stopped["alternatives"]]
+    grants = [c for c in commands if c.startswith("omac defect grant")]
+    assert len(grants) == len(layers)
+    if grant:
+        assert grants == [f"omac defect grant {shlex.quote(world.path)} {grant}"]
+    assert fix_nodes(world) == []
+
+
+def test_a_global_grant_releases_the_reports_the_global_budget_stopped_and_a_reporter_grant_alone_does_not(world):
+    stopped = budget_stop(world, {"max_auto_fixes": 0})
+    assert stopped["budget"]["layers"] == ["global"]
+
+    world.manifest = load_manifest(world.path)
+    shell.grant_budget(world.manifest, world.path, "api", 3)             # the wrong layer
+    advance(world)
+    assert decision_of(world, "w-api")["budget"]["layers"] == ["global"] and fix_nodes(world) == []
+
+    world.manifest = load_manifest(world.path)
+    result = shell.grant_budget(world.manifest, world.path, None, 1, global_scope=True)
+    assert result["scope"] == "global" and result["requeued"] == ["api", "web"]
+    assert load_manifest(world.path).nodes["api"].defect_pending
+    advance(world)
+    assert len(fix_nodes(world)) == 1 and ledger(world)["used_global"] == 1 and ledger(world)["granted_global"] == 1
+
+
+@pytest.mark.parametrize("kwargs", [dict(reporter=None), dict(reporter="api", global_scope=True)])
+def test_a_grant_names_exactly_one_layer(world, kwargs):
+    with pytest.raises(ValidationError):
+        shell.grant_budget(world.manifest, world.path, count=1, **{"global_scope": False, **kwargs})
+
+
+def test_the_grant_command_takes_global_or_a_reporter_but_not_both_or_neither():
+    from omac.cli.main import build_parser
+    parser = build_parser()
+    assert parser.parse_args(["defect", "grant", "m.yaml", "--global"]).global_scope
+    for bad in (["defect", "grant", "m.yaml"], ["defect", "grant", "m.yaml", "--global", "--reporter", "api"]):
+        with pytest.raises(SystemExit):
+            parser.parse_args(bad)

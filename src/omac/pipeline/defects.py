@@ -27,7 +27,7 @@ from ..core.config import resolve_defects
 from ..core.graph import SATISFIED
 from ..core.defects import (
     INBOX_MAX, LEDGER_MAX_ENTRIES, UPSTREAM_DEFECT, build_fix_node, build_system_proposal, defect_errors, fingerprint, anchor_ids,
-    new_ledger, reporter_left, routing_problem,
+    global_limit, new_ledger, routing_problem,
 )
 from ..core.manifest import Manifest, adopt_disk
 from ..core.pathrefs import persist_path, resolve_path
@@ -35,11 +35,14 @@ from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import ui
 from .amendment import _acceptance_for_manifest, _write_yaml_atomic, apply_amendment, load_amendment_file
 from .apply import ManifestState, Ports, apply
-from .decide_defects import DefectFacts, Route, STOPS, decide_defect, decide_report, render_release, stop_summary
+from .decide_defects import (
+    DefectFacts, Route, STOPS, budget_detail, budget_summary, decide_defect, decide_report, render_release, stop_summary,
+)
 from .decide_effects import SaveState, SetDagFact, SetNode, UpdateMetadata
 from .decide_runs import parse_platform_time
 
 log = logsetup.get_logger(__name__)
+_WAIT_CAUSES_MAX = 8
 _CODE_STOPS = {Route.NEEDS_OWNER, Route.UNROUTABLE, Route.GENERATION_CAP, Route.NODE_FIX_CAP}
 
 
@@ -75,6 +78,7 @@ class _Report:
     item_id: str | None = None
     decision: dict | None = None
     fps: list = field(default_factory=list)
+    budget: dict | None = None         # which budget layers stopped it (`decide_defects.budget_detail`), set when one did
 
 
 @dataclass
@@ -88,6 +92,27 @@ class _Pass:
 
 def _inbox_id(reporter: str, defects: list) -> str:
     return hashlib.sha256(json.dumps([reporter, defects], sort_keys=True).encode()).hexdigest()[:12]
+
+
+def _wait_causes(manifest: Manifest, ledger: dict, suspected: str, fp: str) -> list[str]:
+    """What a ``queued`` defect waits for, named from the manifest alone: the person's amendment and the other fixes of the
+    same suspected node still in flight. Bounded, sorted, comparable: the wait ends exactly when this list changes."""
+    causes = []
+    if _human_amendment_pending(manifest):
+        causes.append("amendment:" + str((manifest.dag_state.get("pending_human_amendment") or {}).get("amendment_id")))
+    causes += [f"fix:{e.get('fix_node') or other}" for other, e in ledger["entries"].items()
+               if other != fp and e.get("suspected") == suspected and e.get("state") in ("applying", "fixing")]
+    return sorted(set(causes))[:_WAIT_CAUSES_MAX]
+
+
+def _wait_ended(manifest: Manifest, ledger: dict) -> bool:
+    """Is any recorded ``queued`` wait over or different? A wait recorded by an older version has no causes and is skipped:
+    the process-local signature covers it until its next pass records the causes."""
+    if not (ledger["inbox"] or any(n.defect_pending for n in manifest.nodes.values())):
+        return False
+    return any(e.get("state") == "queued" and "waits_on" in e
+               and e["waits_on"] != _wait_causes(manifest, ledger, e.get("suspected", ""), fp)
+               for fp, e in ledger["entries"].items())
 
 
 def _human_amendment_pending(manifest: Manifest) -> bool:
@@ -136,8 +161,10 @@ def _facts(ctx: "_Ctx", ledger: dict, report: _Report, defect: dict, fp: str, pa
     others = [e for other, e in ledger["entries"].items() if other != fp and e.get("suspected") == suspected]
     anchors = ctx.anchors | (set(a for d in report.defects for a in d["anchors"]) if report.source == "review" else set())
     group = pass_.groups.get(suspected)       # joining a fix that is already planned in this pass costs nothing new
-    reporter_ok = (group is not None and report.reporter in group["reporters"]) or (
-        reporter_left(ledger, report.reporter, cfg["per_reporter"]) - pass_.charges.get(report.reporter, 0) > 0)
+    reporter_used = ledger["used_by_reporter"].get(report.reporter, 0) + pass_.charges.get(report.reporter, 0)
+    reporter_limit = cfg["per_reporter"] + ledger["granted_by_reporter"].get(report.reporter, 0)
+    global_used, global_cap = ledger["used_global"] + len(pass_.groups), global_limit(ledger, cfg["max_auto_fixes"])
+    reporter_ok = (group is not None and report.reporter in group["reporters"]) or reporter_used < reporter_limit
     reporter_node = manifest.nodes.get(report.reporter)
     fixed_others = [e for e in others if e["state"] == "fixed" and e.get("fix_node")]      # a fix node the reporter can wait for
     done = not entry.get("retried") and bool(fixed_others)
@@ -154,7 +181,9 @@ def _facts(ctx: "_Ctx", ledger: dict, report: _Report, defect: dict, fp: str, pa
         fixed_on_suspected=len({e.get("fix_node") or other for other, e in ledger["entries"].items()
                                 if other != fp and e.get("suspected") == suspected and e["state"] == "fixed"}),
         suspected_fix_cap=cfg["per_suspected"],
-        budget_left=reporter_ok and (group is not None or ledger["used_global"] + len(pass_.groups) < cfg["max_auto_fixes"]))
+        reporter_budget_left=reporter_ok,
+        global_budget_left=group is not None or global_used < global_cap,
+        reporter_used=reporter_used, reporter_limit=reporter_limit, global_used=global_used, global_limit=global_cap)
 
 
 def _newest_run_start(ctx: "_Ctx", reporter: str) -> datetime | None:
@@ -223,6 +252,8 @@ def _route_report(ctx: _Ctx, ledger: dict, report: _Report, pass_: _Pass) -> tup
         route = decide_defect(facts)
         routes.append(route)
         detail = detail or facts.unroutable
+        if route is Route.BUDGET_EXHAUSTED and report.budget is None:
+            report.budget = budget_detail(facts)
         if route is Route.AUTO_FIX:
             group = pass_.groups.setdefault(defect["suspected_node"], {"fps": [], "defects": [], "reporters": []})
             if fp not in group["fps"]:
@@ -259,24 +290,32 @@ def _record(ledger: dict, report: _Report, state: str, ctx: _Ctx) -> None:
         if report.reporter not in entry["reporters"]:
             entry["reporters"].append(report.reporter)
         entry["state"] = state if entry["state"] in ("queued", "needs-owner", state) else entry["state"]
+        if entry["state"] == "queued":      # the wait is part of the ledger: a restart, `defect list` and the next pass all see it
+            entry["waits_on"] = _wait_causes(ctx.manifest, ledger, defect["suspected_node"], fp)
+        else:
+            entry.pop("waits_on", None)
 
 
 def _stop(ctx: _Ctx, ledger: dict, report: _Report, route: Route, detail: str | None, decisions: list, flags: dict) -> None:
-    actions = render_release(route, ctx.path, report.reporter)
-    reason = (detail or stop_summary(route))[:300]
+    budget = report.budget if route is Route.BUDGET_EXHAUSTED else None
+    actions = render_release(route, ctx.path, report.reporter, tuple(budget["layers"]) if budget else ("reporter",))
+    reason = (detail or (budget_summary(budget) if budget else stop_summary(route)))[:300]
     if route is Route.RECURRED:
         for fp in report.fps:
             if ledger["entries"].get(fp, {}).get("state") in ("fixed", "recurred"):
                 ledger["entries"][fp]["state"] = "recurred"
     elif route in _CODE_STOPS:
         _record(ledger, report, "needs-owner", ctx)
+    elif route is Route.BUDGET_EXHAUSTED:
+        _record(ledger, report, "queued", ctx)      # remembered with its stop, so a `defect grant --global` finds who to release
     for fp in report.fps:
         if fp in ledger["entries"]:
             ledger["entries"][fp]["stop"] = {"reason_code": route.value, "detail": reason}
+            ledger["entries"][fp].pop("waits_on", None)
     if report.item_id is not None:
         decisions.append((report.item_id, {
             **report.decision, "reason_code": route.value, "next_action": actions[0], "alternatives": actions[1:],
-            "detail": reason}))
+            "detail": reason, **({"budget": budget} if budget else {})}))
         flags[report.reporter] = False
     if report.source == "inbox":
         inbox_id = _inbox_id(report.reporter, report.defects)
@@ -310,6 +349,7 @@ def _carry_out(ctx: _Ctx, ledger: dict, proposal: dict, *, reporters: list, new_
         entry = ledger["entries"].setdefault(fp, {
             "suspected": defect["suspected_node"], "anchors": sorted(set(defect["anchors"])), "reporters": [], "state": "queued"})
         entry["retried"] = True
+        entry.pop("waits_on", None)
     ledger["applying"] = {"amendment_id": amendment["amendment_id"], "file": persist_path(file, ctx.path), "fps": sorted(new_entries),
                           "retried": sorted(retried), "reporters": sorted(reporters), "charges": charges,
                           "global": len({e["fix_node"] for e in new_entries.values()}) if charges else 0,
@@ -399,7 +439,8 @@ def _wait_signature(manifest: Manifest, ledger: dict, cfg: dict) -> str:
              for e in ledger["entries"].values() if e.get("fix_node")}
     pending = {k: (n.status, n.work_item_id) for k, n in manifest.nodes.items() if n.defect_pending}
     return json.dumps([entries, fixes, pending, ledger["inbox"], ledger.get("applying"), _human_amendment_pending(manifest),
-                       cfg, ledger.get("used_global")], sort_keys=True, default=str)
+                       cfg, ledger.get("used_global"), ledger.get("granted_global"), ledger["granted_by_reporter"],
+                       ledger["used_by_reporter"]], sort_keys=True, default=str)
 
 
 def advance(engine, manifest: Manifest, path: str, config: dict, *, apply_system=None) -> bool:
@@ -410,7 +451,7 @@ def advance(engine, manifest: Manifest, path: str, config: dict, *, apply_system
     ledger = ledger_of(manifest)
     promoted = _promote_fixed(manifest, ledger)
     signature = _wait_signature(manifest, ledger, resolve_defects(config, len(manifest.nodes)))
-    if _QUEUED_SEEN.get(path) == signature and not promoted:
+    if _QUEUED_SEEN.get(path) == signature and not promoted and not _wait_ended(manifest, ledger):
         return False
     _QUEUED_SEEN.pop(path, None)
     if not (ledger.get("applying") or ledger["inbox"] or any(n.defect_pending for n in manifest.nodes.values())):
@@ -423,7 +464,7 @@ def advance(engine, manifest: Manifest, path: str, config: dict, *, apply_system
         ledger = ledger_of(manifest)
     _promote_fixed(manifest, ledger)
     reports, flags = _pending_reports(engine.store, manifest, ledger)
-    before, decisions, pass_ = copy.deepcopy(ledger), [], _Pass()
+    before, decisions, pass_ = ledger_of(manifest), [], _Pass()      # the stored ledger: a promotion is saved too
     consumed: list[_Report] = []
     waiting = bool(reports)
     for report in reports:
@@ -546,19 +587,30 @@ def report_defects(manifest: Manifest, path: str, before: str, defects: list) ->
             "next_action": f"omac dag run {path}"}
 
 
-def grant_budget(manifest: Manifest, path: str, reporter: str, count: int) -> dict:
-    """Add ``count`` automatic fixes to a reporter and re-queue its stopped report."""
-    node = manifest.nodes.get(reporter)
-    if node is None:
+def grant_budget(manifest: Manifest, path: str, reporter: str | None, count: int, *, global_scope: bool = False) -> dict:
+    """Add ``count`` automatic fixes to a reporter (or, with ``global_scope``, to the DAG-wide allowance) and re-queue the
+    reports that a spent budget stopped. The stop names the spent layer; the grant must be of that layer."""
+    if global_scope == (reporter is not None):
+        raise ValidationError(ui("Name exactly one of --reporter <node> or --global", "--reporter <节点> 与 --global 必须二选一"))
+    node = manifest.nodes.get(reporter) if reporter else None
+    if reporter and node is None:
         raise ValidationError(ui(f"Unknown node {reporter!r}", f"未知节点 {reporter!r}"))
     ledger = ledger_of(manifest)
-    ledger["granted_by_reporter"][reporter] = ledger["granted_by_reporter"].get(reporter, 0) + count
-    ledger["inbox"] = [{k: v for k, v in e.items() if k != "stopped"} if e["reporter"] == reporter else e for e in ledger["inbox"]]
+    if global_scope:
+        ledger["granted_global"] = ledger.get("granted_global", 0) + count
+        stopped = {r for e in ledger["entries"].values() if e.get("stop", {}).get("reason_code") == Route.BUDGET_EXHAUSTED.value
+                   for r in e["reporters"]} | {e["reporter"] for e in ledger["inbox"] if e.get("stopped") == Route.BUDGET_EXHAUSTED.value}
+        requeue = sorted(r for r in stopped if r in manifest.nodes)
+    else:
+        ledger["granted_by_reporter"][reporter] = ledger["granted_by_reporter"].get(reporter, 0) + count
+        requeue = [reporter]
+    ledger["inbox"] = [{k: v for k, v in e.items() if k != "stopped"} if e["reporter"] in requeue else e for e in ledger["inbox"]]
     effects: list[Any] = [SetDagFact("defects", ledger)]
-    if node.status == "blocked" and node.work_item_id:
-        effects.append(SetNode(reporter, {"defect_pending": True}))
+    effects += [SetNode(r, {"defect_pending": True}) for r in requeue if manifest.nodes[r].status == "blocked" and manifest.nodes[r].work_item_id]
     apply(effects + [SaveState()], Ports(), ManifestState(manifest, path))
-    return {"reporter": reporter, "granted": ledger["granted_by_reporter"][reporter], "next_action": f"omac dag run {path}"}
+    granted = ledger["granted_global"] if global_scope else ledger["granted_by_reporter"][reporter]
+    return {"scope": "global" if global_scope else "reporter", "reporter": reporter, "granted": granted, "requeued": requeue,
+            "next_action": f"omac dag run {path}"}
 
 
 def resolve_defect(manifest: Manifest, path: str, fp: str, pr_url: str) -> dict:
@@ -586,6 +638,6 @@ def resolve_defect(manifest: Manifest, path: str, fp: str, pr_url: str) -> dict:
 def describe(manifest: Manifest) -> dict:
     """Read-only view of the ledger for ``omac defect list``."""
     ledger = ledger_of(manifest)
-    return {**{key: ledger[key] for key in ("used_global", "used_by_reporter", "granted_by_reporter", "entries", "inbox")},
+    return {**{key: ledger[key] for key in ("used_global", "granted_global", "used_by_reporter", "granted_by_reporter", "entries", "inbox")},
             "applying": ledger.get("applying"), "pending_reporters": sorted(k for k, n in manifest.nodes.items() if n.defect_pending),
             "pending_human_amendment": manifest.dag_state.get("pending_human_amendment")}
