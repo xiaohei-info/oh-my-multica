@@ -134,7 +134,8 @@ def _fix_description(reporters: list[str], defects: list[dict]) -> str:
         if defect.get("locations"):
             lines.append(f"  where: {'; '.join(defect['locations'])}")
         if defect.get("repro"):
-            lines.append(f"  repro: `{defect['repro']['command']}` (exit {defect['repro']['exit_code']})")
+            lines.append(f"  repro (the reporter re-runs it after your fix merges; it is not your gate): "
+                         f"`{defect['repro']['command']}` (exit {defect['repro']['exit_code']})")
     return "\n".join(lines)
 
 
@@ -149,13 +150,13 @@ def build_fix_node(manifest: Manifest, suspected: str, fps: list[str], defects: 
     contract = _dump_contract(source.contract)
     for name in ("acceptance", "acceptance_claims", "acceptance_contributions", "produces", "registers", "requirement_refs"):
         contract.pop(name, None)
-    commands = list(contract.get("verification_commands") or [])
-    commands += [d["repro"]["command"] for d in defects if d.get("repro") and d["repro"]["command"] not in commands]
+    # The reporter's repro command is NOT a gate of the fix node: it usually runs tests that exist only on the reporter's
+    # unmerged branch. It stays in the description; the reporter re-runs it after the fix merges (a repeat is `defect-recurred`).
     contract.update(
         objective=f"Fix the upstream defect(s) {', '.join(sorted(fps))} in {suspected}: "
                   + "; ".join(d["expected"] for d in defects)[:600],
         acceptance_refs=_flow_refs(source.contract, [a for d in defects for a in d["anchors"]], flow_ids),
-        verification_commands=commands, defect_refs=sorted(fps))
+        defect_refs=sorted(fps))
     node = {"id": fix_node_id(suspected, fps), "worker": source.worker, "blocked_by": list(source.blocked_by),
             "title": f"Fix {suspected}: {', '.join(sorted(fps))}"[:120],
             "description": _fix_description(reporters, defects), "contract": contract}

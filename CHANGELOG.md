@@ -10,6 +10,13 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Fixed
 
+- Upstream defects: a fix node no longer copies the reporter's `repro` command into its `verification_commands`. That command
+  usually runs tests that exist only on the reporter's unmerged branch, so the fix node could never pass and the reporter waited
+  on it forever. The command stays in the fix node's description; the reporter re-runs it after the fix merges, and the same
+  fingerprint appearing again stops as `defect-recurred`.
+
+### Fixed
+
 - A defect report that only waits (`queued`: a fix of the same node is in flight, or a person's amendment is pending) is no
   longer routed, logged (`defect_routed`) and re-read from the platform on every tick. `defects.advance` remembers what the
   wait depends on (fix states, pending reports, human amendment, defect config) and skips the pass until that changes.
