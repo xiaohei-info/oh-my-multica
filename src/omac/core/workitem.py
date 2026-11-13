@@ -61,6 +61,7 @@ class PullRequestCheckResult:
     exit_code: Optional[int]
     output: str = ""
     timed_out: bool = False
+    pending: bool = False          # 检查仍在进行:既不是通过也不是失败,下一轮再观察
 
 
 class PullRequestReadinessFailureKind(Enum):

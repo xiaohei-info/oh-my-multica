@@ -74,6 +74,7 @@ class GitHubCodeHost(CodeHost):
 
     def check_pull_request(
         self, pr_url: str, command: str, timeout_seconds: int,
+        pending_exit_code: int | None = None,
     ) -> PullRequestCheckResult:
         try:
             proc = subprocess.run(
@@ -87,9 +88,13 @@ class GitHubCodeHost(CodeHost):
             return PullRequestCheckResult(False, None, output, timed_out=True)
         except FileNotFoundError as exc:
             return PullRequestCheckResult(False, None, str(exc))
+        output = (proc.stdout or "") + (proc.stderr or "")
+        # Right after a push the checks are not registered yet: `gh` exits 1 with this text, which is "pending", not red.
+        pending = pending_exit_code is not None and (
+            proc.returncode == pending_exit_code
+            or (proc.returncode != 0 and "no checks reported" in output.lower()))
         return PullRequestCheckResult(
-            proc.returncode == 0, proc.returncode,
-            (proc.stdout or "") + (proc.stderr or ""))
+            proc.returncode == 0, proc.returncode, output, pending=pending)
 
     def read_pull_request_readiness(
         self, pr_url: str,

@@ -8,6 +8,13 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- CI observation no longer blocks the tick. The default CI command is now `gh pr checks {pr_url}` (no `--watch`); exit code
+  8 (`ci.pending_exit_code`) means the checks are still running, so the node stays in place, other nodes keep being
+  dispatched and defects keep being routed, and the check is observed again next tick. `ci.timeout_minutes` counts from the
+  first pending observation. A custom `ci.check_command` stays blocking unless `ci.pending_exit_code` is set.
+
 ### Fixed
 
 - Paths and branch names in committed content: `pending_human_amendment.file`, the amendment apply ledger's `amendment_file`, the

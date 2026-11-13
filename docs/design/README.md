@@ -147,7 +147,7 @@ the usual report; its `next_actions` come from `decide_defects.render_release`.
 `.omac/config.yaml` (precedence: file < `OMAC_*` environment < flags): `engine: multica`, `workspace`, `project`
 (required: every issue belongs to a project), `roles` (planner, orchestrator, workers, reviewers, acceptor),
 `defaults` (`max_parallel`, `poll_interval`, `coverage_gate`), `workflow` (human-in-the-loop, review, acceptance doc),
-`ci.check_command`, `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
+`ci` (`check_command`, `pending_exit_code`, `timeout_minutes` 30), `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
 `retry` (`worker|ci|review|merge|environment`, `no_submit_runs`, `capacity_wait_hours` default 12: how long a Run that failed on quota / rate limit is waited out before the node blocks; `environment` is the automatic same-Worker retries of an
 `environment-failure` report, default 1), `defects` (`auto_fix: off|design-gap`, `per_reporter` 2, `max_auto_fixes: auto` = max(5, ⌈0.15 × nodes⌉) — raised by `omac defect grant --global`, which adds to `_dag.defects.granted_global` and does not edit the config —, `per_suspected` 2),
 `dispatch.hold_live` (default false: hold each ready `evidence_mode: live` node once for a person to
@@ -236,6 +236,24 @@ reconcile → result collection (collect_results) → evidence / CI / merge gate
 * **A stopped node blocks only what depends on it.** `loop._mark_downstream_blocked` marks the transitive downstream
   (`graph.downstream_of`) of needs-decision nodes `blocked`; independent branches keep being dispatched, and the tick
   reports `needs_decision` (exit 20) only when no node is running.
+
+#### 批量修复 2026-11-13：CI 非阻塞观察与 runner 信号
+
+* **Problem.** The default CI command was `gh pr checks {pr_url} --watch --fail-fast`: `advance_delivery` held the one
+  tick (and the manifest write lock) for the whole CI run (~10 min), so no defect routing, dispatch or reconcile ran meanwhile.
+* **Mechanism.** The check is observed once per tick. `CodeHost.check_pull_request(..., pending_exit_code)` returns
+  `PullRequestCheckResult.pending` when the command ends with `ci.pending_exit_code` (default command: `gh pr checks`
+  without `--watch`, exit 8 = pending; `gh`'s "no checks reported" right after a push counts as pending too). `advance_delivery`
+  then changes nothing and returns `pending` (`decide_worker.AfterCi.WAIT`, event `ci_pending`); the node stays `in_progress`
+  with the delivered item and the next tick observes again. A tick that changed nothing waits `defaults.poll_interval`
+  (7.3), so `gh` is called about once per poll interval per waiting node. `ci.timeout_minutes` counts from the first pending
+  observation, kept in host-local runtime data (`ci-wait`, never in git; a lost file restarts the wait, so it is bounded and
+  safe) and expiry is a timed-out failure through the normal `retry.ci` bounce (`decide_ci.ci_wait_expired`).
+* **Compatibility.** An explicit `ci.check_command` without `pending_exit_code` stays a blocking command whose exit code is
+  the verdict; set `pending_exit_code` to make a custom command non-blocking. Cost: one `gh` call per poll instead of one long
+  call; `ci_check` is no longer visible as a manifest status while waiting (it only existed in memory during the blocking call).
+* **Runner signals.** `dag run|tick` already stop gracefully on SIGINT and SIGTERM and re-arm SIGINT in a background job
+  (`cli/commands/dag.py::_Stop`, #185; `nohup cmd &` starts with SIGINT ignored). No further change.
 
 #### 7.3.1 Observation → Plan → apply
 

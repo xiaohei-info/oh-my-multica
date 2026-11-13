@@ -18,7 +18,7 @@ docs/design/README.md §6:配置与状态一律 YAML 进 git,不用 SQLite。
       review: true              # plan/decompose 是否默认走 reviewer 门
       acceptance_doc: true      # plan create 是否默认生成验收文档
       goal_required: false      # 无 --doc 时是否强制 --goal/--goal-file
-    ci:    { check_command, timeout_minutes }   # 可选;未显式配置时检测 .github/workflows
+    ci:    { check_command, pending_exit_code, timeout_minutes }   # 可选;未显式配置时检测 .github/workflows
     merge: { command }                           # 可选;未显式配置时默认 gh pr merge
     acceptance: { max_rounds }                   # 总控验收外层循环上限(与 retry 正交)
     retry:                                     # 各类「回到 worker」回退次数上限
@@ -116,7 +116,9 @@ DEFAULT_RECONCILE = {
 DEFAULT_DEFECTS = {"auto_fix": "design-gap", "per_reporter": 2, "max_auto_fixes": "auto", "per_suspected": 2}
 DEFECT_AUTO_FIX_MODES = ("off", "design-gap")
 
-DEFAULT_GITHUB_CHECK_COMMAND = "gh pr checks {pr_url} --watch --fail-fast"
+# One non-blocking observation per tick: exit 0 = all green, 8 = still pending, anything else = failed (设计 §7.3).
+DEFAULT_GITHUB_CHECK_COMMAND = "gh pr checks {pr_url}"
+DEFAULT_GITHUB_PENDING_EXIT_CODE = 8
 DEFAULT_GITHUB_MERGE_COMMAND = "gh pr merge {pr_url} --squash --delete-branch"
 
 
@@ -462,6 +464,8 @@ def get_ci_config(config: dict, root: str | os.PathLike = ".") -> dict | None:
     docs/design/README.md §6/§7.3:ci 可选。显式 check_command 最高优先级;未配置时,
     若仓库存在 GitHub Actions workflow,默认用 gh pr checks;否则跳过 CI。
     check_command 是带 {pr_url} 占位的模板命令,subprocess 执行,退出码即结论。
+    可选 pending_exit_code:命令以该退出码结束表示"检查仍在进行",节点留在原处、下一轮再观察
+    (timeout_minutes 从首次 pending 起算);不配置则命令是阻塞式的,退出码只有通过/失败两种。
     """
     ci = config.get("ci")
     if isinstance(ci, dict) and ci.get("check_command"):
@@ -471,6 +475,7 @@ def get_ci_config(config: dict, root: str | os.PathLike = ".") -> dict | None:
     timeout = ci.get("timeout_minutes", 30) if isinstance(ci, dict) else 30
     return {
         "check_command": DEFAULT_GITHUB_CHECK_COMMAND,
+        "pending_exit_code": DEFAULT_GITHUB_PENDING_EXIT_CODE,
         "timeout_minutes": timeout,
     }
 

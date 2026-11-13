@@ -72,11 +72,13 @@ def test_get_ci_config_defaults_to_gh_checks_when_github_workflow_exists(tmp_pat
     monkeypatch.chdir(tmp_path)
 
     assert config_mod.get_ci_config({}) == {
-        "check_command": "gh pr checks {pr_url} --watch --fail-fast",
+        "check_command": "gh pr checks {pr_url}",
+        "pending_exit_code": 8,
         "timeout_minutes": 30,
     }
     assert config_mod.get_ci_config({"ci": {"timeout_minutes": 9}}) == {
-        "check_command": "gh pr checks {pr_url} --watch --fail-fast",
+        "check_command": "gh pr checks {pr_url}",
+        "pending_exit_code": 8,
         "timeout_minutes": 9,
     }
 

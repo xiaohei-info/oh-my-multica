@@ -35,8 +35,13 @@ class CodeHost(ABC):
     @abstractmethod
     def check_pull_request(
         self, pr_url: str, command: str, timeout_seconds: int,
+        pending_exit_code: int | None = None,
     ) -> PullRequestCheckResult:
-        """执行一次 PR 检查命令并返回本地结果；pipeline 只依据结果推进 CI 门。"""
+        """执行一次 PR 检查命令并返回本地结果；pipeline 只依据结果推进 CI 门。
+
+        ``pending_exit_code`` 给出时，命令以该退出码结束（或平台报告尚无检查）表示检查仍在进行，
+        结果 ``pending=True``，调用方下一轮再观察，不得当作失败。
+        """
 
     @abstractmethod
     def read_pull_request_readiness(

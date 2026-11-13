@@ -3474,11 +3474,13 @@ def _collect_in_progress(c: _Collect, n: _Node) -> None:
         # 'bounce' 已转回 worker(本 tick 不再推进), 'blocked' 则阻止后续。
         ci_action = advance_delivery(
             c.config or {}, c.manifest, key, c.store, c.runtime, c.code_host, c.limits,
-            project_root=_project_root_from_manifest_path(c.manifest_path))
+            project_root=_project_root_from_manifest_path(c.manifest_path), manifest_path=c.manifest_path)
         after = decide_after_ci(AfterCiObservation(
             ci_action=ci_action, review_passed=_current_delivery_passed_review(n.item),
             has_reviewer=bool(node.reviewer)))
-        if after is AfterCi.BOUNCE:
+        if after is AfterCi.WAIT:
+            log.info(logsetup.EVT_CI_PENDING, kind=_DAG_KIND, node=key, id=node.work_item_id)
+        elif after is AfterCi.BOUNCE:
             c.failures[key] = ui(
                 "CI failed; returned to the worker for resubmission.",
                 "CI 未通过,已转回 worker(上界未耗尽,待重交)")

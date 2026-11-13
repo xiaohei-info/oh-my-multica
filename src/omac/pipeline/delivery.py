@@ -36,6 +36,7 @@ CI 在显式配置 ``config.ci.check_command`` 或检测到 ``.github/workflows`
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from ..core.config import DEFAULT_RETRY, get_ci_config, get_merge_config
 from ..core.retry_budget import consumed_bounces
@@ -54,11 +55,11 @@ from .decide_merge import (
     plan_request_intent, plan_request_sent, plan_resume_bounce, plan_settle, tail_of,
 )
 from ..engines.runtime import AgentRuntime
-from ..core.manifest import Manifest
+from ..core.manifest import Manifest, read_local_runtime, write_local_runtime
 from ..errors import AuthError, PlatformError
 from ..i18n import ui
 from .apply import ManifestState, Ports, apply
-from .decide_ci import plan_ci_result, plan_ci_start
+from .decide_ci import ci_wait_expired, plan_ci_result, plan_ci_start
 from .decide_effects import RequestMerge
 
 # ── manifest 侧细分态 ↔ 平台 WorkItemStatus 映射表 ──────────────────────────
@@ -100,6 +101,7 @@ class CIResult:
     exit_code: int | None
     output: str        # 命令完整输出(stdout + stderr)
     summary: str       # 输出尾部;回退评论里贴给 worker 定位
+    pending: bool = False   # 检查仍在进行:本轮不改任何状态,下一轮再观察
 
     @property
     def label(self) -> str:
@@ -120,7 +122,36 @@ def _ci_result(result: PullRequestCheckResult) -> CIResult:
         exit_code=result.exit_code,
         output=result.output,
         summary=_tail(result.output) or ui("(no output)", "(无输出)"),
+        pending=result.pending,
     )
+
+
+_CI_WAIT_FILE = "ci-wait"
+
+
+def _ci_wait_started(manifest_path: str | None, item_id: str, *, record: bool) -> float:
+    """Seconds this item's check has been pending, from host-local data (a lost file restarts the wait: bounded, safe)."""
+    if not manifest_path:
+        return 0.0
+    waits = read_local_runtime(manifest_path, _CI_WAIT_FILE)
+    waits = waits if isinstance(waits, dict) else {}
+    now = datetime.now(timezone.utc)
+    try:
+        started = datetime.fromisoformat(str(waits.get(item_id)))
+    except ValueError:
+        started = None
+    if started is None or started.tzinfo is None:
+        started = now
+        if record:
+            write_local_runtime(manifest_path, _CI_WAIT_FILE, {**waits, item_id: now.isoformat()})
+    return (now - started).total_seconds()
+
+
+def _ci_wait_clear(manifest_path: str | None, item_id: str) -> None:
+    waits = read_local_runtime(manifest_path, _CI_WAIT_FILE) if manifest_path else None
+    if isinstance(waits, dict) and item_id in waits:
+        waits.pop(item_id)
+        write_local_runtime(manifest_path, _CI_WAIT_FILE, waits)
 
 
 def block_unproven_merge_request(
@@ -173,12 +204,15 @@ def advance_delivery(
     code_host: CodeHost,
     retry_limits: dict,
     project_root: str = ".",
+    manifest_path: str | None = None,
 ) -> str:
     """worker 证据已过门后推进 CI 门(§7.3)。
 
     - 未配置 ci 且未检测到 GitHub workflow → 环节整体跳过,返回 ``'pass'``。
     - 配置了 ci 或检测到 GitHub workflow → 进入 ``ci_check``(manifest 细分态,平台仍 in_progress),执行
       ``ci.check_command``:
+        * 仍在进行(命令以 ``ci.pending_exit_code`` 结束) → 不改任何状态,返回 ``'pending'``;下一轮 tick
+          再观察一次,tick 内不阻塞其他节点;``timeout_minutes`` 从首次 pending 起算,超时按失败处理
         * 绿 → 回到 ``in_progress``,返回 ``'pass'``
         * 失败/超时 → 失败摘要(命令输出尾部) add_comment + 转回 worker +
           wake + ``ci_bounce``+1;
@@ -187,7 +221,7 @@ def advance_delivery(
 
     回退计数(读/写)经平台 ``WorkItem.bounces.ci``(单一事实源,Store 只存取);
     manifest Node 不持计数。决策是 ``decide_ci`` 的纯函数,这里只观察并 ``apply``。
-    返回:'pass'(继续) | 'bounce'(已转回 worker,上界未到) | 'blocked'(上界耗尽)。
+    返回:'pass'(继续) | 'pending'(检查未结束) | 'bounce'(已转回 worker,上界未到) | 'blocked'(上界耗尽)。
     """
     node = manifest.nodes[node_key]
     item_id = node.work_item_id
@@ -202,14 +236,23 @@ def advance_delivery(
 
     ports, state = Ports(store=store, runtime=runtime), ManifestState(manifest, None)
     start = plan_ci_start(node_key=node_key, item_id=item_id, pr_url=pr_url)
-    apply(start, ports, state)
-    if start.outcome:
+    if not pr_url:
+        apply(start, ports, state)
         return start.outcome
 
+    timeout_seconds = max(1, int(ci.get("timeout_minutes", 30))) * 60
+    pending_code = ci.get("pending_exit_code")
     result = _ci_result(code_host.check_pull_request(
-        pr_url, ci["check_command"],
-        max(1, int(ci.get("timeout_minutes", 30))) * 60,
+        pr_url, ci["check_command"], timeout_seconds,
+        pending_exit_code=int(pending_code) if pending_code is not None else None,
     ))
+    if result.pending:
+        if not ci_wait_expired(_ci_wait_started(manifest_path, item_id, record=True), timeout_seconds):
+            return "pending"
+        result = CIResult(False, True, result.exit_code, result.output, _tail(result.output) or ui(
+            "(still pending)", "(仍在进行)"))
+    _ci_wait_clear(manifest_path, item_id)
+    apply(start, ports, state)
     plan = plan_ci_result(
         node_key=node_key, item_id=item_id, worker=node.worker, passed=result.passed,
         label=result.label, summary=result.summary, bounces=item.bounces.ci,

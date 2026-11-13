@@ -26,6 +26,11 @@ def plan_ci_start(*, node_key: str, item_id: str, pr_url: str) -> Plan:
     return Plan((SetNode(node_key, {"status": "ci_check"}), UpdateStatus(item_id, WorkItemStatus.IN_PROGRESS)))
 
 
+def ci_wait_expired(waited_seconds: float, timeout_seconds: int) -> bool:
+    """A pending check is observed once per tick; ``timeout_minutes`` counts from the first pending observation."""
+    return waited_seconds >= timeout_seconds
+
+
 def plan_ci_result(
     *, node_key: str, item_id: str, worker: str, passed: bool, label: str, summary: str,
     bounces: int, limit: int,

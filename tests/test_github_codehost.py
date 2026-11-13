@@ -154,3 +154,22 @@ def test_github_readiness_malformed_payload_fails_closed(monkeypatch, payload):
     result = host.read_pull_request_readiness("https://github.com/acme/repo/pull/1")
 
     assert isinstance(result, PullRequestReadinessFailure)
+
+
+@pytest.mark.parametrize(("code", "output", "pending_code", "pending", "succeeded"), [
+    (0, "all green", 8, False, True),
+    (8, "build pending", 8, True, False),
+    (1, "build fail", 8, False, False),
+    (1, "no checks reported on the 'x' branch", 8, True, False),   # right after a push, before checks register
+    (8, "exit code 8 means failure for a custom command", None, False, False),
+    (1, "no checks reported on the 'x' branch", None, False, False),
+])
+def test_a_check_command_is_pending_only_when_the_configured_exit_code_says_so(
+        monkeypatch, code, output, pending_code, pending, succeeded):
+    monkeypatch.setattr("omac.engines.github.subprocess.run", lambda *a, **k: SimpleNamespace(
+        returncode=code, stdout=output, stderr=""))
+
+    result = GitHubCodeHost().check_pull_request(
+        "https://github.com/acme/repo/pull/1", "gh pr checks {pr_url}", 30, pending_exit_code=pending_code)
+
+    assert (result.pending, result.succeeded) == (pending, succeeded)

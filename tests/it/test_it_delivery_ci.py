@@ -160,7 +160,7 @@ def test_a_github_workflow_runs_gh_pr_checks_before_review(kit):
     wait_for_status(kit, manifest, path, config, "in_review")
 
     checks = kit.gh_calls("checks")
-    assert len(checks) == 1 and checks[0][3:] == ["--watch", "--fail-fast"] and checks[0][2].startswith("https://github.com/")
+    assert len(checks) == 1 and checks[0][3:] == [] and checks[0][2].startswith("https://github.com/")
 
 
 def test_a_green_check_command_moves_the_node_to_review(kit):
