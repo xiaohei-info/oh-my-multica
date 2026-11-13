@@ -16,6 +16,7 @@ from . import logsetup
 from ..errors import NeedsDecision, ValidationError
 from ..i18n import ui
 from .manifest import manifest_files
+from .pathrefs import relative_to_root
 
 log = logsetup.get_logger(__name__)
 
@@ -264,6 +265,7 @@ def ensure_config_synced(config_path: str, branch: str = "main",
         return
 
     abs_path = config_path if config_path.startswith("/") else f"{repo_root}/{config_path}"
+    shown = relative_to_root(config_path, repo_root)    # commit messages and logs are shared: never a machine path
     if not os.path.exists(abs_path):
         raise ValidationError(ui(
             f"Configuration not found: {config_path}. Run `omac init` first.",
@@ -272,7 +274,7 @@ def ensure_config_synced(config_path: str, branch: str = "main",
     # 有未提交改动就自动提交(隔离区 agent clone 到的必须是最新 config)
     if _run(repo_root, "status", "--porcelain", "--", config_path).stdout.strip():
         _run(repo_root, "add", config_path)
-        r = _run(repo_root, "commit", "-m", f"chore(omac): sync {config_path}")
+        r = _run(repo_root, "commit", "-m", f"chore(omac): sync {shown}")
         if r.returncode != 0:
             raise ValidationError(ui(
                 f"Automatic configuration commit failed: {r.stderr.strip()}",
@@ -281,7 +283,7 @@ def ensure_config_synced(config_path: str, branch: str = "main",
     # 已知 origin/<branch> 快照包含相同 config blob 时无需联网重复 push。
     # resume 只消费既有配置；网络离线不应阻断一个已同步的幂等续跑。
     if _path_matches_remote_tracking(repo_root, config_path, branch):
-        log.info(logsetup.EVT_CONFIG_SYNCED, path=config_path, branch=branch)
+        log.info(logsetup.EVT_CONFIG_SYNCED, path=shown, branch=branch)
         return
 
     # 本地 config 与远端跟踪快照不同，补推已提交但未推送的配置。
@@ -294,7 +296,7 @@ def ensure_config_synced(config_path: str, branch: str = "main",
             f"config push 到 origin/{branch} 失败 —— 隔离区 agent 会 clone 到旧版。\n"
             f"  {r.stderr.strip()}\n"
             f"  远程可能已分叉,先 `git pull --rebase origin {branch}` 再重试"))
-    log.info(logsetup.EVT_CONFIG_SYNCED, path=config_path, branch=branch)
+    log.info(logsetup.EVT_CONFIG_SYNCED, path=shown, branch=branch)
 
 
 def ensure_files_clean(paths, repo_root: str = ".", engine_type=None) -> None:

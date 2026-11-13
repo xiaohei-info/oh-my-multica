@@ -19,6 +19,7 @@ import yaml
 from .lint import lint
 from .graph import SATISFIED
 from .defects import UPSTREAM_DEFECT
+from .pathrefs import persist_path, resolve_path
 from .manifest import (
     Manifest, Node, RUNTIME_META_KEYS, _dump_contract, _load_contract, load_manifest, save_manifest,
 )
@@ -266,7 +267,8 @@ def amendment_apply_blocker(
         return None
 
     amendment_file = str(
-        ledger.get("amendment_file") or "<reviewed-amendment.yaml>")
+        resolve_path(ledger.get("amendment_file") or "", manifest_path)
+        or "<reviewed-amendment.yaml>")
     system = ledger.get("system") is True  # code-built: `dag run` finishes it by itself, no human accept exists
     resume_command = " ".join(("omac dag run", shlex.quote(manifest_path)) if system else (
         "omac dag amend accept",
@@ -1832,7 +1834,8 @@ def _apply_new_amendment(current: Manifest, manifest_path: str, amendment: dict,
         if _is_responsibility_operation(operation) and operation.get("resume_stage") == "merging"
     }
     amended.meta["amendment_apply"] = _prepare_apply_ledger(
-        amended, amendment["amendment_id"], minimal, corrections, store, amendment_file,
+        amended, amendment["amendment_id"], minimal, corrections, store,
+        persist_path(amendment_file, manifest_path) if amendment_file else None,
         merging_responsibility_nodes, budget_bindings=budget_bindings)
     if amendment.get("identity_schema") == SYSTEM_IDENTITY_SCHEMA:
         amended.meta["amendment_apply"]["system"] = True
@@ -1875,8 +1878,9 @@ def apply_amendment(
         if ledger.get("amendment_id") != amendment.get("amendment_id"):
             raise ValidationError(
                 "Manifest amendment apply ledger does not match the accepted amendment")
-        if amendment_file and ledger.get("amendment_file") != amendment_file:
-            ledger["amendment_file"] = amendment_file
+        recorded = persist_path(amendment_file, manifest_path) if amendment_file else None
+        if recorded and ledger.get("amendment_file") != recorded:    # also rewrites a legacy absolute record once
+            ledger["amendment_file"] = recorded
             _save_ledger(current, manifest_path, ledger)
 
     if budget_bindings is not None:

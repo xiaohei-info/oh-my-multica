@@ -131,6 +131,38 @@ def function_length(path: str, source: str) -> list[str]:
             and n.end_lineno - n.lineno + 1 > FUNCTION_LINES_MAX]
 
 
+PERSISTED_PATH_KEYS = {"file", "amendment_file"}   # keys under which a path is written to the manifest / state files
+PERSIST_SANITIZERS = {"persist_path", "relative_to_root"}
+# Dicts that look like persisted path records but are stdout / platform payloads or receive an already persisted path.
+PERSISTED_PATH_EXEMPT = {
+    ("src/omac/pipeline/amendment.py", "_write_reviewed_amendment"),   # stdout JSON keeps the absolute path to copy
+    ("src/omac/pipeline/amendment.py", "accept_amendment_nits"),       # stdout JSON
+    ("src/omac/core/amendment.py", "_prepare_apply_ledger"),           # its argument is already ``persist_path(...)``
+    ("src/omac/pipeline/dispatch.py", "submit"),                       # parameters of the work-item command, not persisted
+}
+
+
+def persisted_paths(path: str, source: str) -> list[str]:
+    """A path written under a persisted key goes through ``persist_path`` (no machine path in committed content)."""
+    out: list[str] = []
+
+    def visit(node: ast.AST, func: str | None) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            func = node.name
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if (isinstance(key, ast.Constant) and key.value in PERSISTED_PATH_KEYS
+                        and not isinstance(value, ast.Constant)
+                        and not (isinstance(value, ast.Call) and _tail(value.func) in PERSIST_SANITIZERS)
+                        and (path, func) not in PERSISTED_PATH_EXEMPT):
+                    out.append(f"{path}:{value.lineno}: `{key.value}` is persisted without persist_path()")
+        for child in ast.iter_child_nodes(node):
+            visit(child, func)
+
+    visit(_parse(source), None)
+    return out
+
+
 WRITE_METHODS = {
     "update_status", "update_work_item_metadata", "add_comment", "assign_work_item", "clear_assignment",
     "reset_review", "prepare_review_cycle", "create_work_item", "set_node_contract", "set_authoring_identity",

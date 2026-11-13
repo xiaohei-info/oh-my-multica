@@ -18,6 +18,7 @@ from ..core.amendment import (
     build_reviewed_amendment, parse_proposal, validate_affected, validate_proposal,
 )
 from ..core.manifest import Contract, load_manifest
+from ..core.pathrefs import persist_path
 from ..core.repository_files import revision_directory_files
 from ..core.review_convergence import (
     REVIEW_CONVERGENCE_MIN_NON_REDUCING_STREAK,
@@ -413,6 +414,14 @@ def _validate_inputs(
     return report, resolved_docs, project_root
 
 
+def _manifest_branch(manifest_path: str) -> str:
+    """The branch the manifest is committed on: ``meta.pr_base``, else the nodes' single ``pr_base``, else ``main``."""
+    manifest = load_manifest(manifest_path)
+    explicit = str(manifest.meta.get("pr_base") or "").strip()
+    bases = {n.contract.pr_base for n in manifest.nodes.values() if n.contract and n.contract.pr_base}
+    return explicit or (next(iter(bases)) if len(bases) == 1 else "main")
+
+
 def _contract(
     manifest_path: str,
     docs: list[str],
@@ -454,7 +463,7 @@ def _contract(
             "acceptance_refs": ["amendment schema and invariant validation"],
             "commands": [f"omac dag show {manifest_source} --output json"],
         }],
-        pr_base="manifest-runtime",
+        pr_base=_manifest_branch(manifest_path),
         coverage_gate=0,
     )
 
@@ -690,7 +699,7 @@ def _write_reviewed_amendment(engine, manifest, manifest_path: str, outcome: dic
     target = output_file or default_amendment_path(manifest_path)
     _write_yaml_atomic(target, reviewed)
     # Until this file is applied the definition must not move under it: upstream-defect routing only queues (设计 §7.5).
-    apply([SetDagFact("pending_human_amendment", {"amendment_id": reviewed["amendment_id"], "file": os.path.abspath(target)}),
+    apply([SetDagFact("pending_human_amendment", {"amendment_id": reviewed["amendment_id"], "file": persist_path(target, manifest_path)}),
            SaveState()], Ports(), ManifestState(manifest, manifest_path))
     if issue.review_verdict == "pass-with-nits":
         state = "pending_operator_nits_acceptance"
