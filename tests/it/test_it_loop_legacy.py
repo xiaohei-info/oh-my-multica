@@ -203,3 +203,41 @@ def test_a_worker_that_submits_between_the_item_read_and_the_run_read_is_not_a_l
 
     assert failure is None and recovered is stale and not decisions
     assert kit.store.get_work_item(item_id).decision_required is None
+
+
+def legacy_delivered_item(kit, *worker_steps):
+    """What the previous version left: the Worker delivered and its Run ended, but the item is in progress with no handoff identity."""
+    from _support.loopkit import HANG
+    kit.stack.set_scenario("alice", [list(worker_steps)])
+    kit.agents(HANG, names=("bob",))
+    manifest = kit.manifest([kit.node("a", reviewer="bob", contract=contract())])
+    path = kit.save(manifest)
+    kit.tick(manifest, path, max_parallel=1)
+    item_id = manifest.nodes["a"].work_item_id
+    kit.wait_runs_ended(item_id)
+    kit.store.update_work_item_metadata(item_id, worker_handoff={}, delivery_identity={})
+    kit.store.update_status(item_id, WorkItemStatus.IN_PROGRESS)
+    return manifest, path, item_id
+
+
+def test_a_legacy_delivery_the_pull_request_and_the_attachment_prove_is_adopted_without_a_person(kit):
+    manifest, path, item_id = legacy_delivered_item(kit, kit.stack.tool("worker-submit"))
+    run_id = kit.run_ids(item_id)[0]
+
+    assert kit.collect(manifest, path) == {}
+
+    item = kit.store.get_work_item(item_id)
+    assert item.decision_required is None and item.status is not WorkItemStatus.BLOCKED
+    assert item.delivery_identity.run_id == run_id and item.bounces.worker == 0
+    assert manifest.nodes["a"].status != "blocked"
+
+
+def test_a_legacy_delivery_whose_pull_request_moved_still_asks_and_names_the_missing_proof(kit):
+    manifest, path, item_id = legacy_delivered_item(kit, kit.stack.tool("worker-submit"), kit.stack.tool("push"))
+
+    failures = kit.collect(manifest, path)
+
+    item = kit.store.get_work_item(item_id)
+    assert "a" in failures and item.status is WorkItemStatus.BLOCKED and item.worker_handoff is None
+    assert item.decision_required["reason_code"] == "legacy-worker-handoff-migration-unproven"
+    assert item.decision_required["missing_proofs"] == ["pr-head-moved-after-submit"]

@@ -172,11 +172,17 @@ def test_a_node_without_a_held_decision_may_be_amended(kit, tmp_path):
     amendment_mod.validate_affected(manifest, resume, kit.store)
 
 
-def test_a_node_holding_a_worker_decision_may_not_be_amended(kit, tmp_path):
+def test_a_node_holding_a_worker_decision_may_be_resumed_by_an_amendment(kit, tmp_path):
     manifest, resume = affected_case(kit, tmp_path, decision={"schema": "omac.decision-required/v1", "reason_code": "worker-decision-required"})
 
+    amendment_mod.validate_affected(manifest, resume, kit.store)     # the resume IS the answer; accept retires the decision
+
+
+def test_a_node_holding_a_worker_decision_may_not_be_removed_by_an_amendment(kit, tmp_path):
+    manifest, _ = affected_case(kit, tmp_path, decision={"schema": "omac.decision-required/v1", "reason_code": "worker-decision-required"})
+
     with pytest.raises(ValidationError, match="bootstrap.*unresolved worker decision"):
-        amendment_mod.validate_affected(manifest, resume, kit.store)
+        amendment_mod.validate_affected(manifest, proposal({"op": "remove", "node": "bootstrap"}), kit.store)
 
 
 def test_a_node_whose_work_item_vanished_may_not_be_amended(kit, tmp_path):

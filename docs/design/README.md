@@ -438,6 +438,48 @@ terminal Run and a Worker's re-submission *mean* was judged from text and from a
   not rebase) is rejected with the reason and the way out (push a new commit or rebase; `omac work block` if no change is possible). Nothing is
   written, so the Worker retry budget is no longer spent silently on "accepted but not a delivery"; the budget is consumed only when a Run really
   ends without a deliverable submission.
+#### 批量修复 2026-11-13：决策门的自动证明与 amendment 接管
+
+Two explicit-decision gates asked a person for something the code could already know or already had the answer to. Both
+follow one rule: a gate may stop for a person only when the fact it needs is neither provable from observed platform facts
+nor already answered by a later explicit decision. The report then names what is missing.
+
+*Legacy Worker handoff (`legacy-worker-handoff-migration-unproven`).* An item that predates handoff identities has Runs but no
+`worker_handoff`, so the Runs alone cannot say which one delivered; the Loop used to block every such item that already held
+facts. `pipeline/decide_legacy.py::decide_legacy_delivery` (pure) now adopts the delivery when all of these hold: the platform
+gives stable Run identities; every direct Run is the node's Worker's; there is no review/rework history (bounces, review
+projection, reviewer baseline, obligations, ledger, continuation, sealed identity) and no operator `retry_note`; the direct Run
+history fits the Run baseline cap; the item has a complete delivery (PR URL, submitted head, verification attachment) whose
+attachment equals the projected verification and whose PR still has the submitted head; and exactly one *completed* Worker Run
+produced the attachment (`_attachment_is_causal_for_run`: `task_id` match, else upload inside the Run's window). Adoption
+persists a causal `worker_handoff` (gate `explicit-dispatch`, `target_run_id` = that Run, every other direct Run in the
+baseline) first, then marks the item `DONE` as `work submit` would and comments; the normal handoff observation then seals the
+delivery identity with all its existing checks, so adoption adds no weaker path. It is logged as `legacy_delivery_adopted`.
+Otherwise the item blocks as before, and `decision_required.missing_proofs` lists each failed proof (`foreign-direct-run`,
+`prior-review-or-rework-facts`, `operator-retry-note`, `run-history-exceeds-baseline-cap`, `platform-run-identity-not-stable`,
+`no-complete-delivery`, `verification-projection-mismatch`, `pr-head-moved-after-submit`,
+`no-completed-run-produced-the-verification`, `several-runs-could-have-produced-the-verification`). A crash between the intent
+and the status write leaves an intent on an in-progress item, which the ordinary handoff path treats as a Worker that ended
+without submit (one bounce, never a replay). Not changed: rework deliveries (review history present) still need a person.
+
+*Amendment and a held worker decision (`validate_affected`).* A stage recovery in `authoring` or `review` resets the work item's
+review state, which includes `decision_required`; so a node an amendment resumes (explicitly, or derived because its worker,
+`blocked_by`, gate or implementation-affecting contract changed) has its worker decision retired on accept anyway, and refusing
+the amendment at admission only forced `retry`, `hold`, propose, accept, `release`. `core/amendment.py::decision_answering_nodes`
+now defines the set of nodes whose recovery answers a decision, and `validate_affected` admits a `worker-decision-required` on
+exactly those nodes (at `propose` and at `accept`). Decisions on nodes the amendment only removes, or recovers at `merging`
+(which does not reset review state), are still refused with a message naming the fix. The takeover is recorded before it
+happens: `_prepare_apply_ledger` writes `superseded_decision` (reason code, gate, blocker reason, SHA-256 of the decision) into
+the node's apply-ledger entry in the same atomic manifest save as the amended definition, ahead of the Store recovery, so a
+crash resumes from the ledger and nothing is replayed. Defect-reporter nodes keep their separate rule (7.5).
+
+*Amendment identity (`amendment-identity-conflict`).* The identity is `amend-<manifest stem>`, so every later proposal on the
+same manifest meets the historical issue and used to exit 20 until a person added `--new-attempt --supersedes-issue-id`.
+`pipeline/amendment.py::superseded_amendment_problem` (pure) already defined "terminal" for `--supersedes-issue-id`
+(Reviewer-pass confirmation or failed-closed decision, no active or unknown Run); `propose` now applies it to the existing
+issue itself and, when it holds, proceeds as `--new-attempt --supersedes-issue-id <that issue>` (same ref, same admission).
+A live issue still exits 20 with the copyable command. Not changed: `--resume-issue-id` flows and the PlatformError
+conflict path.
 
 ## 8. Acceptance documents
 

@@ -47,6 +47,16 @@ This file records public changes to oh-my-multica. The format follows
 - A pull request that conflicts with its base never gets CI ("no checks reported"). The CI gate now detects the conflict
   (`PullRequestObservation.conflicting`) and returns the delivery to the Worker with a rebase instruction instead of waiting
   out `ci.timeout_minutes` or reporting a CI failure.
+- A legacy Worker delivery (an item with Runs but no handoff identity) is adopted without a person when the delivery proves
+  itself: one completed Worker Run uploaded the verification attachment, it matches the item's verification, and the PR
+  still has the submitted head. Otherwise `legacy-worker-handoff-migration-unproven` now lists the missing proofs in
+  `decision_required.missing_proofs`. The adoption is logged as `legacy_delivery_adopted`.
+- `omac dag amend propose|accept` no longer refuses a node that holds a `worker-decision-required` when the amendment resumes
+  that node (authoring or review): the recovery retires the decision, and the retired decision is recorded as
+  `superseded_decision` in the apply ledger. No more `retry`/`hold`/`release` detour. Removing the node, or recovering it
+  only at `merging`, still needs the decision resolved first.
+- `omac dag amend propose` treats a terminal historical amendment issue of the same identity as the previous attempt and
+  supersedes it automatically; `amendment-identity-conflict` (exit 20) is now only for an issue that is still live.
 
 - `omac dag run` waited for nothing between two ticks, so a DAG that only waited for Agents re-read the platform as fast as a tick
   could run. A tick that changed no node status and dispatched nothing is now followed by a wait of `defaults.poll_interval`

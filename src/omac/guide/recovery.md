@@ -261,6 +261,8 @@ omac dag amend propose .omac/project.yaml \
   重新校验通过时才可消费；否则 exit 20，既不清 confirmation，也不派发 Worker/Reviewer。若 amendment
   authoring Run 已停止但 Store 已有交付物，同样会在任何 Runtime 观察、assign 或 wake 前 exit 20，并要求
   保留旧 issue、通过 `--new-attempt --supersedes-issue-id <old-issue-id>` 创建新 attempt。
+  同一身份的旧 amendment issue 若已终态（Reviewer pass 的 confirmation 或 failed-closed decision，且无活跃 Run），
+  `propose` 会自动把新提案作为其下一次 attempt；只有旧 issue 仍在进行时才 exit 20 `amendment-identity-conflict`。
   当前没有引擎提供真实原子 conditional restart/dispatch；`--restart-authoring`
   仅保留为兼容入口，并会在任何 issue 读取、写入或 Agent 派发前以 exit 20 失败关闭，
   给出 `--new-attempt` 命令。OMAC 不保留 speculative generation/journal 状态机。

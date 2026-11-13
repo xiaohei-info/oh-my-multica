@@ -107,6 +107,8 @@ from .decide_reviewer import (
     decide_dispatch_baseline, decide_no_submit, decide_reviewer_run, no_submit_grace, prior_run_active,
     submit_rejection_applies,
 )
+from . import decide_legacy as legacy_decision
+from .decide_legacy import LegacyDeliveryFacts, decide_legacy_delivery
 from .decide_runs import (
     foreign_unbaselined_runs, is_active_formal_run,
     TRANSIENT_RUNTIME_MAX_RUNS, ExpectedTerminalRun, RunFailure, classify_run_failure, decide_capacity_wait,
@@ -2434,7 +2436,7 @@ def _review_projection_present(item) -> bool:
     return not _review_projection_is_clear(item)
 
 
-def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path):
+def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path, code_host=None):
     node = manifest.nodes[key]
     if not (
         node.status == "in_progress"
@@ -2483,13 +2485,19 @@ def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path):
         ], Ports(store=store))
         return store.observe_work_item_control(item.id).work_item, None
     # The item was read before the Runs: a Worker that submitted in between ended its Run normally. Judge only a fresh read.
-    fresh = store.observe_work_item_control(item.id).work_item
+    fresh_projection = store.observe_work_item_control(item.id)
+    fresh = fresh_projection.work_item
     if fresh.status != WorkItemStatus.IN_PROGRESS or fresh.worker_handoff is not None or fresh.decision_required:
         return item, None
+    proof = _prove_legacy_delivery(
+        store, code_host, manifest, key, fresh_projection, runs, worker_id, wrong_actor=wrong_actor, stable_ids=stable_ids)
+    if proof.adopt:
+        return _adopt_legacy_delivery(store, manifest, key, fresh, runs, worker_id, proof.run_id), None
     retry = f"omac node retry {path} {key}"
+    missing = ", ".join(proof.missing)
     reason = ui(
-        f"Legacy Worker Run causality is unsafe; inspect Runs, then use `{retry}`.",
-        f"旧版 Worker Run 因果关系不安全；请检查 Runs 后执行 `{retry}`。")
+        f"Legacy Worker Run causality is unproven (missing: {missing}); inspect Runs, then use `{retry}`.",
+        f"旧版 Worker Run 因果关系未能证明（缺少：{missing}）；请检查 Runs 后执行 `{retry}`。")
     _mark_recovery_pending(manifest, key)
     apply([
         UpdateMetadata(item.id, {'decision_required': {
@@ -2497,11 +2505,72 @@ def _recover_legacy_initial_worker(store, runtime, manifest, key, item, path):
         "reason_code": "legacy-worker-handoff-migration-unproven",
         "kind": TaskKind.DEVELOP.value, "phase": TaskPhase.AUTHORING.value,
         "gate": "worker", "resume_issue_id": item.id, "node_id": key,
+        "missing_proofs": list(proof.missing),
         "next_action": retry}}),
         UpdateStatus(item.id, WorkItemStatus.BLOCKED),
     ], Ports(store=store))
     set_node(manifest, key, status="blocked")
     return item, reason
+
+
+def _prove_legacy_delivery(store, code_host, manifest, key, projection, runs, worker_id, *, wrong_actor, stable_ids):
+    """Observe whether the delivery itself proves which Worker Run made it (the decision is ``decide_legacy``)."""
+    node, item = manifest.nodes[key], projection.work_item
+    problem, causal = None, ()
+    if stable_ids and code_host is not None:
+        try:
+            if not (isinstance(item.verification_ref, dict) and item.verification_ref):
+                raise NodeFailure(f"Worker delivery is incomplete for work item {item.id}", reason_code="delivery-incomplete")
+            projection, attachment = _observe_handoff_verification(store, projection)
+            item = projection.work_item
+            _observe_delivery_projection(store, code_host, item, attachment)
+        except _StaleDelivery:
+            problem = legacy_decision.PR_HEAD_MOVED
+        except NodeFailure as exc:
+            problem = (
+                legacy_decision.PROJECTION_MISMATCH
+                if exc.reason_code in {"verification-projection-mismatch", "verification-attachment-unparseable"}
+                else legacy_decision.NO_DELIVERY)
+        else:
+            causal = tuple(
+                run.id for run in runs
+                if run.kind == "direct" and run.status == "completed" and run.agent_id == worker_id
+                and _attachment_is_causal_for_run(attachment, run, str(worker_id)))
+    return decide_legacy_delivery(LegacyDeliveryFacts(
+        stable_run_identity=stable_ids, foreign_run=wrong_actor,
+        prior_review_facts=bool(
+            item.bounces.worker or item.bounces.review or _review_projection_present(item)
+            or item.reviewer_run_baseline or item.review_obligations or current_review_ledger(item)
+            or item.review_continuation or _delivery_identity(item)),
+        operator_note=bool(node.retry_note),
+        direct_run_count=sum(1 for run in runs if run.kind == "direct"),
+        delivery_problem=problem, causal_completed_run_ids=causal))
+
+
+def _adopt_legacy_delivery(store, manifest, key, item, runs, worker_id, run_id):
+    """Persist the causal handoff the delivery proves (intent first), then mark the item delivered as ``work submit`` would."""
+    node = manifest.nodes[key]
+    artifacts = item.artifacts if isinstance(item.artifacts, dict) else {}
+    intent = WorkerHandoffIntent(
+        schema=WORKER_HANDOFF_SCHEMA, state="pending",
+        target_worker=node.worker, gate="explicit-dispatch",
+        source_review_subject_digest=stage_recovery_subject(node, item),
+        source_review_round=1, target_review_bounce=0,
+        generation=f"handoff-{secrets.token_hex(8)}",
+        target_agent_id=worker_id, target_run_id=run_id, target_worker_bounce=0,
+        baseline_direct_run_ids=tuple(sorted(run.id for run in runs if run.kind == "direct" and run.id != run_id)))
+    _mark_recovery_pending(manifest, key)
+    apply([
+        UpdateMetadata(item.id, {'worker_handoff': intent}),
+        UpdateStatus(item.id, WorkItemStatus.DONE),
+        AddComment(item.id, ui(
+            f"OMAC adopted the legacy Worker delivery of Run {run_id} (PR head {artifacts.get('head_sha')}): the "
+            "verification attachment was uploaded by that Run and the PR head is unchanged.",
+            f"OMAC 已采信旧版 Worker 交付（Run {run_id}，PR head {artifacts.get('head_sha')}）：verification 附件由该 Run "
+            "上传，且 PR head 未变。")),
+    ], Ports(store=store))
+    log.info(logsetup.EVT_LEGACY_DELIVERY_ADOPTED, kind=_DAG_KIND, node=key, id=item.id, run_id=run_id)
+    return store.observe_work_item_control(item.id).work_item
 
 
 def _legacy_delivery_requires_retry(manifest, key, node, item) -> bool:
@@ -3068,7 +3137,7 @@ def _collect_legacy_initial_worker(c: _Collect, n: _Node) -> bool:
     """Recover a legacy initial worker before treating its handoff as current."""
     key, node = n.key, n.node
     n.item, legacy_failure = _recover_legacy_initial_worker(
-        c.store, c.runtime, c.manifest, key, n.item, c.manifest_path)
+        c.store, c.runtime, c.manifest, key, n.item, c.manifest_path, c.code_host)
     if legacy_failure:
         c.failures[key] = legacy_failure
         return True
