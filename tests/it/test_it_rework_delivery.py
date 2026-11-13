@@ -45,10 +45,12 @@ def test_a_delivery_that_a_member_submits_cannot_complete_the_workers_handoff(ki
     submit_work(kit.store, item.id, code_host=kit.code_host, pr_url=current.artifacts["pr_url"], verification_file=str(document))
     assigns = kit.record(kit.store, "assign_work_item")
 
-    with pytest.raises(PlatformError, match="causal|identity|handoff"):
-        kit.tick(manifest, path, retry_limits={"worker": 5})
+    result = kit.tick(manifest, path, retry_limits={"worker": 5})   # a node-level failure: the tick goes on
 
-    assert kit.store.get_work_item(item.id).worker_handoff is not None and not reviewers(assigns)
+    stopped = kit.store.get_work_item(item.id)
+    assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked"
+    assert stopped.decision_required["reason_code"] == "delivery-not-causal"
+    assert stopped.worker_handoff is not None and not reviewers(assigns)
 
 
 def test_a_matching_submit_waits_until_the_workers_run_is_over(kit):
@@ -76,18 +78,22 @@ def test_a_revision_on_the_rejected_head_returns_to_the_worker_not_to_the_review
     assert not reviewers(assigns) and kit.store.get_work_item(item.id).worker_handoff is not None
 
 
-def test_a_pr_head_that_moves_after_the_submit_is_caught_before_the_reviewer(kit):
+def test_a_pr_head_that_moves_after_the_submit_voids_the_delivery_before_the_reviewer(kit):
     manifest, path, item = delivered_again(kit)
+    void = kit.store.get_work_item(item.id).worker_handoff
     pushes(kit, kit.store.get_work_item(item.id))
     assigns = kit.record(kit.store, "assign_work_item")
 
-    with pytest.raises(PlatformError, match="head|HEAD"):
-        kit.tick(manifest, path)
+    result = kit.tick(manifest, path)
 
-    assert not reviewers(assigns)
+    back = kit.store.get_work_item(item.id)
+    assert result.state == "running" and manifest.nodes["a"].status == "in_progress" and not reviewers(assigns)
+    assert back.worker_handoff.generation != void.generation and back.bounces.worker == 1 and len(workers(assigns)) == 1
+    assert back.worker_handoff.baseline_verification_attachment_id == back.verification_ref["attachment_id"]
+    assert any("PR HEAD changed after your submit" in c for c in kit.comments(item.id))
 
 
-def test_a_pr_head_that_moves_after_the_seal_blocks_the_reviewer_dispatch(kit):
+def test_a_pr_head_that_moves_after_the_seal_returns_the_delivery_to_the_worker(kit):
     manifest, path, item = delivered_again(kit)
     kit.after(kit.store, "update_work_item_metadata", lambda *_, **__: pushes(kit, kit.store.get_work_item(item.id)),
               only=lambda _id, **m: bool(m.get("delivery_identity")))
@@ -95,8 +101,10 @@ def test_a_pr_head_that_moves_after_the_seal_blocks_the_reviewer_dispatch(kit):
 
     result = kit.tick(manifest, path)
 
-    assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked" and not reviewers(assigns)
-    assert any("head" in failed["reason"].lower() for failed in result.report["failed_nodes"])
+    back = kit.store.get_work_item(item.id)
+    assert result.state == "running" and manifest.nodes["a"].status == "in_progress" and not reviewers(assigns)
+    assert back.delivery_identity is None and back.worker_handoff.gate == "explicit-dispatch" and back.bounces.worker == 1
+    assert any("PR HEAD changed after your submit" in c for c in kit.comments(item.id))
 
 
 def test_the_ordinary_ci_gate_still_applies_to_a_reworked_delivery(kit):
@@ -191,10 +199,10 @@ def test_a_verification_projection_that_disagrees_with_the_attachment_is_never_s
     kit.distort(kit.store, "observe_work_item_control", tampered, times=50)
     assigns = kit.record(kit.store, "assign_work_item")
 
-    with pytest.raises(PlatformError, match="projection|attachment"):
-        kit.tick(manifest, path)
+    result = kit.tick(manifest, path)
 
-    assert not reviewers(assigns)
+    assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked" and not reviewers(assigns)
+    assert kit.store.get_work_item(item.id).decision_required["reason_code"] == "verification-projection-mismatch"
 
 
 def test_a_submit_that_shows_up_after_the_budget_is_spent_still_beats_the_no_submit_guard(kit):
@@ -321,7 +329,8 @@ def test_a_run_of_another_agent_during_the_handoff_breaks_the_causal_chain(kit):
     kit.wait_for(lambda: len(kit.reviewer_runs(item.id)) >= 2, what="the stranger's Run")
     assigns = kit.record(kit.store, "assign_work_item")
 
-    with pytest.raises(PlatformError, match="non-causal"):
-        kit.tick(manifest, path)
+    result = kit.tick(manifest, path)
 
-    assert not assigns and kit.store.get_work_item(item.id).worker_handoff is not None
+    stopped = kit.store.get_work_item(item.id)
+    assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked"
+    assert not assigns and stopped.worker_handoff is not None and stopped.decision_required["reason_code"] == "handoff-foreign-run"

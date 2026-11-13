@@ -1,7 +1,8 @@
 """Commands a scripted agent runs inside a Run. They read the task with `omac work show`, exactly as the
 issue text tells a real agent to, and submit through `omac work submit` (OMAC is the only write path).
 
-usage: tools.py worker-submit [--no-push] [--empty-commands] <issue> | reviewer-submit [--repeat] <verdict> <issue> | dump <issue>
+usage: tools.py worker-submit [--no-push] [--empty-commands] <issue> | push <issue> | reviewer-submit [--repeat] <verdict> <issue>
+       | dump <issue>
 """
 import contextlib
 import io
@@ -40,6 +41,20 @@ def show(issue):
     return json.loads(done.stdout)
 
 
+def _pr_url(info):
+    return f"https://github.com/example/repo/pull/{info['task']['issue_key'].split('-')[-1]}"
+
+
+def _gh_env():
+    return {**os.environ, "PATH": os.environ["OMAC_FAKE_BIN"] + os.pathsep + os.environ["PATH"]}
+
+
+def push_head(issue):
+    """Move the PR head without submitting (a Worker that merges the base branch, or pushes after its submit)."""
+    subprocess.run(["gh", "__push", _pr_url(show(issue))], env=_gh_env(), check=True)
+    return 0
+
+
 def worker_submit(issue, push=True, empty_commands=False):
     """--no-push keeps the PR head where it was (a revision on the same commit); --empty-commands submits a verification
     that lists no command, which the ordinary evidence gate must refuse."""
@@ -50,8 +65,7 @@ def worker_submit(issue, push=True, empty_commands=False):
         verification = {**verification, "commands": [], "integration_gates": []}
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
         yaml.safe_dump(verification, fh)
-    pr_url = f"https://github.com/example/repo/pull/{info['task']['issue_key'].split('-')[-1]}"
-    gh_env = {**os.environ, "PATH": os.environ["OMAC_FAKE_BIN"] + os.pathsep + os.environ["PATH"]}
+    pr_url, gh_env = _pr_url(info), _gh_env()
     if push or not _has_pushed(gh_env, pr_url):
         subprocess.run(["gh", "__push", pr_url], env=gh_env, check=True)  # a submit normally follows a push: the PR head moves
     done = omac("work", "submit", issue, "--pr-url", pr_url, "--verification-file", fh.name)
@@ -86,4 +100,6 @@ if __name__ == "__main__":
         sys.exit(reviewer_submit(rest[-1], [part for part in rest[:-1] if part != "--repeat"][0], repeat="--repeat" in rest))
     if command == "worker-submit":  # worker-submit [--no-push] [--empty-commands] <issue>
         sys.exit(worker_submit(rest[-1], push="--no-push" not in rest, empty_commands="--empty-commands" in rest))
+    if command == "push":
+        sys.exit(push_head(rest[0]))
     sys.exit(dump(rest[0]))

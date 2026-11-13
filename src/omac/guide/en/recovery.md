@@ -631,6 +631,27 @@ prerequisite decision is not automatically cleared by deployment, and neither
 counters nor Runner state are changed. Preserve the submitted delivery and handoff
 for explicit operator recovery.
 
+### The PR HEAD moved after the submit (stale delivery)
+
+`omac work submit` records the PR HEAD at that moment. When the Controller seals the
+delivery, or checks it again before review or merge, and the remote PR HEAD is no longer
+that head, the delivery is void (`reason_code: delivery-head-moved`): the node goes back
+to its Worker through a new handoff generation, the issue gets a note (submitted →
+current), and one `retry.worker` is spent. Pushing during rework is normal; the head of
+the next submit is what counts, and nothing is compared before that submit. With
+`retry.worker` used up, or once a merge has started (`merge_request_state` is set), the
+node stops with a decision instead; check it, then run `omac node retry <manifest> <node>`.
+`dag run` does not exit for this and keeps advancing the other nodes.
+
+### A node-level failure stops only that node
+
+When one node's facts do not hold together (delivery identity, Run causality, handoff
+source, verification attachment, review ledger), the node stops blocked with
+`decision_required.reason_code` naming the class and a copyable `omac node retry` as
+`next_action`. `dag run` keeps advancing the other nodes and exits 20 only when nothing is
+running. Platform read/write failures, authentication, manifest or lock problems still
+stop the run.
+
 ### Preserve reject feedback across authoring handoff
 
 Before clearing live review fields, an ordinary reject handoff retains bounded

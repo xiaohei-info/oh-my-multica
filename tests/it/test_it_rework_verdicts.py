@@ -30,10 +30,12 @@ def test_a_handoff_intent_without_a_causal_identity_fails_closed_and_is_kept(kit
     assigns = kit.record(kit.store, "assign_work_item")
     kit.forbid(kit.runtime, "wake")
 
-    with pytest.raises(PlatformError, match="causal|identity|predates"):
-        kit.tick(manifest, path)
+    result = kit.tick(manifest, path)   # a node-level failure stops this node only
 
-    assert kit.store.get_work_item(item.id).worker_handoff is not None and not assigns
+    stopped = kit.store.get_work_item(item.id)
+    assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked"
+    assert stopped.decision_required["reason_code"] in {"legacy-handoff-unsupported", "handoff-causality-missing"}
+    assert stopped.worker_handoff is not None and not assigns
 
 
 def test_a_review_handoff_whose_bounce_is_zero_changes_nothing(kit):

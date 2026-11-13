@@ -8,6 +8,19 @@ This file records public changes to oh-my-multica. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A node-level delivery or control inconsistency no longer makes `omac dag run` exit. Such failures raise
+  `errors.NodeFailure` (a `PlatformError` subclass, so an uncaught one is still exit 2) and the Loop settles them per node:
+  the node stops with a `decision_required` carrying a `reason_code` and a copyable `omac node retry`, and every other node
+  keeps advancing. Platform outages, authentication, manifest, lock and observation-snapshot errors still stop the run.
+- A PR HEAD that moved after the Worker's submit (`delivery-head-moved`) voids that delivery instead of stopping the run: the
+  node returns to its Worker through a new handoff generation with a note on the issue, spending one `retry.worker`; with the
+  budget used up, or once a merge has started, the node stops with a decision. A push during rework is never compared with
+  the previous submit. The Worker protocol and guide now say not to push to the PR branch after submitting.
+- The restore pass for stopped nodes no longer fails the whole tick on one node's invalid structured payload or review
+  ledger: that node stays stopped and the others are restored.
+
 ## [3.0.7] — 2026-11-10
 
 ### Fixed

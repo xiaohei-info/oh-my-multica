@@ -2111,7 +2111,7 @@ def test_active_reviewer_restore_hydration_failure_keeps_manifest_blocked(
     [b"[unterminated", b"[]\n", b"{}\n"],
     ids=["malformed", "wrong-type", "empty"],
 )
-def test_active_reviewer_restore_rejects_invalid_structured_payload_atomically(
+def test_active_reviewer_restore_keeps_a_node_with_an_invalid_structured_payload_blocked(
     tmp_path, payload, body,
 ):
     store, remote, runtime, manifest, path, observations, dispatches = (
@@ -2124,9 +2124,8 @@ def test_active_reviewer_restore_rejects_invalid_structured_payload_atomically(
     before = Path(path).read_bytes()
 
     for current_manifest in (manifest, load_manifest(path)):
-        with pytest.raises(PlatformError, match=payload.value):
-            loop._restore_active_formal_run_stages(
-                store, runtime, current_manifest, path, observations)
+        loop._restore_active_formal_run_stages(           # a node-level failure: the tick goes on
+            store, runtime, current_manifest, path, observations)
 
         assert current_manifest.nodes["node-a"].status == "blocked"
         assert observations["node-a"] is invalid
@@ -2134,7 +2133,7 @@ def test_active_reviewer_restore_rejects_invalid_structured_payload_atomically(
         assert dispatches == {"assign": [], "wake": []}
 
 
-def test_active_reviewer_restore_is_globally_atomic_across_candidates_and_restart(
+def test_an_invalid_payload_keeps_only_its_own_node_from_being_restored(
     tmp_path,
 ):
     store, remote, runtime, manifest, path, observations, dispatches = (
@@ -2148,17 +2147,15 @@ def test_active_reviewer_restore_is_globally_atomic_across_candidates_and_restar
         b"[unterminated",
     )
     invalid_b = observations["node-b"]
-    before = Path(path).read_bytes()
 
-    with pytest.raises(PlatformError, match="review_report"):
-        loop._restore_active_formal_run_stages(
-            store, runtime, manifest, path, observations)
+    loop._restore_active_formal_run_stages(
+        store, runtime, manifest, path, observations)
 
-    assert manifest.nodes["node-a"].status == "blocked"
+    assert manifest.nodes["node-a"].status == "in_review"
     assert manifest.nodes["node-b"].status == "blocked"
-    assert observations["node-a"] is originals["node-a"]
+    assert observations["node-a"] is not originals["node-a"]
     assert observations["node-b"] is invalid_b
-    assert Path(path).read_bytes() == before
+    assert load_manifest(path).nodes["node-b"].status == "blocked"
     assert dispatches == {"assign": [], "wake": []}
 
     valid_report = yaml.safe_dump({

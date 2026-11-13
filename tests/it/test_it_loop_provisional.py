@@ -228,8 +228,7 @@ def test_restoring_a_worker_stage_validates_the_deferred_review_ledger_before_an
         kit.store.update_work_item_metadata(item.id, review_ledger=ledger)
         writes.clear()
 
-        with pytest.raises(PlatformError, match="review ledger"):
-            kit.tick(manifest, path)
+        kit.tick(manifest, path)   # the stopped node stays stopped; the tick goes on
 
         assert manifest.nodes["a"].status == "blocked" and Path(path).read_bytes() == before, name
         assert not writes, f"{name}: an invalid ledger must not be followed by any write"

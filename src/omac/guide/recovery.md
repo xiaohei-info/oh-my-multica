@@ -469,6 +469,21 @@ Controller 校验后才封存并进入 review，不消耗一次“未提交”�
 附件也不能复用。若已存在 operator prerequisite decision，部署此修复不会自动清除它、
 归零计数或启动 Runner；保留现有提交和 handoff，由 operator 按已确认的恢复事实处理。
 
+### submit 之后 PR HEAD 又移动（作废交付）
+
+`omac work submit` 记录提交时的 PR HEAD。Controller 封存交付或评审、合并前复核时，若远端 PR HEAD
+已不是这个 HEAD，这份交付作废（`reason_code: delivery-head-moved`）：节点经新的 Worker handoff
+generation 回到 Worker 返工，issue 上附说明（submitted → current），并消耗一次 `retry.worker`。
+返工期间推送新提交是正常的，以下一次 submit 时的 HEAD 为准；尚未重新 submit 时不做这项比对。
+`retry.worker` 耗尽、或合并已开始（`merge_request_state` 非空）时不自动返工，节点停在 decision，
+确认后运行 `omac node retry <manifest> <node>`。`dag run` 不会因此退出，其余节点照常推进。
+
+### 节点级失败只停这个节点
+
+交付身份、Run 因果、handoff 来源、验证附件、review ledger 等单个节点的事实不自洽时，节点停在
+blocked，`decision_required.reason_code` 说明是哪一类，`next_action` 是可复制的 `omac node retry`；
+`dag run` 继续推进其余节点，无进行中节点时才 exit 20。平台读写失败、认证、manifest 或锁问题仍会停 run。
+
 ### reject 反馈在 authoring 交接中保留
 
 普通 reject handoff 在清理当前 review 字段前保存有界 blocker 摘要和完整 report/ledger

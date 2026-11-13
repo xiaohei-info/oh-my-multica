@@ -23,6 +23,20 @@ class ObservationConflict(PlatformError):
     """
 
 
+class NodeFailure(PlatformError):
+    """单个节点的交付或控制事实不自洽(平台本身有应答,不是平台故障)。
+
+    Loop 在逐节点处理处捕获:只停这个节点(写带 ``reason_code`` 的 decision),或把作废的交付退回 Worker,
+    其余节点照常推进。``gate`` 指明用哪个阶段的恢复决策(``worker`` / ``reviewer``)。
+    未被捕获(CLI 单项命令)时仍按平台错误 exit 2。
+    """
+
+    def __init__(self, message: str, *, reason_code: str, gate: str = "worker"):
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.gate = gate
+
+
 class MetadataBudgetError(PlatformError, ValueError):
     """工作项 metadata 超出平台聚合上限,且无可还原的压缩空间(失败关闭)。
 

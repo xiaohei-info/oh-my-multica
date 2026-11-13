@@ -5,8 +5,9 @@ from omac.core.taskmeta import TaskPhase
 from omac.core.workitem import PullRequestState as PR, WorkItemStatus as S
 from omac.pipeline.decide_effects import AddComment, ResetReview, SaveState, SetNode, UpdateMetadata, UpdateStatus
 from omac.pipeline.decide_loop import (
-    DoneDevelopObservation, decide_done_develop, decide_tick_state, plan_block, plan_done_non_develop, plan_evidence_gate_failed,
-    plan_return_to_worker_failed, plan_worker_failed,
+    DoneDevelopObservation, NodeFailureObservation, NodeFailureRoute, decide_done_develop, decide_node_failure,
+    decide_tick_state, node_failure_decision, plan_block, plan_done_non_develop, plan_evidence_gate_failed,
+    plan_node_failure, plan_return_to_worker_failed, plan_worker_failed,
 )
 
 BLOCKED = SetNode("a", {"status": "blocked"})
@@ -137,3 +138,33 @@ def test_a_done_node_keeps_the_meaning_of_a_valid_merge_marker(marker, remote, e
     plan = decide_done_develop(done(request_state=marker, pr_state=remote, merged_at="t" if remote == PR.MERGED else None), "m.yaml")
 
     assert [(type(e).__name__, e.fields) if isinstance(e, SetNode) else type(e).__name__ for e in plan.effects] == expected
+
+
+REWORK, DECIDE = NodeFailureRoute.REWORK, NodeFailureRoute.DECIDE
+
+
+@pytest.mark.parametrize("stale,merge_started,consumed,limit,route", [
+    (True, False, 0, 3, REWORK),     # a void delivery goes back to its Worker
+    (True, False, 2, 3, REWORK),
+    (True, False, 3, 3, DECIDE),     # retry.worker used up: the operator decides
+    (True, False, 0, 0, DECIDE),     # retry.worker 0 never reworks
+    (True, True, 0, 3, DECIDE),      # a merge is under way: its outcome may include the moved head, never rework
+    (False, False, 0, 3, DECIDE),    # every other node-level failure stops only that node
+])
+def test_only_a_stale_delivery_with_budget_and_no_merge_under_way_is_reworked(stale, merge_started, consumed, limit, route):
+    assert decide_node_failure(NodeFailureObservation(
+        stale_delivery=stale, merge_started=merge_started, worker_consumed=consumed, worker_limit=limit)) is route
+
+
+def test_a_node_failure_stops_the_node_with_a_retry_decision_and_keeps_an_older_one():
+    decision = node_failure_decision("a", "i", TaskPhase.AUTHORING, "delivery-not-causal", "x" * 2000, "omac node retry m a")
+    assert decision["reason_code"] == "delivery-not-causal" and decision["next_action"] == "omac node retry m a"
+    assert decision["node_id"] == "a" and decision["resume_issue_id"] == "i" and len(decision["detail"]) == 500
+
+    fresh = plan_node_failure("a", "i", decision, has_decision=False, item_status=S.DONE, reason="r")
+    assert fresh.effects == (SetNode("a", {"recovery_marker": True}), SaveState(),
+                             UpdateMetadata("i", {"decision_required": decision}), UpdateStatus("i", S.BLOCKED),
+                             AddComment("i", "r"), BLOCKED)
+    standing = plan_node_failure("a", "i", decision, has_decision=True, item_status=S.BLOCKED, reason="r")
+    assert UpdateMetadata("i", {"decision_required": decision}) not in standing.effects
+    assert standing.effects[-1] == BLOCKED and not any(isinstance(e, UpdateStatus) for e in standing.effects)

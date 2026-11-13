@@ -4,7 +4,6 @@ Node `a` is delivered by alice and rejected by bob; the Loop has not collected t
 alice's Runs after her first follow the scenario each test passes (default: they submit again).
 """
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
@@ -14,7 +13,6 @@ from _support.rework import rejected, with_handoff_round, workers
 from omac.core.manifest import load_manifest
 from omac.core.review_convergence import review_subject_digest
 from omac.core.workitem import WorkItemStatus
-from omac.errors import PlatformError
 from omac.pipeline import loop
 
 
@@ -74,20 +72,23 @@ def test_a_ledger_that_keeps_going_deeper_does_not_stop_the_handoff(kit):
 
 
 @pytest.mark.parametrize("name", [*ledgers.FORGERIES, *ledgers.UNTRUSTED])
-def test_an_untrustworthy_ledger_fails_the_tick_before_any_write(kit, name):
+def test_an_untrustworthy_ledger_stops_the_node_before_any_other_write(kit, name):
     manifest, path, item = rejected(kit, *HANG)
     kit.tick(manifest, path)
     round_index, ledger = ledgers.forged(name) if name in ledgers.FORGERIES else (3, ledgers.copy_of(ledgers.UNTRUSTED[name]))
     with_handoff_round(kit, item, round_index)
     kit.store.update_work_item_metadata(item.id, review_ledger=ledger)
-    before = Path(path).read_bytes()
     writes = kit.record(kit.store, "update_work_item_metadata", "update_status", "assign_work_item")
     kit.forbid(kit.runtime, "wake")
 
-    with pytest.raises(PlatformError, match="review ledger|seen_count"):
-        kit.tick(manifest, path)
+    result = kit.tick(manifest, path)
 
-    assert not writes and manifest.nodes["a"].status == "in_progress" and Path(path).read_bytes() == before
+    stopped = kit.store.get_work_item(item.id)
+    assert result.state == "needs_decision" and manifest.nodes["a"].status == "blocked"
+    assert stopped.decision_required["reason_code"].startswith("review-ledger")
+    # the only writes stop the node: its decision, then the blocked status; nothing acts on the ledger
+    assert [name for name, *_ in writes] == ["update_work_item_metadata", "update_status"]
+    assert set(writes[0][2]) == {"decision_required"} and writes[1][1][1] is WorkItemStatus.BLOCKED
 
 
 def test_an_active_worker_is_not_restored_before_a_stalled_review_has_its_decision(kit):

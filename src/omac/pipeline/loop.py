@@ -60,7 +60,7 @@ from ..engines.codehost import CodeHost
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from .observation_conflict import conflict_streaks
-from ..errors import AuthError, ObservationConflict, PlatformError, WorkItemNotFoundError
+from ..errors import AuthError, NodeFailure, ObservationConflict, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from .decide_review import VerdictObservation, VerdictPath, decide_verdict_path
 from .decide_hold import AUTO_HELD_KEY, plan_auto_hold_live
@@ -73,7 +73,7 @@ from .decide_worker import (
 )
 from .decide_merge import is_recovering_merge_handoff, merge_bounce_attempt, merge_request_state_is_valid, plan_finish_bounce
 from .convergence import (
-    ConvergenceResolution, ResolutionState, check_handoff_ledger_ref, handoff_needs_ledger,
+    ConvergenceResolution, ResolutionState, check_handoff_ledger_ref, handoff_needs_ledger, invalid_ledger,
     persist_decision, resolve_convergence, resolve_handoff_convergence,
 )
 from ..pipeline.dispatch import (
@@ -90,8 +90,10 @@ from ..core.taskmeta import (
 )
 from .apply import ManifestState, Ports, apply, apply_one
 from .decide_loop import (
-    DoneDevelopObservation, decide_done_develop, plan_block, plan_done_non_develop, plan_evidence_gate_failed,
-    decide_tick_state, plan_return_to_worker_failed, plan_worker_failed,
+    DELIVERY_HEAD_MOVED, DoneDevelopObservation, NodeFailureObservation, NodeFailureRoute, decide_done_develop,
+    decide_node_failure, node_failure_decision, node_failure_reason, plan_block, plan_done_non_develop,
+    plan_evidence_gate_failed, plan_node_failure, decide_tick_state, plan_return_to_worker_failed, plan_worker_failed,
+    stale_delivery_note,
 )
 from .decide_recovery import (
     validate_structured_recovery_payloads,
@@ -115,6 +117,7 @@ from .decide_effects import (
     Plan,
     SetNode,
     AcknowledgeAssignment,
+    AddComment,
     Assign,
     ClearAssignment,
     CreateWorkItem,
@@ -210,8 +213,21 @@ def _resolve_handoff_review_convergence(
     return resolve_handoff_convergence(item, handoff_intent, node_id)
 
 
-class _ReviewerDispatchUnresolved(PlatformError):
+class _ReviewerDispatchUnresolved(NodeFailure):
     """A persisted reviewer assignment has no uniquely observable Run."""
+
+    def __init__(self, detail: str):
+        super().__init__(detail, reason_code="reviewer-run-dispatch-unresolved", gate="reviewer")
+
+
+class _StaleDelivery(NodeFailure):
+    """The PR HEAD is no longer the head the Worker submitted: the delivery is void (decide_loop.decide_node_failure)."""
+
+    def __init__(self, pr_url: str, submitted: str, current: str):
+        super().__init__(
+            f"Remote PR HEAD changed after Worker submit for {pr_url}: submitted={submitted}, current={current}",
+            reason_code=DELIVERY_HEAD_MOVED)
+        self.submitted, self.current = submitted, current
 
 
 @dataclass(frozen=True)
@@ -924,12 +940,14 @@ def _block_review_nits_acceptance(
 ) -> str:
     """Persist a bounded caller decision instead of dispatching Worker rework."""
     if not exact_review_report_ref(item.review_report_ref):
-        raise PlatformError(
-            f"pass-with-nits review report ref is invalid for work item {item.id}")
+        raise NodeFailure(
+            f"pass-with-nits review report ref is invalid for work item {item.id}",
+            reason_code="review-report-ref-invalid", gate="review")
     subject = item.review_subject_digest
     if not isinstance(subject, str) or not subject:
-        raise PlatformError(
-            f"pass-with-nits review subject is missing for work item {item.id}")
+        raise NodeFailure(
+            f"pass-with-nits review subject is missing for work item {item.id}",
+            reason_code="review-subject-missing", gate="review")
     decision = {
         "schema": DECISION_REQUIRED_SCHEMA,
         "reason_code": "review-nits-acceptance-required",
@@ -1205,7 +1223,7 @@ def _new_reviewer_baseline(runtime, current, item_id, subject_digest, node, revi
         stable_run_identity=runtime.capabilities.stable_direct_run_identity,
         direct_runs=tuple(runtime.list_runs(item_id))), generation=f"review-{secrets.token_hex(8)}")
     if decision.action is BaselineAction.UNAVAILABLE:
-        raise PlatformError(decision.reason)
+        raise NodeFailure(decision.reason, reason_code="reviewer-run-baseline-unavailable", gate="reviewer")
     return decision.baseline
 
 
@@ -1394,7 +1412,8 @@ def _handoff_entry(run: _HandoffRun) -> _WorkerHandoffResult | None:
     """Reject incomplete authoring recovery, surface decisions, rehydrate review payloads."""
     key, current, intent = run.key, run.current, run.intent
     if intent is not None and intent.authoring_recovery is not None:
-        raise PlatformError(f"Authoring recovery is incomplete; finish `omac node retry <manifest> {key} --stage authoring` before dispatch")
+        raise NodeFailure(f"Authoring recovery is incomplete; finish `omac node retry <manifest> {key} --stage authoring` before dispatch",
+            reason_code="authoring-recovery-incomplete")
     if current.phase == TaskPhase.AUTHORING and current.decision_required:
         return _WorkerHandoffResult(
             "needs-decision", intent, run.projection, decision=current.decision_required)
@@ -1434,9 +1453,10 @@ def _handoff_hydrate_contract(run: _HandoffRun, gate: str | None) -> None:
     if contract_deferred and not _submit_payload_is_materialized(
         WorkItemPayload.CONTRACT, run.current.contract
     ):
-        raise PlatformError(
+        raise NodeFailure(
             f"Could not hydrate contract for Worker handoff {run.item_id}; "
-            f"restore its contract attachment and run `omac work show {run.item_id} --output json`")
+            f"restore its contract attachment and run `omac work show {run.item_id} --output json`",
+            reason_code="contract-unavailable")
 
 
 def _handoff_source(run: _HandoffRun, gate: str) -> tuple[int, str]:
@@ -1451,7 +1471,8 @@ def _handoff_source(run: _HandoffRun, gate: str) -> tuple[int, str]:
         or source_subject != review_subject_for_round(
             run.manifest, run.key, current, source_round)
     ):
-        raise PlatformError(f"Worker handoff source is stale for work item {run.item_id}")
+        raise NodeFailure(f"Worker handoff source is stale for work item {run.item_id}",
+            reason_code="handoff-source-stale")
     return source_round, source_subject
 
 
@@ -1478,26 +1499,28 @@ def _handoff_source_feedback(run: _HandoffRun, gate: str, source_verdict: str | 
         return None
     source_feedback = {"verdict": source_verdict}
     if not exact_review_report_ref(current.review_report_ref):
-        raise PlatformError(
-            f"Worker handoff review report ref is invalid for work item {run.item_id}")
+        raise NodeFailure(
+            f"Worker handoff review report ref is invalid for work item {run.item_id}",
+            reason_code="review-report-ref-invalid", gate="review")
     source_feedback["report_ref"] = dict(current.review_report_ref)
     report = current.review_report
     if isinstance(report, dict) and isinstance(report.get("nits"), list):
         source_feedback["nits"] = list(report["nits"])
     if not review_nits_feedback_is_complete(source_feedback):
-        raise PlatformError(
+        raise NodeFailure(
             f"Worker handoff requires actionable pass-with-nits feedback "
-            f"for work item {run.item_id}")
+            f"for work item {run.item_id}", reason_code="review-nits-feedback-incomplete", gate="review")
     return source_feedback
 
 
-def _new_handoff_intent(run: _HandoffRun, review_bounce: int | None, gate: str | None
-                        ) -> _WorkerHandoffResult | None:
+def _new_handoff_intent(run: _HandoffRun, review_bounce: int | None, gate: str | None,
+                        worker_bounce: int | None = None) -> _WorkerHandoffResult | None:
     """Create and durably persist the causal handoff intent (the first write of a handoff)."""
     _handoff_hydrate_contract(run, gate)
     current, item_id, node = run.current, run.item_id, run.node
     if review_bounce is None or gate is None:
-        raise PlatformError(f"Worker handoff intent is missing for work item {item_id}")
+        raise NodeFailure(f"Worker handoff intent is missing for work item {item_id}",
+            reason_code="handoff-intent-missing")
     source_round, source_subject = _handoff_source(run, gate)
     source_verdict = current.review_verdict if gate in _HANDOFF_REVIEW_GATES else None
     baseline_pr_head_sha = _handoff_baseline_head(current, source_verdict)
@@ -1530,7 +1553,7 @@ def _new_handoff_intent(run: _HandoffRun, review_bounce: int | None, gate: str |
         baseline_verification_attachment_id=(
             str((current.verification_ref or {}).get("attachment_id") or "") or None),
         baseline_pr_head_sha=baseline_pr_head_sha,
-        target_worker_bounce=current.bounces.worker,
+        target_worker_bounce=current.bounces.worker if worker_bounce is None else worker_bounce,
     )
     run.intent = intent
     _mark_recovery_pending(run.manifest, run.key)
@@ -1578,7 +1601,8 @@ def _retire_source_identity(run: _HandoffRun) -> _WorkerHandoffResult | None:
         source_subject != intent.source_review_subject_digest
         or review_context_binding(current) != intent.review_context_binding
     ):
-        raise PlatformError(f"Worker handoff source changed before retirement for {item_id}")
+        raise NodeFailure(f"Worker handoff source changed before retirement for {item_id}",
+            reason_code="handoff-source-changed")
     return run.prepare(
         lambda: apply_one(UpdateMetadata(item_id, {'delivery_identity': {}}), Ports(store=run.store)),
         lambda item: item.delivery_identity is None,
@@ -1597,7 +1621,7 @@ def _prepare_bounce(run: _HandoffRun, attr: str, target: int, mismatch: str
         if pending is not None:
             return pending
     if getattr(run.current.bounces, attr) != target:
-        raise PlatformError(mismatch.format(item_id=item_id))
+        raise NodeFailure(mismatch.format(item_id=item_id), reason_code="handoff-bounce-mismatch")
     return None
 
 
@@ -1613,8 +1637,9 @@ def _worker_bounce_step(run: _HandoffRun) -> _WorkerHandoffResult | None:
 def _review_bounce_step(run: _HandoffRun) -> _WorkerHandoffResult | None:
     target = run.intent.target_review_bounce
     if target is None:
-        raise PlatformError(
-            f"Worker handoff target bounce is missing for work item {run.item_id}")
+        raise NodeFailure(
+            f"Worker handoff target bounce is missing for work item {run.item_id}",
+            reason_code="handoff-intent-incomplete")
     return _prepare_bounce(
         run, "review", target, "Worker handoff bounce does not match for work item {item_id}")
 
@@ -1666,8 +1691,9 @@ def _reset_to_authoring(run: _HandoffRun) -> _WorkerHandoffResult | None:
         run.current.status != WorkItemStatus.IN_PROGRESS
         or not _worker_handoff_review_is_reset(run.current)
     ):
-        raise PlatformError(
-            f"Worker handoff preparation did not persist for work item {item_id}")
+        raise NodeFailure(
+            f"Worker handoff preparation did not persist for work item {item_id}",
+            reason_code="handoff-preparation-unpersisted")
     return None
 
 
@@ -1719,8 +1745,8 @@ def _assign_and_wake(run: _HandoffRun) -> _WorkerHandoffResult:
         if resolved is not None:
             _acknowledge_if_assigned(runtime, item_id, kind_label)
             return resolved
-    raise PlatformError(
-        f"Worker handoff dispatch outcome is unknown for work item {item_id}")
+    raise NodeFailure(
+        f"Worker handoff dispatch outcome is unknown for work item {item_id}", reason_code="worker-dispatch-unresolved")
 
 
 def _acknowledge_if_assigned(runtime: AgentRuntime, item_id: str, step: str) -> None:
@@ -1738,8 +1764,11 @@ def _dispatch_worker_handoff_locked(
     review_bounce: int | None = None,
     gate: str | None = None,
     projection: WorkItemControlProjection | None = None,
+    worker_bounce: int | None = None,
 ) -> _WorkerHandoffResult:
-    """幂等完成 review→worker handoff；assign 可能立即启动 Run。"""
+    """幂等完成 review→worker handoff；assign 可能立即启动 Run。
+
+    ``worker_bounce``: the retry.worker count a new handoff raises the issue to (a stale delivery spends one)."""
     node = manifest.nodes[key]
     item_id = node.work_item_id
     projection = projection or store.observe_work_item_control(item_id)
@@ -1747,11 +1776,12 @@ def _dispatch_worker_handoff_locked(
                       projection.work_item.worker_handoff)
     early = _handoff_entry(run)
     if early is None and run.intent is None:
-        early = _new_handoff_intent(run, review_bounce, gate)
+        early = _new_handoff_intent(run, review_bounce, gate, worker_bounce)
     if early is not None:
         return early
     if not run.intent.is_causally_bound():
-        raise PlatformError(f"Worker handoff lacks causal identity for work item {item_id}")
+        raise NodeFailure(f"Worker handoff lacks causal identity for work item {item_id}",
+            reason_code="handoff-causality-missing")
 
     steps = (
         _retire_source_identity,
@@ -1905,14 +1935,14 @@ def _next_worker_handoff_attempt(
     """Create one persisted retry generation after a terminal no-submit Run."""
     intent = item.worker_handoff
     if intent is None or not intent.is_causally_bound():
-        raise PlatformError(
-            f"Worker handoff is not retryable for work item {item.id}")
+        raise NodeFailure(
+            f"Worker handoff is not retryable for work item {item.id}", reason_code="handoff-causality-missing")
     direct_runs = [
         run for run in runtime.list_runs(item.id) if run.kind == "direct"
     ]
     if any(run.active for run in direct_runs):
-        raise PlatformError(
-            f"Worker handoff still has an active Run for work item {item.id}")
+        raise NodeFailure(
+            f"Worker handoff still has an active Run for work item {item.id}", reason_code="worker-run-still-active")
     cutoff = parse_baseline_cutoff(intent)
     allowed_run_ids = set(intent.baseline_direct_run_ids)
     if intent.target_run_id:
@@ -1922,9 +1952,9 @@ def _next_worker_handoff_attempt(
         and not run_created_within_baseline(run, cutoff)
         for run in direct_runs
     ):
-        raise PlatformError(
+        raise NodeFailure(
             f"Worker handoff observed an unexpected terminal Run for work item "
-            f"{item.id}")
+            f"{item.id}", reason_code="handoff-unexpected-run")
     verification_ref = (
         item.verification_ref if isinstance(item.verification_ref, dict) else {}
     )
@@ -1967,9 +1997,9 @@ def _observe_terminal_without_submit(
         intent.terminal_observed_at
         and (observed_at is None or observed_at.tzinfo is None)
     ):
-        raise PlatformError(
+        raise NodeFailure(
             f"Worker handoff terminal observation is invalid for work item "
-            f"{item_id}")
+            f"{item_id}", reason_code="handoff-terminal-observation-invalid")
     if observed_at is None:
         intent = replace(
             intent, terminal_observed_at=_utcnow().isoformat())
@@ -2012,7 +2042,7 @@ def _observe_delivery_projection(store: WorkItemStore, code_host: CodeHost, item
     pr_url = str(artifacts.get("pr_url") or artifacts.get("pr") or "").strip()
     submitted_head = str(artifacts.get("head_sha") or "").strip()
     if not pr_url or not submitted_head or not verification_ref:
-        raise PlatformError(f"Worker delivery is incomplete for work item {item.id}")
+        raise NodeFailure(f"Worker delivery is incomplete for work item {item.id}", reason_code="delivery-incomplete")
 
     attachment = attachment or store.observe_verification_attachment(
         item.id, verification_ref)
@@ -2020,12 +2050,13 @@ def _observe_delivery_projection(store: WorkItemStore, code_host: CodeHost, item
         attachment_verification = yaml.safe_load(
             attachment.content.decode("utf-8"))
     except (UnicodeDecodeError, yaml.YAMLError) as exc:
-        raise PlatformError(
-            f"Verification attachment cannot be parsed for work item {item.id}") from exc
+        raise NodeFailure(
+            f"Verification attachment cannot be parsed for work item {item.id}",
+            reason_code="verification-attachment-unparseable") from exc
     if attachment_verification != item.verification:
-        raise PlatformError(
+        raise NodeFailure(
             f"Parsed verification projection does not match downloaded attachment "
-            f"for work item {item.id}")
+            f"for work item {item.id}", reason_code="verification-projection-mismatch")
 
     readiness = code_host.read_pull_request_readiness(pr_url)
     if isinstance(readiness, PullRequestReadinessFailure):
@@ -2034,9 +2065,7 @@ def _observe_delivery_projection(store: WorkItemStore, code_host: CodeHost, item
     if not isinstance(readiness, PullRequestReadiness) or not readiness.head_sha:
         raise PlatformError(f"Remote PR HEAD is unavailable for {pr_url}")
     if readiness.head_sha != submitted_head:
-        raise PlatformError(
-            f"Remote PR HEAD changed after Worker submit for {pr_url}: "
-            f"submitted={submitted_head}, current={readiness.head_sha}")
+        raise _StaleDelivery(pr_url, submitted_head, readiness.head_sha)
     return attachment, pr_url, readiness.head_sha
 
 
@@ -2057,14 +2086,15 @@ def _seal_worker_delivery(
         and attachment.attachment_id
         == intent.baseline_verification_attachment_id
     ):
-        raise PlatformError(
-            f"Worker handoff {intent.generation} did not create a new verification attachment")
+        raise NodeFailure(
+            f"Worker handoff {intent.generation} did not create a new verification attachment",
+            reason_code="delivery-not-new")
     if not _attachment_is_causal_for_run(
         attachment, target_run, str(intent.target_agent_id),
     ):
-        raise PlatformError(
+        raise NodeFailure(
             f"Verification attachment is not causally bound to Worker Run "
-            f"{target_run.id}")
+            f"{target_run.id}", reason_code="delivery-not-causal")
     return DeliveryIdentity(
         schema=DELIVERY_IDENTITY_SCHEMA,
         handoff_generation=intent.generation,
@@ -2090,8 +2120,9 @@ def _validate_controller_sealed_delivery(
     if identity is None:
         return
     if not identity.is_complete():
-        raise PlatformError(
-            f"Controller-sealed delivery identity is incomplete for work item {item.id}")
+        raise NodeFailure(
+            f"Controller-sealed delivery identity is incomplete for work item {item.id}",
+            reason_code="delivery-identity-incomplete")
     attachment, pr_url, remote_head = _observe_delivery_projection(store, code_host, item)
     if (
         identity.pr_url != pr_url
@@ -2099,9 +2130,9 @@ def _validate_controller_sealed_delivery(
         or identity.verification_attachment_id != attachment.attachment_id
         or identity.verification_comment_id != attachment.comment_id
     ):
-        raise PlatformError(
+        raise NodeFailure(
             f"Current delivery projection does not match sealed identity for "
-            f"work item {item.id}")
+            f"work item {item.id}", reason_code="delivery-identity-mismatch")
     if (
         attachment.sha256 != identity.verification_sha256
         or attachment.attachment_id != identity.verification_attachment_id
@@ -2117,9 +2148,9 @@ def _validate_controller_sealed_delivery(
         )
         or attachment.created_at != identity.verification_created_at
     ):
-        raise PlatformError(
+        raise NodeFailure(
             f"Verification attachment no longer matches sealed identity for "
-            f"work item {item.id}")
+            f"work item {item.id}", reason_code="delivery-identity-mismatch")
 
 
 def _observe_handoff_verification(
@@ -2135,12 +2166,13 @@ def _observe_handoff_verification(
     try:
         verification = yaml.safe_load(attachment.content.decode("utf-8"))
     except (UnicodeDecodeError, yaml.YAMLError) as exc:
-        raise PlatformError(
-            f"Verification attachment cannot be parsed for work item {item.id}") from exc
+        raise NodeFailure(
+            f"Verification attachment cannot be parsed for work item {item.id}",
+            reason_code="verification-attachment-unparseable") from exc
     if item.verification is not None and item.verification != verification:
-        raise PlatformError(
+        raise NodeFailure(
             f"Parsed verification projection does not match downloaded attachment "
-            f"for work item {item.id}")
+            f"for work item {item.id}", reason_code="verification-projection-mismatch")
     return (
         replace(
             projection,
@@ -2161,8 +2193,9 @@ def _commit_worker_handoff_delivery(
     identity = result.delivery_identity
     projection = result.projection
     if identity is None or projection is None:
-        raise PlatformError(
-            f"Worker handoff delivery candidate is incomplete for work item {item_id}")
+        raise NodeFailure(
+            f"Worker handoff delivery candidate is incomplete for work item {item_id}",
+            reason_code="delivery-candidate-incomplete")
     current = store.observe_work_item_control(item_id).work_item
     existing = _delivery_identity(current)
     if not control_matches_handoff_candidate(current, result.intent, identity):
@@ -2174,9 +2207,9 @@ def _commit_worker_handoff_delivery(
             f"Worker handoff delivery candidate changed before commit for "
             f"work item {item_id}")
     if existing is not None and existing.as_dict() != identity.as_dict():
-        raise PlatformError(
+        raise NodeFailure(
             f"Persisted delivery identity does not match platform facts for "
-            f"handoff {result.intent.generation}")
+            f"handoff {result.intent.generation}", reason_code="delivery-identity-mismatch")
     if existing is None:
         apply([
             UpdateMetadata(item_id, {'delivery_identity': identity}),
@@ -2184,9 +2217,9 @@ def _commit_worker_handoff_delivery(
     persisted = _delivery_identity(
         store.observe_work_item_control(item_id).work_item)
     if persisted is None or persisted.as_dict() != identity.as_dict():
-        raise PlatformError(
+        raise NodeFailure(
             f"Controller-sealed delivery identity did not persist for "
-            f"handoff {result.intent.generation}")
+            f"handoff {result.intent.generation}", reason_code="delivery-identity-unpersisted")
     apply([
         UpdateMetadata(item_id, {'worker_handoff': {}}),
     ], Ports(store=store))
@@ -2206,8 +2239,8 @@ def _finalize_worker_handoff_delivery(
     result: _WorkerHandoffResult,
 ) -> tuple[Any, list]:
     if result.state != "complete" or result.projection is None:
-        raise PlatformError(
-            f"Worker handoff is not ready for work item {node.work_item_id}")
+        raise NodeFailure(
+            f"Worker handoff is not ready for work item {node.work_item_id}", reason_code="handoff-not-ready")
     projection = _hydrate_worker_collect_evidence(
         store, result.projection)
     gate_errors = validate_worker_evidence(node, projection.work_item)
@@ -2309,19 +2342,20 @@ def _observe_worker_handoff(
     cutoff = parse_baseline_cutoff(intent)
 
     if not intent.is_causally_bound():
-        raise PlatformError(
-            f"Worker handoff lacks causal identity for work item {item_id}")
+        raise NodeFailure(
+            f"Worker handoff lacks causal identity for work item {item_id}", reason_code="handoff-causality-missing")
 
     if foreign_unbaselined_runs(runs, intent.target_agent_id, baseline, cutoff):
-        raise PlatformError(
-            f"Worker handoff observed non-causal direct Runs for work item {item_id}")
+        raise NodeFailure(
+            f"Worker handoff observed non-causal direct Runs for work item {item_id}",
+            reason_code="handoff-foreign-run")
     observed = observe_direct_run_attempt(
         runs, intent.target_agent_id,
         baseline_direct_run_ids=intent.baseline_direct_run_ids,
         cutoff_created_at=intent.baseline_cutoff_created_at,
         target_run_id=intent.target_run_id)
     if observed.state == "unexpected":
-        raise PlatformError(observed.detail)
+        raise NodeFailure(observed.detail, reason_code="handoff-unexpected-run")
     if observed.target_run_id and observed.target_run_id != intent.target_run_id:
         intent = replace(intent, target_run_id=observed.target_run_id)
         apply([
@@ -2366,9 +2400,9 @@ def _observe_worker_handoff(
         )
         existing = _delivery_identity(current)
         if existing is not None and existing.as_dict() != sealed.as_dict():
-            raise PlatformError(
+            raise NodeFailure(
                 f"Persisted delivery identity does not match platform facts for "
-                f"handoff {intent.generation}")
+                f"handoff {intent.generation}", reason_code="delivery-identity-mismatch")
         return _WorkerHandoffResult(
             "complete", intent, projection, sealed)
     return _WorkerHandoffResult("missing", intent, projection)
@@ -3032,9 +3066,9 @@ def _collect_worker_handoff(c: _Collect, n: _Node) -> bool:
             node = c.manifest.nodes[key]
         handoff_intent = n.item.worker_handoff
         if not handoff_intent.is_causally_bound():
-            raise PlatformError(
+            raise NodeFailure(
                 f"Worker handoff for {node.work_item_id} predates causal "
-                "delivery identity support; refusing to infer completion")
+                "delivery identity support; refusing to infer completion", reason_code="legacy-handoff-unsupported")
         n.handoff = _dispatch_worker_handoff(
             c.store, c.runtime, c.code_host, c.manifest, key,
             projection=n.projection)
@@ -3314,6 +3348,64 @@ def _hand_back_to_worker(store, runtime, code_host, manifest, key) -> _WorkerHan
     if handoff.state == "complete":
         _finalize_worker_handoff_or_defer(store, manifest, key, node, handoff)
     return handoff
+
+
+def _settle_node_failure(
+    store: WorkItemStore, runtime: AgentRuntime, code_host: CodeHost, manifest: Manifest, manifest_path: str,
+    key: str, failure: NodeFailure, limits: dict | None,
+) -> str | None:
+    """The one node-level failure path (errors.NodeFailure): rework a stale delivery or stop only this node.
+
+    The tick goes on with every other node. Returns the reason for the tick report, or None when the node went back to
+    its Worker (a revision, not a failure)."""
+    node = manifest.nodes[key]
+    item = store.observe_work_item_control(node.work_item_id).work_item
+    if failure.gate == "reviewer":
+        reason = _block_reviewer(store, manifest, manifest_path, key, item, failure.reason_code, str(failure))
+    else:
+        route = decide_node_failure(NodeFailureObservation(
+            stale_delivery=isinstance(failure, _StaleDelivery), merge_started=node.merge_request_state is not None,
+            worker_consumed=consumed_bounces(manifest, key, item, "worker"),
+            worker_limit=(limits or {}).get("worker", DEFAULT_RETRY["worker"])))
+        if route is NodeFailureRoute.REWORK:
+            try:
+                return _rework_stale_delivery(store, runtime, code_host, manifest, key, item, failure)
+            except NodeFailure as unprepared:   # the rework itself could not be prepared: stop with that reason
+                failure, item = unprepared, store.observe_work_item_control(node.work_item_id).work_item
+        retry = node_retry_action(
+            manifest_path, key, TaskPhase.REVIEW if failure.gate == "review" else TaskPhase.AUTHORING)
+        reason = node_failure_reason(failure.reason_code, str(failure), retry)
+        manifest._recovery_manifest_path = manifest_path
+        _apply_plan(Ports(store=store), manifest, plan_node_failure(
+            key, item.id, node_failure_decision(key, item.id, item.phase, failure.reason_code, str(failure), retry),
+            has_decision=bool(item.decision_required), item_status=item.status, reason=reason))
+    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key, id=node.work_item_id,
+             reason_code=failure.reason_code, reason=str(failure))
+    return reason
+
+
+def _rework_stale_delivery(store, runtime, code_host, manifest, key, item, stale: _StaleDelivery) -> str | None:
+    """A void delivery goes back to its Worker through a new handoff generation that spends one retry.worker.
+
+    The new generation's baseline is the void submission, so only the next submit (at whatever HEAD it then has) counts."""
+    apply_one(AddComment(item.id, stale_delivery_note(stale.submitted, stale.current)), Ports(store=store))
+    if item.worker_handoff is not None:
+        # Void at the seal: the Run is over and its submit does not count, as if it had ended without one.
+        handoff = _retry_worker_handoff(store, runtime, code_host, manifest, key, item)
+    else:
+        # Void after the seal: a fresh handoff retires the sealed identity (as a CI or merge bounce does).
+        handoff = _dispatch_worker_handoff(
+            store, runtime, code_host, manifest, key, review_bounce=item.bounces.review, gate="explicit-dispatch",
+            worker_bounce=item.bounces.worker + 1)
+    if handoff.state == "needs-decision":
+        _apply_plan(Ports(store=store), manifest, Plan((SetNode(key, {"status": "blocked"}),), "blocked"))
+        return "worker-decision-required"
+    if handoff.state == "complete":
+        _finalize_worker_handoff_or_defer(store, manifest, key, manifest.nodes[key], handoff)
+    _apply_plan(Ports(store=store), manifest, Plan((SetNode(key, {"status": "in_progress"}),), "in_progress"))
+    log.info(logsetup.EVT_REVISION, kind=_DAG_KIND, node=key, id=item.id, gate=DELIVERY_HEAD_MOVED,
+             round=item.bounces.worker + 1, submitted=stale.submitted, current=stale.current)
+    return None
 
 
 def _return_to_worker(c: _Collect, n: _Node) -> None:
@@ -3712,7 +3804,7 @@ def _review_apply_verdict(c: _Collect, n: _Node, verdict: str) -> None:
         if _route_review_to_defect(c, n):
             return None
         resolution = resolve_convergence(n.item, node_id=key)
-        resolution.raise_if_invalid(PlatformError, n.item.id)
+        resolution.raise_if_invalid(invalid_ledger, n.item.id)
         if resolution.state is ResolutionState.NEEDS_DECISION:
             c.failures[key] = _block_review_non_convergence(
                 c.store, c.manifest, key, n.item, resolution)
@@ -3824,16 +3916,20 @@ def _dispatch_pending_reviews(c: _Collect) -> None:
                          id=item_id, reviewer=reviewer)
         except ObservationConflict as exc:
             conflict_streaks(c.manifest).skip(key, item_id, "review-dispatch", exc)
-        except _ReviewerDispatchUnresolved as exc:
-            c.failures[key] = _block_reviewer(
-                c.store, c.manifest, c.manifest_path, key,
-                c.store.get_work_item(item_id),
-                "reviewer-run-dispatch-unresolved", str(exc))
+        except NodeFailure as exc:
+            _record_node_failure(c, key, exc)
         except PlatformError as exc:
             c.failures[key] = _block_reviewer(
                 c.store, c.manifest, c.manifest_path, key,
                 c.store.get_work_item(item_id),
                 "reviewer-run-baseline-unavailable", str(exc))
+
+
+def _record_node_failure(c: _Collect, key: str, failure: NodeFailure) -> None:
+    reason = _settle_node_failure(
+        c.store, c.runtime, c.code_host, c.manifest, c.manifest_path, key, failure, c.limits)
+    if reason is not None:
+        c.failures[key] = reason
 
 
 def _running_observations(store, manifest, observations):
@@ -3938,6 +4034,8 @@ def collect_results(
             _collect_node(c, _Node(key, node, projection, projection.work_item))
         except ObservationConflict as exc:
             conflict_streaks(manifest).skip(key, node.work_item_id, "collect", exc)
+        except NodeFailure as exc:
+            _record_node_failure(c, key, exc)
     _dispatch_pending_reviews(c)
     if c.failures or c.pending_review:
         save_manifest(manifest, manifest_path)
@@ -4045,6 +4143,7 @@ def _dispatch(
     manifest_path: str,
     ready: List[str],
     max_parallel: int,
+    retry_limits: dict | None = None,
 ) -> List[str]:
     """派发就绪节点(受 max_parallel - 进行中数约束)。
 
@@ -4102,6 +4201,10 @@ def _dispatch(
             )
         except ObservationConflict as exc:
             conflict_streaks(manifest).skip(key, node.work_item_id, "dispatch", exc)
+            continue
+        except NodeFailure as exc:
+            _settle_node_failure(store, runtime, code_host, manifest, manifest_path, key, exc, retry_limits)
+            manifest_changed = True
             continue
         except PlatformError as exc:
             _apply_plan(Ports(store=store), manifest, plan_block(key, node.work_item_id, comment=ui(
@@ -4280,6 +4383,27 @@ def _resolve_or_defer(manifest, key, item, intent, store):
     except ObservationConflict as exc:
         conflict_streaks(manifest).skip(key, item.id, "restore", exc)
         return None
+    except NodeFailure as exc:
+        _keep_blocked(key, item.id, exc)
+        return None
+
+
+def _keep_blocked(key: str, item_id: str, failure: NodeFailure) -> None:
+    """A node-level failure while restoring an already stopped node: it stays where it is, the tick goes on."""
+    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key, id=item_id, stage="restore",
+             reason_code=failure.reason_code, reason=str(failure))
+
+
+def _restore_hydrated(store, key, node, projection, status):
+    """Evidence for reopening a stopped node's stage, or None when it is unusable (the node stays stopped)."""
+    plan = _build_work_item_hydration_plan(replace(node, status=status), projection)
+    hydrated = _hydrate_work_item_payloads(store, projection, plan)
+    try:
+        validate_structured_recovery_payloads(hydrated, plan & projection.deferred_payloads)
+    except NodeFailure as exc:
+        _keep_blocked(key, projection.work_item.id, exc)
+        return None
+    return hydrated
 
 
 def _restore_active_formal_run_stages(
@@ -4302,11 +4426,9 @@ def _restore_active_formal_run_stages(
         intent = item.worker_handoff
         if intent is None or intent.gate not in {"review", "review-nits"}:
             continue
-        collect_node = replace(node, status="in_progress")
-        plan = _build_work_item_hydration_plan(collect_node, projection)
-        hydrated = _hydrate_work_item_payloads(store, projection, plan)
-        validate_structured_recovery_payloads(
-            hydrated, plan & projection.deferred_payloads)
+        hydrated = _restore_hydrated(store, key, node, projection, "in_progress")
+        if hydrated is None:
+            continue
         resolution = _resolve_or_defer(manifest, key, hydrated.work_item, intent, store)
         if resolution is None:
             continue
@@ -4328,11 +4450,9 @@ def _restore_active_formal_run_stages(
         item = projection.work_item
         status = (
             "in_review" if item.phase == TaskPhase.REVIEW else "in_progress")
-        collect_node = replace(node, status=status)
-        plan = _build_work_item_hydration_plan(collect_node, projection)
-        hydrated = _hydrate_work_item_payloads(store, projection, plan)
-        validate_structured_recovery_payloads(
-            hydrated, plan & projection.deferred_payloads)
+        hydrated = _restore_hydrated(store, key, node, projection, status)
+        if hydrated is None:
+            continue
         handoff_intent = hydrated.work_item.worker_handoff
         if (
             handoff_intent is not None
@@ -4369,9 +4489,10 @@ def _restore_active_formal_run_stages(
         if clear_decision:
             cleared = apply_one(UpdateMetadata(projection.work_item.id, {'decision_required': {}}), Ports(store=store))
             if cleared.requires_decision:
-                raise PlatformError(
-                    f"Provisional reviewer decision for work item "
-                    f"{projection.work_item.id} was not cleared")
+                _keep_blocked(key, cleared.id, NodeFailure(
+                    f"Provisional reviewer decision for work item {cleared.id} was not cleared",
+                    reason_code="provisional-decision-uncleared", gate="reviewer"))
+                continue
             projection = WorkItemControlProjection(cleared)
             _clear_recovery_pending(manifest, key, cleared)
         expected_status = (
@@ -4492,7 +4613,7 @@ def tick(
         ready = _auto_hold_live(manifest, manifest_path, ready)
 
     # 5. DISPATCH: 派发就绪节点(受 max_parallel 约束)
-    dispatched = _dispatch(store, runtime, code_host, manifest, manifest_path, ready, max_parallel)
+    dispatched = _dispatch(store, runtime, code_host, manifest, manifest_path, ready, max_parallel, retry_limits)
 
     conflict_streaks(manifest).end_tick()
 

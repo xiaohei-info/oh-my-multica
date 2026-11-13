@@ -16,7 +16,7 @@ from ..core.submit_rejection import FAILURE_CLASS_METADATA_BUDGET, REASON_REVIEW
 from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
 from ..core.review_convergence import review_subject_digest
 from ..core.workitem import WorkItemControlProjection, WorkItemHydrationPlan, WorkItemPayload, WorkItemStatus
-from ..errors import PlatformError
+from ..errors import NodeFailure
 from ..i18n import ui
 from .decide_effects import (
     ClearAssignment, Plan, PrepareReviewCycle, ResetReview, SetNodeContract, UpdateMetadata, UpdateStatus,
@@ -399,11 +399,11 @@ def validate_structured_recovery_payloads(
         if isinstance(value, dict) and value:
             continue
         attachment_id = str(ref.get("attachment_id") or "unknown")
-        raise PlatformError(ui(
+        raise NodeFailure(ui(
             f"Referenced {payload.value} attachment {attachment_id} for work "
             f"item {item.id} did not parse as a non-empty YAML/JSON mapping. "
             "Restore a valid structured attachment before retrying DAG recovery.",
             f"工作单元 {item.id} 引用的 {payload.value} 附件 {attachment_id} "
             "无法解析为非空 YAML/JSON 映射。请恢复合法的结构化附件后再重试 "
             "DAG 恢复。",
-        ))
+        ), reason_code="recovery-payload-invalid")
