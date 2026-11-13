@@ -60,7 +60,7 @@ from ..engines.codehost import CodeHost
 from ..engines.runtime import AgentRuntime
 from ..engines.store import WorkItemStore
 from .observation_conflict import conflict_streaks
-from ..errors import AuthError, NodeFailure, ObservationConflict, PlatformError, WorkItemNotFoundError
+from ..errors import AuthError, MetadataBudgetError, NodeFailure, ObservationConflict, PlatformError, WorkItemNotFoundError
 from ..i18n import current_language, ui
 from .decide_review import VerdictObservation, VerdictPath, decide_verdict_path
 from .decide_hold import AUTO_HELD_KEY, plan_auto_hold_live
@@ -4142,6 +4142,8 @@ def collect_results(
             conflict_streaks(manifest).skip(key, node.work_item_id, "collect", exc)
         except NodeFailure as exc:
             _record_node_failure(c, key, exc)
+        except MetadataBudgetError as exc:
+            c.failures[key] = _block_on_metadata_budget(store, manifest, key, exc)
     _dispatch_pending_reviews(c)
     if c.failures or c.pending_review:
         save_manifest(manifest, manifest_path)
@@ -4242,6 +4244,19 @@ def _develop_issue_body_metadata(
     }
 
 
+def _block_on_metadata_budget(store: WorkItemStore, manifest: Manifest, key: str, exc: Exception) -> str:
+    """A metadata write over the platform budget blocks only this node; the rest of the DAG keeps moving."""
+    node = manifest.nodes[key]
+    reason = ui(
+        f"metadata-budget: a metadata write for node {key} exceeds the platform limit ({exc}). Nothing was lost. "
+        f"Fix: shrink the node's upstream fan-in or contract, then run `omac node retry {key}`.",
+        f"metadata-budget: 节点 {key} 的 metadata 写入超出平台上限({exc})。未丢失数据。"
+        f"修复:缩小该节点的上游依赖数或 contract,然后执行 `omac node retry {key}`。")
+    _apply_plan(Ports(store=store), manifest, plan_block(key, node.work_item_id, comment=reason))
+    log.info(logsetup.EVT_NODE_FAILED, kind=_DAG_KIND, node=key, id=node.work_item_id, reason="metadata-budget")
+    return reason
+
+
 def _dispatch(
     store: WorkItemStore,
     runtime: AgentRuntime,
@@ -4310,6 +4325,10 @@ def _dispatch(
             continue
         except NodeFailure as exc:
             _settle_node_failure(store, runtime, code_host, manifest, manifest_path, key, exc, retry_limits)
+            manifest_changed = True
+            continue
+        except MetadataBudgetError as exc:
+            _block_on_metadata_budget(store, manifest, key, exc)
             manifest_changed = True
             continue
         except PlatformError as exc:
