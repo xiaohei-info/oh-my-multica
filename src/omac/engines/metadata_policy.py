@@ -7,6 +7,7 @@ from typing import Any, Optional
 import yaml
 
 from ..core.taskmeta import DECISION_REQUIRED_KEY
+from ..errors import MetadataBudgetError
 
 
 _LEGACY_INLINE_PAYLOAD_KEYS = {"contract", "review_report", "verification"}
@@ -35,7 +36,7 @@ def assert_metadata_write_allowed(key: str, value: Any) -> None:
     encoded = encode_metadata_value(value)
     size = len(encoded.encode("utf-8"))
     if size > MULTICA_METADATA_VALUE_MAX_BYTES:
-        raise ValueError(
+        raise MetadataBudgetError(
             f"{key} metadata is {size} bytes; Multica allows at most "
             f"{MULTICA_METADATA_VALUE_MAX_BYTES} bytes. Store the complete value "
             "as an attachment and write only its bounded reference in metadata."

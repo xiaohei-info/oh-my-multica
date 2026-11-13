@@ -168,7 +168,11 @@ def _is_metadata_budget_rejection(error: Exception) -> bool:
 _HANDOFF_CHECKPOINT_FIELDS = frozenset({"state", "target_run_id", "terminal_observed_at"})
 # Control facts that may move to an immutable attachment (wrapper ref in metadata) when the
 # 8KB aggregate budget needs room; the one reader is `_json_control_metadata`.
-_CONTROL_REF_KEYS = frozenset({WORKER_HANDOFF_KEY, DELIVERY_IDENTITY_KEY, REVIEWER_RUN_BASELINE_KEY})
+_CONTROL_REF_KEYS = frozenset({
+    WORKER_HANDOFF_KEY, DELIVERY_IDENTITY_KEY, REVIEWER_RUN_BASELINE_KEY, SOURCE_REFS_KEY})
+# Facts that grow with the DAG (source_refs: one entry per upstream node) move to an attachment above this size
+# even when the aggregate budget would still fit, so one node's fan-in cannot crowd out the other control facts.
+_ALWAYS_BOUNDED_BYTES = {SOURCE_REFS_KEY: 2048}
 
 _INVALID_OBJECT_METADATA_SCHEMA = "omac.invalid-object-metadata/v1"
 
@@ -1067,7 +1071,7 @@ class MulticaStore(WorkItemStore):
             if isinstance(ref, dict) and ref
         )
         amendment_attempt = self._json_metadata(metadata, AMENDMENT_ATTEMPT_KEY)
-        source_refs = self._json_metadata(metadata, SOURCE_REFS_KEY)
+        source_refs = self._json_control_metadata(issue_data["id"], metadata, SOURCE_REFS_KEY)
 
         item = WorkItem(
             id=issue_data["id"],
@@ -1637,6 +1641,11 @@ class MulticaStore(WorkItemStore):
                 "Control payload JSON is invalid for work item " + item_id
             ) from exc
         overlay = decoded.get("overlay", {})
+        if key != WORKER_HANDOFF_KEY:
+            if overlay or not isinstance(payload, (dict, list)):
+                raise PlatformError(
+                    "Invalid control payload for " + key + " on work item " + item_id)
+            return payload
         if (
             not isinstance(overlay, dict) or set(overlay) - _HANDOFF_CHECKPOINT_FIELDS
             or any(value is not None and (not isinstance(value, str) or not value) for value in overlay.values())
@@ -1768,19 +1777,22 @@ class MulticaStore(WorkItemStore):
         # capture 默认开:吃掉 multica 的确认表格,不漏进编排者终端(进度靠事件流)。
         if key == DECISION_REQUIRED_KEY:
             value = bounded_decision_required(value)
-        bounded_control = key in _CONTROL_REF_KEYS and _decode_json_metadata_value(value) not in (None, {})
+        bounded_control = key in _CONTROL_REF_KEYS and _decode_json_metadata_value(value) not in (None, {}, [])
+        force_bounded = len(encode_metadata_value(value).encode("utf-8")) > _ALWAYS_BOUNDED_BYTES.get(key, 1 << 62)
         if bounded_control:
             _, before_metadata = self._read_issue_metadata(item_id)
             previous_control = self._control_payload_value(item_id, key, before_metadata.get(key))
             target_control = _decode_json_metadata_value(value)
             try:
-                value = self._bounded_control_metadata(item_id, key, value, metadata=before_metadata)
+                value = self._bounded_control_metadata(
+                    item_id, key, value, metadata=before_metadata, force=force_bounded)
             except MetadataBudgetError:
                 # Even the attachment reference does not fit: make room, then retry once.
                 if not free_room or not self._free_metadata_budget(item_id, key):
                     raise
                 _, before_metadata = self._read_issue_metadata(item_id)
-                value = self._bounded_control_metadata(item_id, key, value, metadata=before_metadata)
+                value = self._bounded_control_metadata(
+                    item_id, key, value, metadata=before_metadata, force=force_bounded)
         assert_metadata_write_allowed(key, value)
         encoded = encode_metadata_value(value)
         if bounded_control:
