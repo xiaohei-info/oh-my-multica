@@ -729,7 +729,7 @@ def _maybe_acceptance(args, engine, config, manifest):
     import time as _time
     outcome = run_acceptance_loop(
         engine, manifest, manifest_path, doc, config, no_acceptance=False,
-        poll=lambda: _time.sleep(config.get("defaults", {}).get("poll_interval", 0)),
+        poll=lambda: _time.sleep(_poll_interval(config)),
     )
     return outcome
 
@@ -762,6 +762,25 @@ def _validate_execution_invariants(manifest, manifest_path: str) -> None:
 
 
 _MAX_DEFECT_PASSES = 10
+
+
+def _poll_interval(config: dict) -> float:
+    return config.get("defaults", {}).get("poll_interval", DEFAULTS["poll_interval"])
+
+
+def _node_statuses(manifest) -> dict:
+    return {key: node.status for key, node in manifest.nodes.items()}
+
+
+def _park_between_ticks(seconds: float) -> None:
+    """Sleep between two ticks that changed nothing. A stop signal ends the sleep: no write is in flight between ticks."""
+    _STOP.parked = True
+    try:
+        time.sleep(seconds)
+    except _StopRequested:
+        pass
+    finally:
+        _STOP.parked = False
 
 
 def _scheduled_tick(
@@ -1011,7 +1030,9 @@ def _loop_or_single_locked(args, single_round: bool, clock: Optional[_Clock] = N
     max_minutes = getattr(args, "max_minutes", None)
     wait = bool(getattr(args, "wait_decisions", False)) and not single_round
 
+    poll = _poll_interval(config)
     while True:
+        before = _node_statuses(manifest)
         last_result = _scheduled_tick(
             engine, manifest, args.manifest,
             max_parallel=max_parallel, retry_limits=retry_limits, config=config)
@@ -1033,6 +1054,14 @@ def _loop_or_single_locked(args, single_round: bool, clock: Optional[_Clock] = N
         if (max_rounds is not None and clock.rounds >= max_rounds) or clock.minutes_up(max_minutes):
             _emit(last_result, manifest, args)
             return exit_codes.IN_PROGRESS
+
+        # A tick that moved something is followed at once; one that changed nothing waits `defaults.poll_interval`, so a
+        # DAG that waits on Agents does not read the platform several times a second. Overshoot of --max-minutes <= poll.
+        if poll > 0 and not last_result.dispatched and _node_statuses(manifest) == before:
+            _park_between_ticks(poll)
+            if _STOP.requested:
+                _emit(last_result, manifest, args)
+                return exit_codes.IN_PROGRESS
 
 
 def run(args) -> int:

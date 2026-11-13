@@ -10,6 +10,10 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Fixed
 
+- `omac dag run` waited for nothing between two ticks, so a DAG that only waited for Agents re-read the platform as fast as a tick
+  could run. A tick that changed no node status and dispatched nothing is now followed by a wait of `defaults.poll_interval`
+  (default 30 s); a tick that moved something is followed at once, and a stop signal ends the wait. The final-acceptance loop
+  used `poll_interval` with default 0; it now uses the same default.
 - Upstream defects: a fix node no longer copies the reporter's `repro` command into its `verification_commands`. That command
   usually runs tests that exist only on the reporter's unmerged branch, so the fix node could never pass and the reporter waited
   on it forever. The command stays in the fix node's description; the reporter re-runs it after the fix merges, and the same
