@@ -3,6 +3,7 @@ import copy
 import json
 
 import pytest
+from omac.core.pathrefs import persist_path
 import yaml
 
 import omac.core.amendment as amendment_mod
@@ -237,7 +238,7 @@ def test_a_pending_apply_blocks_all_dag_progress_until_the_same_accept_resumes(k
         apply_amendment(str(path), reviewed, kit.store, POOL, amendment_file=str(amendment_file))
     partial = load_manifest(str(path))
     ledger = partial.meta["amendment_apply"]
-    assert ledger["amendment_id"] == reviewed["amendment_id"] and ledger["amendment_file"] == str(amendment_file)
+    assert ledger["amendment_id"] == reviewed["amendment_id"] and ledger["amendment_file"] == persist_path(str(amendment_file), str(path))
     assert ledger["nodes"]["bootstrap"]["state"] == "syncing"
 
     reads = kit.record(kit.store, "get_work_item", "observe_work_item_control", "observe_work_item_controls")
