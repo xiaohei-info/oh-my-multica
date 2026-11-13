@@ -492,3 +492,22 @@ command with `--output json` first, so humans, agents and the web see the same f
 ### 13.3 Static page
 
 The SPA polls `/api/meta` and renders manifests, node evidence and the acceptance checklist from the API only.
+
+## 14. Batch fix 2026-11-13: paths and branch references in persisted content
+
+**Mechanism.** Everything written to the manifest, `_dag.yaml`, node state files or a commit message is shared through git and
+may be published, so it must not depend on the machine that wrote it. `core/pathrefs.py` is the single exit for paths:
+`persist_path(path, manifest_path)` returns a POSIX path relative to the repository root (the parent of `.omac/`), or the bare
+file name for a file outside the repository; `resolve_path(value, manifest_path)` opens a persisted value (relative values
+against the root; a legacy absolute value as recorded, and when it no longer exists, the same relative location or its name
+next to the manifest). Writers: `pending_human_amendment.file` (`pipeline/amendment.py::_write_reviewed_amendment`), the apply
+ledger `amendment_file` (`core/amendment.py::_apply_new_amendment`), the system-amendment intent `defects.applying.file`
+(`pipeline/defects.py`), and the config-sync commit subject and `config_synced` log (`core/gitsync.py::ensure_config_synced`).
+Readers resolve through `resolve_path`. Not rewritten: old absolute records stay until their next natural rewrite (they are
+read correctly, and the ledger is transient). CLI stdout (`amendment_file`, `next_action`) keeps the path the caller typed.
+
+**Branch.** The amendment authoring contract hard-coded `pr_base="manifest-runtime"`, a branch that exists nowhere, so the
+Orchestrator tried to check it out to read the manifest and returned empty-handed. `pipeline/amendment.py::_manifest_branch`
+now takes the DAG's integration branch (`meta.pr_base`, else the nodes' single `pr_base`, else `main`).
+
+**Not changed.** Work-item task arguments (`dispatch.py`, `plan_file`/`manifest_file`…) are platform-side and not committed.

@@ -10,6 +10,11 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Fixed
 
+- Paths and branch names in committed content: `pending_human_amendment.file`, the amendment apply ledger's `amendment_file`, the
+  system-amendment intent's `file` and the config-sync commit subject / `config_synced` log no longer carry machine paths. They are
+  repo-relative, or a bare file name for a file outside the repository (`core/pathrefs.py`); absolute records written by earlier
+  versions are still read. The amendment authoring contract no longer uses the nonexistent branch `manifest-runtime` as `pr_base`:
+  it takes the manifest's `meta.pr_base` (else the nodes' single `pr_base`, else `main`), so the Orchestrator can read the manifest.
 - `omac dag run` waited for nothing between two ticks, so a DAG that only waited for Agents re-read the platform as fast as a tick
   could run. A tick that changed no node status and dispatched nothing is now followed by a wait of `defaults.poll_interval`
   (default 30 s); a tick that moved something is followed at once, and a stop signal ends the wait. The final-acceptance loop

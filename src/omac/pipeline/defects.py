@@ -30,6 +30,7 @@ from ..core.defects import (
     new_ledger, reporter_left, routing_problem,
 )
 from ..core.manifest import Manifest, adopt_disk
+from ..core.pathrefs import persist_path, resolve_path
 from ..errors import NeedsDecision, PlatformError, ValidationError
 from ..i18n import ui
 from .amendment import _acceptance_for_manifest, _write_yaml_atomic, apply_amendment, load_amendment_file
@@ -94,7 +95,7 @@ def _human_amendment_pending(manifest: Manifest) -> bool:
     if not marker:
         return False
     try:
-        amendment = load_amendment_file(marker.get("file") or "")
+        amendment = load_amendment_file(resolve_path(marker.get("file") or "", manifest.source_path))
     except ValidationError:
         return False
     return (amendment.get("human_confirmation") in {"pending", "accepted"}
@@ -309,7 +310,7 @@ def _carry_out(ctx: _Ctx, ledger: dict, proposal: dict, *, reporters: list, new_
         entry = ledger["entries"].setdefault(fp, {
             "suspected": defect["suspected_node"], "anchors": sorted(set(defect["anchors"])), "reporters": [], "state": "queued"})
         entry["retried"] = True
-    ledger["applying"] = {"amendment_id": amendment["amendment_id"], "file": file, "fps": sorted(new_entries),
+    ledger["applying"] = {"amendment_id": amendment["amendment_id"], "file": persist_path(file, ctx.path), "fps": sorted(new_entries),
                           "retried": sorted(retried), "reporters": sorted(reporters), "charges": charges,
                           "global": len({e["fix_node"] for e in new_entries.values()}) if charges else 0,
                           "inbox_ids": inbox_ids}
@@ -322,8 +323,8 @@ def _apply_and_finish(ctx: _Ctx, ledger: dict) -> None:
     applying = ledger["applying"]
     store = ctx.engine.store
     ctx.apply_system(
-        ctx.path, load_amendment_file(applying["file"]), store, set(store.list_members(store.config.workspace_id)),
-        amendment_file=applying["file"], acceptance=ctx.acceptance, runtime=ctx.engine.runtime)
+        ctx.path, load_amendment_file(resolve_path(applying["file"], ctx.path)), store, set(store.list_members(store.config.workspace_id)),
+        amendment_file=resolve_path(applying["file"], ctx.path), acceptance=ctx.acceptance, runtime=ctx.engine.runtime)
     adopt_disk(ctx.manifest, ctx.path)
     ledger = ledger_of(ctx.manifest)
     for fp in applying["fps"]:
@@ -352,7 +353,7 @@ def _resume(ctx: _Ctx, ledger: dict) -> bool:
     if not applying:
         return False
     try:
-        written = load_amendment_file(applying["file"]).get("amendment_id") == applying["amendment_id"]
+        written = load_amendment_file(resolve_path(applying["file"], ctx.path)).get("amendment_id") == applying["amendment_id"]
     except ValidationError:
         written = False
     (_apply_and_finish if written else _void_applying)(ctx, ledger)

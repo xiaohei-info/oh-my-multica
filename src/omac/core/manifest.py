@@ -363,6 +363,11 @@ class Manifest:
     # DAG-level runtime facts (`.omac/<name>.state/_dag.yaml`): written by the Loop, never part of the definition.
     dag_state: dict = field(default_factory=dict)
 
+    @property
+    def source_path(self) -> str:
+        """The file this manifest was last loaded from or saved to ('' for an unsaved one)."""
+        return self._disk.get("path") or ""
+
 def _build_nodes(raw) -> dict:
     """从已展开的 raw dict 构造 {id: Node}(共享于文件加载与不落盘文本解析)。"""
     nodes = {}

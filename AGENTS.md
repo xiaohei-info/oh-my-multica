@@ -364,6 +364,7 @@ Agent 的产出只经 `omac work submit|block` 进入，一律是待校验的证
 
 ### 5.7 隐私与安全红线
 
+- 写进 manifest、状态文件、提交说明的路径一律经 `core/pathrefs.py::persist_path`（仓库根相对，仓库外只写文件名），读取经 `resolve_path`（兼容旧的绝对路径记录）；不要把 `os.path.abspath` 的结果写入持久内容。
 - 不在代码、测试、fixture、日志、截图、文档中写入凭据、密钥、本机路径、真实 workspace / Agent / 平台 ID、真实邮箱。
 - fixture 必须是合成数据：UUID 用占位形式，邮箱用 `example.com|org|test|invalid`（`test_fixtures_are_synthetic`，CI 强制）；测试不读仓库外路径。
 - Agent 模板不得包含机器专属信息（绝对路径、本地服务名、模型 / 供应商设置、凭据）。
