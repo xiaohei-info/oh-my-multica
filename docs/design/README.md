@@ -408,8 +408,12 @@ terminal Run and a Worker's re-submission *mean* was judged from text and from a
   that head was never reviewed, so an unchanged head could not satisfy the guard and every accepted submit was counted as a no-delivery Worker bounce
   until `retry.worker` was spent. A retry whose prior handoff was an explicit authoring dispatch (or itself superseded) and whose live verdict is
   gone now requires only the fresh verification attachment (`handoff_has_new_delivery`); a live `reject` still requires a moved head.
-* Not changed: an accepted submit that the guard still judges "not new" stays silent to the Worker (`omac work submit` reports `ok`); a
-  per-submit explanation needs a platform-side read of the guard and is left out of this change.
+* **A submission the guard can only judge "not new" is refused at submit** (`decide_worker.head_proves_new_delivery`, `dispatch._refuse_unmoved_head`):
+  the head rule is one pure function shared by the Loop and `omac work submit`. While a handoff intent is live, a submit whose PR head cannot
+  count as the delivery the handoff waits for (a rejected / operator-retried head resubmitted unchanged, typically a merge conflict the Worker did
+  not rebase) is rejected with the reason and the way out (push a new commit or rebase; `omac work block` if no change is possible). Nothing is
+  written, so the Worker retry budget is no longer spent silently on "accepted but not a delivery"; the budget is consumed only when a Run really
+  ends without a deliverable submission.
 
 ## 8. Acceptance documents
 

@@ -7,7 +7,7 @@ from omac.core.taskmeta import DELIVERY_IDENTITY_SCHEMA, DeliveryIdentity, TaskP
 from omac.core.workitem import WorkItem, WorkItemStatus
 from omac.pipeline.decide_worker import (
     EnvironmentFailure, EnvironmentFailureObservation, control_matches_handoff_candidate, decide_environment_failure,
-    handoff_has_new_delivery, next_worker_retry_command,
+    handoff_has_new_delivery, head_proves_new_delivery, next_worker_retry_command,
 )
 
 PR = "https://example.test/pr/1"
@@ -148,3 +148,16 @@ def test_s8_the_escalation_names_the_next_worker_in_a_command_that_can_be_copied
 ])
 def test_a_superseded_verdict_only_demands_a_fresh_submission(item, handoff, expected):
     assert handoff_has_new_delivery(item, handoff) is expected
+
+
+@pytest.mark.parametrize(("handoff", "head", "expected"), [
+    pytest.param(intent("review", "reject"), "head-old", False, id="reject-resubmitted-unmoved-head"),
+    pytest.param(intent("review", "reject"), "head-new", True, id="reject-moved-head"),
+    pytest.param(intent("operator-retry"), "head-old", False, id="operator-retry-unmoved-head"),
+    pytest.param(intent("review-nits", "pass-with-nits"), "head-old", True, id="nits-may-reuse-head"),
+    pytest.param(intent("explicit-dispatch", head=None), "head-old", True, id="no-rejected-code-obligation"),
+    pytest.param(replace(intent("explicit-dispatch"), source_review_superseded=True), "head-old", True,
+                 id="verdict-superseded-by-a-later-delivery"),
+])
+def test_the_head_alone_decides_whether_a_submission_can_count_as_delivery(handoff, head, expected):
+    assert head_proves_new_delivery(handoff, head) is expected

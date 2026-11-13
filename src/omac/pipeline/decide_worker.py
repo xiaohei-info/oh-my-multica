@@ -113,13 +113,22 @@ def handoff_has_new_delivery(item, intent: WorkerHandoffIntent) -> bool:
     ):
         return False
 
-    baseline_head = intent.baseline_pr_head_sha
     current_head = str(artifacts.get("head_sha") or "").strip()
     if not current_head:
         return False
+    return head_proves_new_delivery(intent, current_head)
+
+
+def head_proves_new_delivery(intent: WorkerHandoffIntent, current_head: str) -> bool:
+    """Whether a submission at ``current_head`` can count as the new delivery this handoff waits for.
+
+    The one rule shared by the Loop (which observes the submission) and ``omac work submit`` (which refuses, with the
+    reason, a submission the Loop could only ever count as "no delivery" and charge to the Worker retry budget).
+    """
+    baseline_head = intent.baseline_pr_head_sha
     if intent.source_review_superseded:
         # The verdict judged an earlier delivery; this head was never reviewed, so "unchanged head" proves nothing
-        # against it. The fresh verification attachment (checked above) is the proof the Worker submitted again.
+        # against it. The fresh verification attachment is the proof the Worker submitted again.
         return True
     if (
         intent.gate == "explicit-dispatch"

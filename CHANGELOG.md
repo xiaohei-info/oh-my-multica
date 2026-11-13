@@ -31,6 +31,10 @@ This file records public changes to oh-my-multica. The format follows
 - After a CI bounce of the rework, `omac node retry` measured the Worker's next submit against the head of that (never reviewed) delivery,
   so a Worker that had nothing left to change submitted successfully, was counted as "finished without submit" and exhausted `retry.worker`. The
   handoff now records `source_review_superseded` and then only requires a fresh verification attachment.
+- A Worker that resubmitted the same PR head a rework asked it to change (for example after a merge conflict it did not rebase) got a
+  successful `omac work submit`, but the Loop could not count it as a delivery, so each attempt silently spent one `retry.worker` bounce.
+  `omac work submit` now refuses such a submission with the reason and the way out (push a new commit / rebase, or `omac work block`), using
+  the same head rule (`decide_worker.head_proves_new_delivery`) the Loop applies.
 
 ### Fixed
 
