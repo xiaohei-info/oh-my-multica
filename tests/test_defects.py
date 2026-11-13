@@ -450,6 +450,70 @@ def test_s14_while_a_human_amendment_is_pending_the_defect_only_queues(world, tm
     assert len(fix_nodes(world)) == 1 and ledger(world)["entries"][fingerprint("lib", ["FLOW-1/ACT-1"])]["state"] == "fixing"
 
 
+def watch_platform(world, monkeypatch):
+    """Count platform reads and ``defect_routed`` events of the passes that follow."""
+    seen = SimpleNamespace(reads=0, events=[])
+    real_get = world.store.get_work_item
+
+    def get(item_id):
+        seen.reads += 1
+        return real_get(item_id)
+    world.store.get_work_item = get
+    monkeypatch.setattr(shell.log, "info", lambda event, **kw: seen.events.append(kw.get("route")))
+    return seen
+
+
+def queue_behind_a_fix(world):
+    """api gets a fix node; web reports a different defect of the same node and queues behind it."""
+    world.manifest.nodes["web"].defect_pending = False
+    save_manifest(world.manifest, world.path)
+    advance(world)
+    fix = fix_nodes(world)[0]
+    world.manifest = load_manifest(world.path)
+    world.manifest.nodes["web"].status, world.manifest.nodes["web"].defect_pending = "blocked", True
+    world.store.items["w-web"].decision_required = blocker_decision([defect(anchors=["FLOW-2/ACT-9"])])
+    save_manifest(world.manifest, world.path)
+    return fix
+
+
+def test_a_queued_report_is_not_routed_logged_or_read_again_while_its_fix_is_unfinished(world, monkeypatch):
+    fix = queue_behind_a_fix(world)
+    seen = watch_platform(world, monkeypatch)
+
+    advance(world)
+    assert seen.events == ["queued"] and seen.reads == 1
+    for _ in range(5):
+        assert advance(world) is False
+    assert seen.events == ["queued"] and seen.reads == 1          # nothing new: no event, no platform read
+    assert load_manifest(world.path).nodes["web"].defect_pending
+
+    world.manifest.nodes[fix].status = "done"                      # the blocking fix finished
+    advance(world)
+    released = list(seen.events)
+    assert released[1:] and "queued" not in released[1:]          # routed on, not queued again
+    assert not load_manifest(world.path).nodes["web"].defect_pending      # consumed
+    advance(world)
+    assert seen.events == released                                 # routed exactly once
+
+
+def test_a_queued_report_is_routed_again_once_a_person_amendment_settles(world, tmp_path, monkeypatch):
+    pending = tmp_path / "human.amendment.yaml"
+    pending.write_text(yaml.safe_dump({"amendment_id": "amend-x", "human_confirmation": "pending"}))
+    world.manifest.dag_state["pending_human_amendment"] = {"amendment_id": "amend-x", "file": str(pending)}
+    save_manifest(world.manifest, world.path)
+    seen = watch_platform(world, monkeypatch)
+
+    advance(world)
+    reads = seen.reads
+    advance(world)
+    advance(world)
+    assert seen.reads == reads and seen.events.count("queued") == 2      # api and web, once each
+
+    pending.write_text(yaml.safe_dump({"amendment_id": "amend-x", "human_confirmation": "applied"}))
+    advance(world)
+    assert len(fix_nodes(world)) == 1
+
+
 @pytest.mark.parametrize("crash", ["before-write", "after-write"])
 def test_s15_a_crash_while_applying_leaves_exactly_one_fix_node_and_a_consistent_ledger(world, crash):
     broken = fake_apply(world.applied, crash_before_write=crash == "before-write", crash_after_write=crash == "after-write")
