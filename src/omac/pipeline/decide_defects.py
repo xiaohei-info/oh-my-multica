@@ -44,7 +44,12 @@ class DefectFacts:
     other_fix_after_run: bool | None      # ... merged after the reporter's run started (True), before it (False), unknown (None)
     fixed_on_suspected: int               # fixes already merged for the suspected node
     suspected_fix_cap: int                # defects.per_suspected: fixes one suspected node may get automatically
-    budget_left: bool
+    reporter_budget_left: bool            # layer 1: defects.per_reporter + `omac defect grant --reporter`
+    global_budget_left: bool              # layer 2: defects.max_auto_fixes + `omac defect grant --global`
+    reporter_used: int = 0                # only for the stop report (`budget_detail`); the table never reads them
+    reporter_limit: int = 0
+    global_used: int = 0
+    global_limit: int = 0
 
 
 def _in(*states: str) -> Callable[[DefectFacts], bool]:
@@ -65,7 +70,7 @@ DEFECT_ROUTES: tuple[tuple[Callable[[DefectFacts], bool], Route], ...] = (
     # A merged fix older than the reporter's run was already part of what failed: rerunning it can only fail the same way.
     (lambda f: f.done_other_fix and f.other_fix_after_run is not False, Route.RETRY_AFTER_FIX),
     (lambda f: f.fixed_on_suspected >= f.suspected_fix_cap, Route.NODE_FIX_CAP),
-    (lambda f: not f.budget_left, Route.BUDGET_EXHAUSTED),
+    (lambda f: not (f.reporter_budget_left and f.global_budget_left), Route.BUDGET_EXHAUSTED),
     (lambda f: True, Route.AUTO_FIX),
 )
 KNOWN_STATES = frozenset({None, "queued", "applying", "fixing", "fixed", "recurred", "needs-owner"})
@@ -77,6 +82,18 @@ def decide_defect(facts: DefectFacts) -> Route:
     return next(route for matches, route in DEFECT_ROUTES if matches(facts))
 
 
+def exhausted_layers(facts: DefectFacts) -> tuple[str, ...]:
+    """Which budget layers are spent (both can be): a grant at one layer alone does not release a defect stuck at the other."""
+    return tuple(layer for layer, left in (("reporter", facts.reporter_budget_left), ("global", facts.global_budget_left)) if not left)
+
+
+def budget_detail(facts: DefectFacts) -> dict:
+    """The stop report's budget block: the spent layers with their use and limit (both layers, so nothing is guessed)."""
+    return {"layers": list(exhausted_layers(facts)),
+            "reporter": {"used": facts.reporter_used, "limit": facts.reporter_limit},
+            "global": {"used": facts.global_used, "limit": facts.global_limit}}
+
+
 def decide_report(routes: list[Route]) -> Route:
     """One verdict for a whole report: any stop stops it (the first stop wins), else a wait, else it is carried out."""
     for route in routes:
@@ -85,16 +102,30 @@ def decide_report(routes: list[Route]) -> Route:
     return Route.QUEUED if Route.QUEUED in routes else Route.AUTO_FIX
 
 
-def render_release(route: Route, manifest_path: str, reporter: str) -> list[str]:
-    """The copyable commands that release a stop (the one place they are spelled). The first one is the main path."""
+def render_release(route: Route, manifest_path: str, reporter: str, layers: tuple[str, ...] = ("reporter",)) -> list[str]:
+    """The copyable commands that release a stop (the one place they are spelled). The first one is the main path.
+
+    A spent budget names one grant per spent layer (``layers``): the reporter's own allowance, the DAG-wide one, or both.
+    """
     manifest, node = shlex.quote(manifest_path), shlex.quote(reporter)
     proposal = f"omac dag amend propose {manifest} --report-file <report.md> --docs <design.md> --blocked-node {node}"
     decide = [f"omac node abandon {manifest} {node}", f"omac node accept {manifest} {node}"]
     if route is Route.BUDGET_EXHAUSTED:
-        return [f"omac defect grant {manifest} --reporter {node} --count 1", proposal, *decide]
+        grants = {"reporter": f"omac defect grant {manifest} --reporter {node} --count 1",
+                  "global": f"omac defect grant {manifest} --global --count 1"}
+        return [*(grants[layer] for layer in ("reporter", "global") if layer in layers), proposal, *decide]
     if route is Route.RECURRED:
         return [proposal, f"omac node retry {manifest} {node}", *decide]
     return [proposal, *decide, f"omac node retry {manifest} {node}"]
+
+
+def budget_summary(budget: dict) -> str:
+    """One line that says which layer is spent and how much of it was used."""
+    parts = []
+    for layer in budget["layers"]:
+        name = ui("reporter", "报告者") if layer == "reporter" else ui("DAG-wide", "全局")
+        parts.append(f"{name} {budget[layer]['used']}/{budget[layer]['limit']}")
+    return ui("Automatic fix budget spent: ", "自动修复预算已用完: ") + ", ".join(parts)
 
 
 def stop_summary(route: Route, detail: str | None = None) -> str:

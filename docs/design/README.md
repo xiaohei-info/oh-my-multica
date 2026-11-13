@@ -135,7 +135,7 @@ Commands take `--output json|table`; agents and the web use JSON. `dag run --out
   while the decision stands. It reads the manifest only.
 * `omac dag followups <manifest>` prints `{closeout_node, followups: [{followup_id, node, work_item_id, nit}]}`, the nits of
   merged `pass-with-nits` nodes (`followup_id` is `<node>#<n>`).
-* `omac defect list <manifest>` prints the defect ledger (`used_global`, `used_by_reporter`, `granted_by_reporter`, `entries`,
+* `omac defect list <manifest>` prints the defect ledger (`used_global`, `granted_global`, `used_by_reporter`, `granted_by_reporter`, `entries` — a `queued` entry carries `waits_on`,
   `inbox`, `applying`, `pending_reporters`, `pending_human_amendment`); `defect report` and `defect grant` write through the
   Loop's own path under the manifest write lock.
 
@@ -149,7 +149,7 @@ the usual report; its `next_actions` come from `decide_defects.render_release`.
 `defaults` (`max_parallel`, `poll_interval`, `coverage_gate`), `workflow` (human-in-the-loop, review, acceptance doc),
 `ci.check_command`, `merge.command` (default `gh pr merge {pr_url} --squash --delete-branch`),
 `retry` (`worker|ci|review|merge|environment`, `no_submit_runs`; `environment` is the automatic same-Worker retries of an
-`environment-failure` report, default 1), `defects` (`auto_fix: off|design-gap`, `per_reporter` 2, `max_auto_fixes: auto` = max(5, ⌈0.15 × nodes⌉), `per_suspected` 2),
+`environment-failure` report, default 1), `defects` (`auto_fix: off|design-gap`, `per_reporter` 2, `max_auto_fixes: auto` = max(5, ⌈0.15 × nodes⌉) — raised by `omac defect grant --global`, which adds to `_dag.defects.granted_global` and does not edit the config —, `per_suspected` 2),
 `dispatch.hold_live` (default false: hold each ready `evidence_mode: live` node once for a person to
 release), `review.node_nits` (`accept` default | `decide`: whether a develop
 node's `pass-with-nits` is a pass or an exit-20 stop; plan stages and amendments always stop),
@@ -352,6 +352,27 @@ it through `blocked_by`, so it cannot be retried before the fix merges. Order an
 (`_dag.defects.applying`, saved) → `<name>.system-amendment.yaml` → `apply_amendment` → reload → `fixing`; fingerprint
 states (`queued → applying → fixing → fixed → recurred | needs-owner`) only move forward, budgets are charged when a fix
 becomes `fixing`, and a restart finishes or withdraws the intent. Operators use `omac defect list|report|grant|resolve` (`resolve` records a fix merged outside OMAC: the fingerprint becomes `fixed` with its PR url and counts toward `per_suspected`).
+
+#### 批量修复 2026-11-13：缺陷 queued 的起因跟踪与分层预算
+
+两个问题同属“路由结果没有说清自己依赖什么”。
+
+* **queued 的起因是账本事实。** 旧实现靠进程内的 `_QUEUED_SEEN` + `_wait_signature` 判断“等待的东西变了没有”：白名单式、重启即丢、
+  看不见起因本身，operator 也无从得知一个 queued 缺陷在等什么。现在 `_record(…, "queued")` 把起因写进该指纹的账本条目
+  `waits_on`（有界、排序、可比较，最多 8 项）：`amendment:<id>`（人工 amendment 待确认）与 `fix:<节点>`（同一疑似节点上还在
+  `applying|fixing` 的其他修复）。`advance` 在每轮开头先问 `_wait_ended`——只读 manifest，不读平台——任一记录的起因与现状
+  不同（含消失）就重新路由；进程内签名仍保留，作用只是 #187 的不变量：起因不变则不路由、不重复日志、不读平台。
+  `defect list` 直接显示 `waits_on`。随这次改动，`_promote_fixed` 的结果与该轮其余账本变更一起落盘（旧实现只在无其他变更时才落盘，
+  修复合并后的 `fixed` 可能每轮重算）。
+* **预算是两层，停止报告要点名。** 层一：`defects.per_reporter` + `defect grant --reporter`；层二（DAG 全局）：
+  `defects.max_auto_fixes` + 新的账本字段 `granted_global`（`defect grant --global --count N`）。`DefectFacts` 分成
+  `reporter_budget_left`/`global_budget_left`，路由表仍是同一行 `defect-budget-exhausted`（reason_code 不变，脚本照旧），
+  但 `decision_required` 增加 `budget: {layers, reporter:{used,limit}, global:{used,limit}}`，`next_action` / `alternatives` 按用尽的层
+  各给一条可复制的 `omac defect grant`（`decide_defects.render_release(…, layers)`）。预算停止的缺陷以 `queued` + `stop` 记入账本，
+  `grant --global` 凭此找到被全局上限停住的报告者并重新排队；`grant --reporter` 只释放该报告者。授予错误的层不会放行，
+  下一轮仍按剩下的层点名。
+* **不改：** 不把全局上限做成自动放大（上限是人对 token 开销的显式承诺）；不改 `defect-budget-exhausted` 的 reason_code；
+  未记录 `waits_on` 的旧版 queued 条目不被 `_wait_ended` 唤醒，由进程内签名覆盖，下一次完整路由时补记。
 
 ### 7.6 Acceptance and amendments
 
