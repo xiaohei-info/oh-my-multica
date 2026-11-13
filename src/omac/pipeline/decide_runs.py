@@ -174,10 +174,12 @@ def classify_run_failure(run: AgentRunObservation) -> str | None:
     """The one classification of a failed Run: capacity (wait), transient (bounded rerun) or non-retryable (decision)."""
     if run.status != "failed":
         return None
-    if run.failure_class == FAILURE_CAPACITY:
-        return FAILURE_CAPACITY
+    # Known short-lived provider overload keeps its bounded rerun even when the platform labels it capacity-like;
+    # the platform label and the quota wording only lift a failure that would otherwise need a person.
     if is_retryable_transient_run_failure(run):
         return FAILURE_TRANSIENT
+    if run.failure_class == FAILURE_CAPACITY:
+        return FAILURE_CAPACITY
     if run.error and _CAPACITY_ERROR_TEXT.search(run.error):
         return FAILURE_CAPACITY
     return FAILURE_NONRETRYABLE
