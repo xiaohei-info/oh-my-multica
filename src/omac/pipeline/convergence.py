@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Type
+from typing import Any, Callable
 
 from ..core.review_convergence import (
     LegacyReviewLedgerUnverifiable,
@@ -17,9 +17,14 @@ from ..core.review_convergence import (
 )
 from ..core.taskmeta import TaskKind, TaskPhase, current_review_ledger
 from ..core.workitem import WorkItemStatus
-from ..errors import PlatformError
+from ..errors import NodeFailure
 from .apply import Ports, apply
 from .decide_task import plan_persist_decision
+
+
+def invalid_ledger(message: str) -> NodeFailure:
+    """An invalid review ledger stops only its node (``ConvergenceResolution.raise_if_invalid`` in the Loop)."""
+    return NodeFailure(message, reason_code="review-ledger-invalid")
 
 
 class ResolutionState(str, Enum):
@@ -43,7 +48,7 @@ class ConvergenceResolution:
     def reason(self) -> str:
         return self.error or self.decision["reason_code"]
 
-    def raise_if_invalid(self, error_type: Type[Exception], item_id: str) -> None:
+    def raise_if_invalid(self, error_type: Callable[[str], Exception], item_id: str) -> None:
         if self.state is ResolutionState.INVALID:
             raise error_type(
                 f"Invalid review ledger for work item {item_id}: {self.error}. "
@@ -147,7 +152,8 @@ def check_handoff_ledger_ref(item, handoff_intent) -> None:
     """A handoff that depends on the ledger must still point at the ledger it was written against."""
     source_ref = (handoff_intent.source_review_feedback or {}).get("ledger_ref")
     if handoff_needs_ledger(handoff_intent) and source_ref and item.review_ledger_ref != source_ref:
-        raise PlatformError(f"Worker handoff ledger reference changed for {item.id}; inspect `omac work show {item.id} --output json`")
+        raise NodeFailure(f"Worker handoff ledger reference changed for {item.id}; inspect `omac work show {item.id} --output json`",
+                          reason_code="review-ledger-ref-changed")
 
 
 def handoff_ledger_round_reset(item, handoff_intent) -> bool:
@@ -196,5 +202,5 @@ def resolve_handoff_convergence(item, handoff_intent, node_id=None) -> Convergen
     if resolution.state is ResolutionState.INVALID and handoff_ledger_round_reset(item, handoff_intent):
         # The subject digest proves the handoff is the ledger's latest review event; the round gap is a reset artifact.
         return ConvergenceResolution(ResolutionState.VALID, ledger=current_review_ledger(item))
-    resolution.raise_if_invalid(PlatformError, item.id)
+    resolution.raise_if_invalid(invalid_ledger, item.id)
     return resolution

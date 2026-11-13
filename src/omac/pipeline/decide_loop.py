@@ -8,8 +8,10 @@ the platform write, as it always has, and the node is saved by the tick.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Mapping
 
+from ..core.taskmeta import DECISION_REQUIRED_SCHEMA, TaskKind, TaskPhase
 from ..core.workitem import PullRequestState, WorkItemStatus
 from ..i18n import ui
 from .decide_effects import (
@@ -72,6 +74,68 @@ def plan_return_to_worker_failed(
                    f"回退到 worker {worker} 继续交付失败(已回滚回退计数): {error}")),
                SetNode(node_key, {"status": "blocked"}))
     return Plan(effects, "blocked")
+
+
+# errors.NodeFailure reason code of a delivery whose PR HEAD is no longer the head the Worker submitted.
+DELIVERY_HEAD_MOVED = "delivery-head-moved"
+_DETAIL_LIMIT = 500   # the decision lives in 8 KiB issue metadata
+
+
+class NodeFailureRoute(Enum):
+    REWORK = "rework"   # the delivery is void: back to its Worker through a new handoff generation (spends retry.worker)
+    DECIDE = "decide"   # stop only this node with a decision; the tick goes on with the others
+
+
+@dataclass(frozen=True)
+class NodeFailureObservation(Observation):
+    stale_delivery: bool     # the PR HEAD moved after the Worker's submit
+    merge_started: bool      # a merge marker is persisted: its outcome may already include the moved head
+    worker_consumed: int
+    worker_limit: int
+
+
+def decide_node_failure(obs: NodeFailureObservation) -> NodeFailureRoute:
+    """Only a stale delivery is reworked, and only while no merge is under way and retry.worker has budget left."""
+    if obs.stale_delivery and not obs.merge_started and obs.worker_consumed < obs.worker_limit:
+        return NodeFailureRoute.REWORK
+    return NodeFailureRoute.DECIDE
+
+
+def node_failure_decision(
+    node_key: str, item_id: str, phase: TaskPhase, reason_code: str, detail: str, next_action: str,
+) -> dict:
+    """The standing decision of a node-level failure (errors.NodeFailure), in the shape every other decision has."""
+    return {
+        "schema": DECISION_REQUIRED_SCHEMA, "reason_code": reason_code, "kind": TaskKind.DEVELOP.value,
+        "phase": phase.value, "gate": "delivery", "resume_issue_id": item_id, "node_id": node_key,
+        "detail": detail[:_DETAIL_LIMIT], "next_action": next_action,
+    }
+
+
+def plan_node_failure(
+    node_key: str, item_id: str, decision: Mapping[str, Any], *, has_decision: bool, item_status: WorkItemStatus,
+    reason: str,
+) -> Plan:
+    """Stop one node: an earlier standing decision is kept (it is the older, still unanswered question)."""
+    return plan_block(
+        node_key, item_id, decision=decision, write_decision=not has_decision, mark=True, persist_marker=True,
+        comment=reason, write_status=item_status != WorkItemStatus.BLOCKED)
+
+
+def node_failure_reason(reason_code: str, detail: str, next_action: str) -> str:
+    return ui(
+        f"Node stopped ({reason_code}): {detail}. The rest of the DAG keeps running; after checking, run `{next_action}`.",
+        f"节点已停下({reason_code}):{detail}。DAG 其余节点继续推进;确认后运行 `{next_action}`。")
+
+
+def stale_delivery_note(submitted: str, current: str) -> str:
+    """What the Worker reads on its issue when its delivery went stale."""
+    return ui(
+        f"⚠️ The PR HEAD changed after your submit ({submitted} → {current}), so this delivery is void. Confirm the "
+        "verification on the current HEAD, then run `omac work submit` again. Do not push to the PR branch after "
+        "submitting.",
+        f"⚠️ PR HEAD 在提交后变化({submitted} → {current}),本次交付作废。请在当前 HEAD 上确认验证并重新执行 "
+        "`omac work submit`;submit 之后不要再往 PR 分支推提交。")
 
 
 @dataclass(frozen=True)

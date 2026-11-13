@@ -93,6 +93,10 @@ artifact boundary:
     `running/session`, does not return a final tool_result, returns incomplete
     output, or leaves the result unknown, wait or poll the same execution until
     its final tool_result is available.
+    The submit records the PR HEAD at that moment: push every commit first
+    (including a merge of the base branch), then submit, and do not push to the
+    PR branch after submitting. A later push voids the delivery; OMAC returns
+    the node to you to confirm verification on the current HEAD and submit again.
 14. Claim submission succeeded only when that final tool_result has exit code 0
     and JSON `ok=true`, `terminal=true`, and `next_action=stop`. Without all of
     those facts, you must not claim submission succeeded or end the run. If the
@@ -166,6 +170,7 @@ OMAC checks the PR is not a draft and validates verification before CI, review,
 or merge can continue. The command can be slow; a running/session response or
 missing final tool_result is not success. Wait or poll until the explicit exit
 code 0 plus `ok=true`, `terminal=true`, and `next_action=stop` result arrives.
+Do not push to the PR branch after submitting.
 
 ### Deterministic upstream read blockers
 

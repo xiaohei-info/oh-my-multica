@@ -59,6 +59,8 @@
 13. 使用 `work show` 返回的 `submit` 提交原 PR URL 和 verification 文件。`omac work submit`
     可能长时间运行；若工具返回 `running/session`、没有最终 tool_result、输出不完整或结果未知，
     必须等待或轮询同一次执行，直到拿到最终 tool_result。
+    submit 记录提交时的 PR HEAD：先推送全部提交（包括合入 base 的 merge）再 submit，submit 之后不要再往
+    PR 分支推提交。之后的推送会使这次交付作废，OMAC 把节点退回给你，在当前 HEAD 上确认验证后重新 submit。
 14. 只有最终 tool_result 明确给出退出码 0，且 JSON 为 `ok=true`、`terminal=true`、
     `next_action=stop`，才可宣称提交成功。缺少任一事实时不得宣称提交成功或结束 Run；若终态是
     validation error，必须修复后重新提交。确认成功后立即停止，不得再添加 issue comment，
@@ -117,7 +119,7 @@
 `work submit` 会检查 GitHub PR 的 draft 状态和 verification schema；draft PR 会被拒绝，
 不会进入 CI、review 或 merge。命令可能较慢；`running/session` 或缺少最终 tool_result 都不代表成功，
 必须等待或轮询到明确的退出码 0 与 `ok=true`、`terminal=true`、`next_action=stop`。
-提交后由 OMAC loop 推进后续状态。
+提交后由 OMAC loop 推进后续状态；submit 之后不要再往 PR 分支推提交。
 
 ### 上游确定性读取阻塞
 

@@ -36,7 +36,10 @@ _MESSAGES = {
             "submit structured verification evidence. Deliver the complete "
             "contract without skeletons, placeholders, or production synthetic-data "
             "fallbacks; do not manually change the issue status, "
-            "assignee, rerun, or cancel state."
+            "assignee, rerun, or cancel state. Push every commit before you "
+            "submit: the submit records the PR HEAD, so do not push to the PR "
+            "branch after submitting (a later push voids the delivery and "
+            "returns it to you)."
         ),
         "work.protocol.final_acceptance": (
             "Use the acceptance document as a checklist for an end-to-end "
@@ -203,7 +206,7 @@ _MESSAGES = {
             "以及写入 AGENTS.md 的长期项目级开发规范；两份文件必须一起提交。"),
         "work.protocol.acceptance": "编写验收文档：把定稿设计方案的业务流程逐条转成用户视角、端到端、可执行且带稳定步骤 ID 和显式 business-action/flow-step 类型的验收动作。",
         "work.protocol.decompose": "把设计方案和验收文档拆成 manifest DAG：为每个 flow 分配唯一完整 owner，使其位于所有精确业务 Action contribution owners 之后，并区分仅追溯引用；每个节点都有完整 contract，DAG 无环。",
-        "work.protocol.develop": "推分支并开 PR（base=contract.pr_base，由 worker 创建，OMAC 不代建）。按 TDD 工作，把完整 flow claim 和 Action contribution 映射到成功命令下的具体业务测试，并提交结构化验证证据；trace ref 不产生验收义务；完整交付 contract，禁止骨架、占位和生产假数据兜底；不要手动修改 issue 状态、assignee、rerun 或 cancel 状态。",
+        "work.protocol.develop": "推分支并开 PR（base=contract.pr_base，由 worker 创建，OMAC 不代建）。按 TDD 工作，把完整 flow claim 和 Action contribution 映射到成功命令下的具体业务测试，并提交结构化验证证据；trace ref 不产生验收义务；完整交付 contract，禁止骨架、占位和生产假数据兜底；不要手动修改 issue 状态、assignee、rerun 或 cancel 状态。先推送全部提交再 submit：submit 记录当时的 PR HEAD，submit 之后不要再往 PR 分支推提交（之后的推送会使本次交付作废并退回返工）。",
         "work.protocol.final_acceptance": "以验收文档为清单做用户视角端到端走查，逐条记录 pass/fail 和证据。",
         "work.protocol.review": "独立复跑：覆盖全部 review_obligations，逐项处置历史 blocker，按 env_setup 搭建环境，重跑验证命令与集成测试，检查完整 diff，发现第一个 blocker 后继续审查并一次性报告本轮全部问题；只读共享状态，并依据 contract 与验收目标给出 verdict。",
         "work.protocol.review_safe_content": (

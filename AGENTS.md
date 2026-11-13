@@ -111,7 +111,8 @@ blocked / in_review ── omac node accept ──► done        上游修复�
 4. **Agent 侧**：`omac work show <issue>`（实例事实包 + `guide_refs`）→ 干活 → `omac work submit <issue> …`；
    需要人决策时 `omac work block`；读上游交付用 `omac work read`。
 5. **交接**：Worker → Reviewer 由持久化意图串起（`worker_handoff`、`reviewer_run_baseline`、`delivery_identity`）；
-   Run、验证附件、PR head 三者对齐才算一次交付；reject 后必须移动 PR head。
+   Run、验证附件、PR head 三者对齐才算一次交付；reject 后必须移动 PR head。submit 记录当时的 PR head，
+   submit 之后再推送会使交付作废（作废交付，§4），节点退回 Worker；返工中、尚未重新 submit 时不做这项比对。
    作者提交后其 Run 还要过一会儿才结束：Reviewer 派发先观察（`decide_reviewer.prior_run_active`），其他 agent 的 direct Run 未结束就等待，
    plan 流水线按 poll 节奏等，Loop 留给后续 tick；此时不指派、不算错误、不耗预算。
    Reviewer 提交后同理：plan 流水线把工作项退回作者前，等该工作项上所有 direct Run 结束（`tasks._wait_for_runs_to_end`）；
@@ -245,6 +246,8 @@ DAG 级事实（审计计划、缺陷账本、`pending_human_amendment`、`auto_
 | 上游缺陷 / upstream defect | 报告者指认的、已完成上游节点未做到的事；指纹 = 疑似节点 + 排序后的锚点 id，状态只前进 | `core/defects.py`、`pipeline/decide_defects.py::DEFECT_ROUTES`、`pipeline/defects.py`、`omac defect` |
 | 系统 amendment / system amendment | 代码生成、只允许 add 修复节点 + 追加报告者 `blocked_by` + resume 报告者的 amendment | `core/amendment.py::build_system_amendment`、`system_proposal_errors` |
 | 观察冲突 / observation conflict | 读取期间工作项被并发改动；逐项捕获，本轮跳过、下轮重新观察，不使 tick 失败 | `errors.ObservationConflict`、`pipeline/observation_conflict.py` |
+| 节点级失败 / node failure | 单个节点的交付或控制事实不自洽（平台有应答，不是平台故障）；逐节点捕获，只停该节点（带 `reason_code` 的 decision）或把作废交付退回 Worker，其余节点照常推进；平台不可用、manifest、锁、凭据等全局问题仍停 run | `errors.NodeFailure`、`loop._settle_node_failure`、`decide_loop.decide_node_failure` |
+| 作废交付 / stale delivery | Worker submit 时记录的 PR HEAD 已不是远端 PR HEAD（submit 后又推送）；交付作废，经新的 handoff generation 退回 Worker（消耗 `retry.worker`，耗尽或合并已开始则停在 decision） | `loop._StaleDelivery`、`reason_code: delivery-head-moved` |
 | 观察 / Observation | 决策读取的冻结事实 | `pipeline/decide_effects.py::Observation` |
 | 计划 / Plan | 有序的 Effect 元组 + 结果名 | `decide_effects.py::Plan`、`validate_plan` |
 | 效果 / Effect | 一个端口调用或 manifest 写入的值对象 | `decide_effects.py`，执行于 `pipeline/apply.py::apply` |
@@ -323,6 +326,10 @@ DAG 级事实（审计计划、缺陷账本、`pending_human_amendment`、`auto_
 - **未知结果绝不重放**：崩溃或结果未知后，下一轮先观察，不重复写；仍不能确认就 blocked + exit 20。
 - **漂移即失败关闭**：平台事实与记录不符时停下并说明，不自动"修好"。
   区别于漂移：同一工作项两次观察之间被并发写入是 `ObservationConflict`，该项本轮跳过、下轮重观察。
+  漂移只关闭它所在的节点：节点级的不自洽 raise `errors.NodeFailure(reason_code=...)`，由 Loop 逐节点捕获
+  （`collect_results`、reviewer 派发、派单、阶段恢复），统一经 `loop._settle_node_failure` 停在 decision
+  或退回 Worker，不让 `dag run` 退出；平台读写失败、认证、manifest/锁、观察快照不变量仍是全局错误，照旧停 run。
+  新增节点级失败点一律 raise `NodeFailure`，不要 raise 裸 `PlatformError`。
 - **成功只看观察到的事实**：合并成功只由观察到的 PR 判定，不看命令退出码。
 - **`apply` 不重试、不吞异常**；业务失败不自动重试，只有有界计数的回退（§2.2）。
 - **并发**：manifest 写锁是非阻塞 `flock`，被占用时立即报错（exit 5）；所有改节点状态的命令（`node retry|abandon|accept|accept-nits|hold|release`、`dag amend`）与 `dag run|tick` 共用它，`dag run` 活着时这些命令被拒绝而不是被 Loop 覆盖；`dag run|tick` 收到 SIGINT/SIGTERM 时做完当前 tick、释放锁后以 exit 10 退出（第二次信号强制中止）；锁随进程释放，没有租约 / TTL。
