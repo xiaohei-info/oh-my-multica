@@ -25,7 +25,11 @@ class _Host(CodeHost):
         self.calls.append((command, pending_exit_code))
         return self.result
 
-    request_pull_request_merge = observe_pull_request = read_pull_request_readiness = None
+    def observe_pull_request(self, _url):
+        from omac.core.workitem import PullRequestObservation, PullRequestState
+        return PullRequestObservation(PullRequestState.OPEN)
+
+    request_pull_request_merge = read_pull_request_readiness = None
 
 
 class _Store:
@@ -91,3 +95,33 @@ def test_a_green_result_clears_the_recorded_wait(manifest):
 
     assert outcome == "pass"
     assert "i1" not in json.load(open(local_runtime_file(path, "ci-wait")))
+
+
+@pytest.mark.parametrize("passed,conflicting,expected", [
+    (False, True, True), (False, False, False), (True, True, False), (True, False, False)])
+def test_only_an_unpassed_check_on_a_conflicting_pr_is_a_conflict(passed, conflicting, expected):
+    from omac.pipeline.decide_ci import ci_unpassed_is_conflict
+    assert ci_unpassed_is_conflict(passed=passed, conflicting=conflicting) is expected
+
+
+@pytest.mark.parametrize("check", [
+    PENDING, PullRequestCheckResult(False, 1, "no checks reported on the 'x' branch")])
+def test_a_conflicting_pr_bounces_to_the_worker_with_a_rebase_instruction_instead_of_waiting(manifest, check):
+    from omac.core.workitem import PullRequestObservation, PullRequestState
+    m, path = manifest
+    host = _Host(check)
+    host.observe_pull_request = lambda _url: PullRequestObservation(PullRequestState.OPEN, conflicting=True)
+    store, comments = _Store(), []
+    store.add_comment = lambda _id, text: comments.append(text)
+    store.__class__ = type("S", (_Store,), {"__getattr__": lambda self, n: (lambda *a, **k: None)})
+    out = delivery.advance_delivery(CI, m, "n", store, None, host, {"ci": 2}, manifest_path=path)
+    assert out == "bounce"
+    assert any("rebase" in c.lower() or "Rebase" in c for c in comments)
+
+
+def test_a_non_conflicting_pending_check_still_waits(manifest):
+    from omac.core.workitem import PullRequestObservation, PullRequestState
+    m, path = manifest
+    host = _Host(PENDING)
+    host.observe_pull_request = lambda _url: PullRequestObservation(PullRequestState.OPEN)
+    assert _advance(host, m, path) == "pending"

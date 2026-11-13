@@ -59,7 +59,7 @@ from ..core.manifest import Manifest, read_local_runtime, write_local_runtime
 from ..errors import AuthError, PlatformError
 from ..i18n import ui
 from .apply import ManifestState, Ports, apply
-from .decide_ci import ci_wait_expired, plan_ci_result, plan_ci_start
+from .decide_ci import ci_unpassed_is_conflict, ci_wait_expired, conflict_summary, plan_ci_result, plan_ci_start
 from .decide_effects import RequestMerge
 
 # ── manifest 侧细分态 ↔ 平台 WorkItemStatus 映射表 ──────────────────────────
@@ -102,9 +102,12 @@ class CIResult:
     output: str        # 命令完整输出(stdout + stderr)
     summary: str       # 输出尾部;回退评论里贴给 worker 定位
     pending: bool = False   # 检查仍在进行:本轮不改任何状态,下一轮再观察
+    conflict: bool = False  # PR 与 base 冲突:平台不跑 CI,回退给 worker 要求 rebase
 
     @property
     def label(self) -> str:
+        if self.conflict:
+            return ui("PR conflicts with its base branch", "PR 与 base 分支存在合并冲突")
         if self.timed_out:
             return ui("CI check timed out", "CI 检查超时")
         return ui(
@@ -246,7 +249,11 @@ def advance_delivery(
         pr_url, ci["check_command"], timeout_seconds,
         pending_exit_code=int(pending_code) if pending_code is not None else None,
     ))
-    if result.pending:
+    if not result.passed and ci_unpassed_is_conflict(
+            passed=result.passed, conflicting=_observe_pull_request(code_host, pr_url).conflicting):
+        # Conflict, not red CI and not a wait: bounce through the same CI gate with the real cause.
+        result = CIResult(False, False, result.exit_code, result.output, conflict_summary(), conflict=True)
+    elif result.pending:
         if not ci_wait_expired(_ci_wait_started(manifest_path, item_id, record=True), timeout_seconds):
             return "pending"
         result = CIResult(False, True, result.exit_code, result.output, _tail(result.output) or ui(

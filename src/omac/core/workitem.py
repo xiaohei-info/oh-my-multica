@@ -92,6 +92,7 @@ class PullRequestObservation:
     state: PullRequestState
     merged_at: Optional[str] = None
     detail: str = ""
+    conflicting: bool = False      # OPEN PR 与其 base 有合并冲突:平台不会为它运行 CI
 
 
 @dataclass(frozen=True)

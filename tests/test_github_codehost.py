@@ -173,3 +173,19 @@ def test_a_check_command_is_pending_only_when_the_configured_exit_code_says_so(
         "https://github.com/acme/repo/pull/1", "gh pr checks {pr_url}", 30, pending_exit_code=pending_code)
 
     assert (result.pending, result.succeeded) == (pending, succeeded)
+
+
+@pytest.mark.parametrize("payload,conflicting", [
+    ({"mergeStateStatus": "DIRTY"}, True),
+    ({"mergeStateStatus": "BLOCKED", "mergeable": "CONFLICTING"}, True),
+    ({"mergeStateStatus": "UNKNOWN", "mergeable": "UNKNOWN"}, False),
+    ({"mergeStateStatus": "CLEAN", "mergeable": "MERGEABLE"}, False),
+])
+def test_an_open_pr_reports_whether_it_conflicts_with_its_base(monkeypatch, payload, conflicting):
+    import json
+    import subprocess
+    from omac.engines.github import GitHubCodeHost
+    body = json.dumps({"state": "OPEN", **payload})
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=body, stderr=""))
+    assert GitHubCodeHost().observe_pull_request("https://github.com/o/r/pull/1").conflicting is conflicting

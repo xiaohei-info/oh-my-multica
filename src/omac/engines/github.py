@@ -15,7 +15,7 @@ from ..core.workitem import (
 )
 from .codehost import CodeHost
 
-PR_VIEW_FIELDS = "state,mergedAt,autoMergeRequest,mergeStateStatus,headRefOid"
+PR_VIEW_FIELDS = "state,mergedAt,autoMergeRequest,mergeStateStatus,mergeable,headRefOid"
 
 
 class GitHubCodeHost(CodeHost):
@@ -59,6 +59,9 @@ class GitHubCodeHost(CodeHost):
             return PullRequestObservation(PullRequestState.MERGED, merged_at=merged_at)
         if state == "OPEN":
             merge_state = str(payload.get("mergeStateStatus") or "").upper()
+            conflicting = (
+                merge_state == "DIRTY"
+                or str(payload.get("mergeable") or "").upper() == "CONFLICTING")
             if payload.get("autoMergeRequest") or merge_state == "QUEUED":
                 return PullRequestObservation(PullRequestState.PENDING)
             if not merge_state:
@@ -67,7 +70,7 @@ class GitHubCodeHost(CodeHost):
                     PullRequestState.UNKNOWN, detail="missing mergeStateStatus")
             # An explicit UNKNOWN is GitHub's lazy mergeability computation, not a failed read: the PR is
             # known to be OPEN, and the merge command itself decides whether it can be merged.
-            return PullRequestObservation(PullRequestState.OPEN)
+            return PullRequestObservation(PullRequestState.OPEN, conflicting=conflicting)
         if state == "CLOSED":
             return PullRequestObservation(PullRequestState.CLOSED_UNMERGED)
         return PullRequestObservation(PullRequestState.UNKNOWN, detail=f"unexpected PR state: {state}")

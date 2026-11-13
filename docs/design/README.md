@@ -252,6 +252,13 @@ reconcile → result collection (collect_results) → evidence / CI / merge gate
 * **Compatibility.** An explicit `ci.check_command` without `pending_exit_code` stays a blocking command whose exit code is
   the verdict; set `pending_exit_code` to make a custom command non-blocking. Cost: one `gh` call per poll instead of one long
   call; `ci_check` is no longer visible as a manifest status while waiting (it only existed in memory during the blocking call).
+* **Merge conflict is not "no checks".** GitHub runs no CI for a PR that conflicts with its base, so `gh pr checks` reports
+  "no checks reported" forever; treating that as pending would only wait for the timeout, and as red would blame CI.
+  Whenever a check is not green (pending or failed), `advance_delivery` reads `CodeHost.observe_pull_request`;
+  `PullRequestObservation.conflicting` (adapter: `mergeStateStatus == DIRTY` or `mergeable == CONFLICTING`) turns the result into a
+  bounce back to the Worker whose comment says to rebase and resubmit (`decide_ci.ci_unpassed_is_conflict`). It reuses the CI
+  gate's bounce (`retry.ci`), not the merge-request machinery: no merge intent exists yet at this gate. An `UNKNOWN`
+  mergeability stays pending (bounded by `ci.timeout_minutes`).
 * **Runner signals.** `dag run|tick` already stop gracefully on SIGINT and SIGTERM and re-arm SIGINT in a background job
   (`cli/commands/dag.py::_Stop`, #185; `nohup cmd &` starts with SIGINT ignored). No further change.
 

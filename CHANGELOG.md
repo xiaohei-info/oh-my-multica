@@ -44,6 +44,9 @@ This file records public changes to oh-my-multica. The format follows
   the same head rule (`decide_worker.head_proves_new_delivery`) the Loop applies.
 
 ### Fixed
+- A pull request that conflicts with its base never gets CI ("no checks reported"). The CI gate now detects the conflict
+  (`PullRequestObservation.conflicting`) and returns the delivery to the Worker with a rebase instruction instead of waiting
+  out `ci.timeout_minutes` or reporting a CI failure.
 
 - `omac dag run` waited for nothing between two ticks, so a DAG that only waited for Agents re-read the platform as fast as a tick
   could run. A tick that changed no node status and dispatched nothing is now followed by a wait of `defaults.poll_interval`
