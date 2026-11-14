@@ -133,6 +133,9 @@ def _attempt_context(
     }
 
 
+WORKER_DECISION_REASON = "worker-decision-required"
+
+
 def _validate_amendment_admission(
     engine: Any,
     manifest: Any,
@@ -145,8 +148,9 @@ def _validate_amendment_admission(
     """Reject an amendment when an explicit decision still calls for recovery.
 
     Older manifests may not persist a decision, so the check is additive for
-    compatibility.  Once a decision exists, only a convergence or typed
-    contract-boundary decision can authorize a DAG-definition change; no-submit,
+    compatibility.  Once a decision exists, only a convergence, typed
+    contract-boundary or worker decision (answered by the recovery, see
+    ``validate_affected``) can authorize a DAG-definition change; no-submit,
     budget, and Runner errors stay on their own recovery paths.
     """
     allowed = {
@@ -180,6 +184,11 @@ def _validate_amendment_admission(
             and new_attempt
             and supersedes_issue_id == item.id
         ):
+            continue
+        if reason_code == WORKER_DECISION_REASON:
+            # The operator named this node with --blocked-node, so the amendment is meant to answer its decision. Whether the
+            # amendment really recovers the node is only known once it exists: validate_affected checks it when the proposal is
+            # produced and again at accept, and an amendment that does not recover the node is refused there (设计 批量修复 2).
             continue
         if reason_code == "review-convergence-scope-expanding":
             convergence = decision.get("convergence")

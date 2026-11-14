@@ -30,6 +30,8 @@
    - 若 DAG 尚未开始执行，可修改 manifest 后运行 `omac dag check`。
    - 若 DAG 已开始执行且问题属于 contract、验收映射或拓扑定义，使用受控
      `omac dag amend propose`，禁止直接覆盖运行中 manifest。
+     持有 `worker-decision-required` 的节点可用 `--blocked-node` 指定：amendment 恢复该节点（authoring 或 review）时，accept 会终结该决策
+     （账本记 `superseded_decision`）；amendment 被拒则原决策保留。
 4. 重新运行 `omac dag run <manifest>`。已 done 节点会复用，其余节点续跑。
 
 ### 等待决策、决策清单与建议项

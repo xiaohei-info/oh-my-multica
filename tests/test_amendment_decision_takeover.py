@@ -90,3 +90,26 @@ def test_the_ledger_records_the_retired_decision_before_recovery_runs(manifest):
 def test_other_decisions_leave_no_record():
     assert superseded_decision_record(SimpleNamespace(decision_required=decision("quality-gate-failed"))) is None
     assert superseded_decision_record(SimpleNamespace(decision_required=None)) is None
+
+
+@pytest.mark.parametrize("reason, admitted", [
+    ("worker-decision-required", True),          # the amendment recovering the node answers it; validate_affected enforces that
+    ("completed-without-submit", False),         # other decisions keep their own recovery path
+])
+def test_propose_admission_lets_a_named_node_hold_a_worker_decision(manifest, reason, admitted):
+    from omac.pipeline.amendment import _validate_amendment_admission
+
+    held = {**decision(reason), "resume_issue_id": "w-api"}
+    engine = SimpleNamespace(store=Store(held))
+    if admitted:
+        _validate_amendment_admission(engine, manifest, "dag.yaml", ["api"])
+        return
+    with pytest.raises(ValidationError, match="Amendment admission is not authorized"):
+        _validate_amendment_admission(engine, manifest, "dag.yaml", ["api"])
+
+
+def test_an_admitted_worker_decision_is_still_refused_when_the_proposal_does_not_recover_the_node(manifest):
+    held = Store(decision())
+    with pytest.raises(ValidationError, match="does not recover it"):
+        validate_affected(manifest, REMOVE, held)
+    assert held.item.decision_required is not None      # nothing was written: the original decision stays

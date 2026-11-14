@@ -10,6 +10,11 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Fixed
 
+- `omac dag amend propose --blocked-node <node>` no longer exits 5 when `<node>` holds a `worker-decision-required`. The #193
+  takeover only worked at `accept`, because the propose admission refused the decision first. Admission now defers to
+  `validate_affected`, which runs when the proposal is produced and again at accept: the amendment must resume the node
+  (authoring or review) or it is refused, and a rejected or unapplied amendment leaves the original decision untouched.
+  Other decision reasons keep their own recovery path.
 - **A node with many upstream nodes no longer crashes `dag run` on the 8KB metadata limit.** `source_refs` over 2KB is stored as an
   attachment reference and read back transparently; a metadata write over budget now blocks only that node (`metadata-budget`,
   `omac node retry`) instead of ending the run.
