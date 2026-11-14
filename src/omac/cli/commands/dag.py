@@ -20,6 +20,7 @@ from ...core.config import (
 from ...core.amendment import ensure_amendment_apply_complete
 from ...core.acceptance import load_acceptance_doc_file
 from ...core import logsetup
+from ..queued_writes import drain_queued_writes
 from ...core.graph import node_waves
 from ...core.lint import lint
 from ...core.manifest import load_manifest, manifest_write_lock
@@ -877,12 +878,23 @@ def _loop_or_single(args, single_round: bool) -> int:
     with _Stop() as _STOP:
         while True:
             with manifest_write_lock(args.manifest):
-                outcome = _loop_or_single_locked(args, single_round, clock, notified)
+                try:
+                    outcome = _loop_or_single_locked(args, single_round, clock, notified)
+                finally:
+                    drain_queued_writes(args.manifest)     # a write queued during the last tick is applied, not stranded
             if not isinstance(outcome, _Waiting):
                 return outcome
             code = _wait_for_decision_change(args, outcome, clock)
             if code is not None:
                 return code
+
+
+def _apply_queued_writes(manifest, manifest_path: str):
+    """Tick boundary: apply the `node` / `defect` writes queued while this run held the lock (cli/queued_writes.py).
+
+    The commands load and save the manifest themselves, so the in-memory copy is read again when any was applied.
+    """
+    return load_manifest(manifest_path) if drain_queued_writes(manifest_path) else manifest
 
 
 def _decision_keys(manifest, manifest_path: str) -> frozenset:
@@ -1032,6 +1044,7 @@ def _loop_or_single_locked(args, single_round: bool, clock: Optional[_Clock] = N
 
     poll = _poll_interval(config)
     while True:
+        manifest = _apply_queued_writes(manifest, args.manifest)
         before = _node_statuses(manifest)
         last_result = _scheduled_tick(
             engine, manifest, args.manifest,

@@ -12,7 +12,7 @@ import stat
 import tempfile
 import yaml
 
-from ..errors import ValidationError
+from ..errors import ManifestLockedError, ValidationError
 from ..i18n import ui
 
 _UNSET = object()  # sentinel: 参数未传（区别于 None=显式清空）
@@ -694,12 +694,12 @@ def manifest_write_lock(path: str):
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise ValidationError(ui(
-                "Another `omac dag run`, `tick`, `dag amend propose|accept`, or `node retry|abandon|accept|hold` "
+            raise ManifestLockedError(ui(
+                "Another `omac dag run`, `tick`, `dag amend propose|accept`, or `node` / `defect` write "
                 f"is already operating on manifest: {path}\n"
                 "Stop the running `omac dag run` first (Ctrl-C or SIGTERM stops it after the current tick), "
                 "or confirm the stale process has stopped, then retry.",
-                f"已有另一个 omac dag run/tick/amend/node 写命令正在操作 manifest: {path}\n"
+                f"已有另一个 omac dag run/tick/amend/node/defect 写命令正在操作 manifest: {path}\n"
                 "提示:先停掉正在运行的 `omac dag run`(Ctrl-C 或 SIGTERM,当前 tick 结束后退出),"
                 "或确认旧进程已停止后再重试。")) from exc
         yield

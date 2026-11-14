@@ -388,8 +388,9 @@ def test_s17_with_hold_live_a_ready_live_node_is_held_once_and_the_report_names_
     assert loop._auto_hold_live(released, path, graph.ready_nodes(loop._build_snapshot(released))) == ["a", "c"]   # not held again
 
 
-def test_node_retry_during_a_live_dag_run_is_refused_and_the_loop_keeps_the_state(tmp_path, monkeypatch, capsys):
-    """The retry arrives while the Loop holds the write lock (inside a tick): refused, so the Loop cannot overwrite it later."""
+def test_node_retry_during_a_live_dag_run_is_queued_and_the_loop_applies_it_at_the_tick_boundary(tmp_path, monkeypatch, capsys):
+    """The retry arrives while the Loop holds the write lock (inside a tick): nothing is written behind the Loop's back,
+    the Loop applies it itself before it parks, so it can never overwrite the retry with its in-memory state."""
     from omac.cli.main import main
 
     run = WaitingRun(tmp_path, monkeypatch)
@@ -397,16 +398,14 @@ def test_node_retry_during_a_live_dag_run_is_refused_and_the_loop_keeps_the_stat
 
     def retry_mid_tick(engine, manifest, path, **kw):
         if not attempts:
-            attempts.append(main(["node", "retry", path, "a"]))
-            assert load_manifest(path).nodes["a"].status == "blocked"      # nothing was written behind the Loop's back
+            attempts.append(main(["node", "retry", path, "a", "--no-wait"]))
+            assert load_manifest(path).nodes["a"].status == "blocked"      # queued, not written
         return original(engine, manifest, path, **kw)
 
     monkeypatch.setattr(run.dag_cmd, "_scheduled_tick", retry_mid_tick)
-    run.acts[1] = WaitingRun.person_retries                                 # after the Loop parks (lock free) the retry goes through
 
     assert run.run() == exit_codes.OK
-    assert attempts == [exit_codes.VALIDATION]
-    assert "Stop the running `omac dag run`" in capsys.readouterr().err
+    assert attempts == [exit_codes.OK]
     assert {node.status for node in load_manifest(run.path).nodes.values()} == {"done"}
 
 

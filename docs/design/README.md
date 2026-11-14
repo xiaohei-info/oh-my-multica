@@ -99,6 +99,15 @@ it from git once.
   records are the amendment ledger above and `_dag.yaml`. Nothing accumulates, so nothing is
   archived: `tests/test_manifest_state.py` (500 nodes with every fact set average well under 4 KiB) and
   `tests/test_amendment_budget_retention.py` (120 amendments leave the manifest the size of the first few) pin it.
+* **Write channel (4.5).** The manifest has one writer, the holder of `manifest_write_lock`. A `node retry|abandon|accept|accept-nits|hold|release`
+  or `defect report|grant|resolve` that finds the lock held enqueues itself (`core/commandqueue.py`: `req-<ns>-<id>.json` and
+  `rcpt-<id>.json` in a host-local spool beside the lock, atomic writes, never in git) and waits for the receipt. `dag run` drains the queue
+  before every tick and once more before it releases the lock, calling the same command function under its own lock, so the
+  preconditions are the command's own decision tables evaluated against the current manifest, and the in-memory manifest is reloaded
+  after any application. The receipt is written as `applying` (intent) before and `done` after the application; a request found with an
+  `applying` receipt is reported `unknown` and not replayed (an unknown outcome is never replayed); a `done` receipt with a surviving
+  request is not applied twice. A waiting command retries the lock once a second, so it applies the queue itself if the runner has
+  exited. `--no-wait` leaves the request for the next runner start or writing command. `dag amend` stays lock-or-refuse.
 * **No 1.x compatibility.** A single-file 1.x manifest (inline `work_item_id`, or the old compressed envelope) is not read
   or modified: the error says to finish that run with 1.x or abandon it, then run `omac plan create` with 2.0.
 * **Node ids** become file names: letters, digits, `.`, `_`, `-`.
@@ -154,7 +163,7 @@ the usual report; its `next_actions` come from `decide_defects.render_release`.
 release), `review.node_nits` (`accept` default | `decide`: whether a develop
 node's `pass-with-nits` is a pass or an exit-20 stop; plan stages and amendments always stop),
 `review.invalid_evidence_restarts` (default 2: re-dispatches of the Reviewer on one subject after invalid review evidence),
-`plan` (`profile: auto|light|standard`, `light_max_nodes` 12, `light_max_business_actions` 20), `reconcile`, `acceptance.max_rounds`. `omac init` writes it;
+`--wait-timeout` of the queued write commands (default 600 s), `plan` (`profile: auto|light|standard`, `light_max_nodes` 12, `light_max_business_actions` 20), `reconcile`, `acceptance.max_rounds`. `omac init` writes it;
 the engine prompt defaults to `multica`.
 
 ## 7. The Loop

@@ -32,7 +32,10 @@ structured stdout report is the current recovery fact.
    - `omac node retry` also takes `--note <text>` (at most 2000 characters): it appears in the issue body as the
      operator note for this retry, and a retry without `--note` clears the previous one.
    - `omac node release <manifest> <key>`: lift the hold; the node is dispatched like any ready node.
-     Both commands take the manifest write lock, so stop a running `omac dag run` first; the hold is
+     Write commands (`node retry|abandon|accept|accept-nits|hold|release`, `defect report|grant|resolve`) need no runner stop:
+     while a `dag run` holds the lock the command is queued, the runner applies it at its next tick boundary and writes a receipt,
+     and the command returns the runner's output and exit code (`--no-wait` returns once queued; `--wait-timeout` expiry exits 10 and the
+     write stays queued). Preconditions are re-checked when it is applied, so a stale command fails with its usual error. The hold is
      stored in the node's state file and survives the Loop's manifest sync and restarts.
    - Before execution starts, change the manifest and run `omac dag check`.
    - After execution starts, use controlled `omac dag amend propose` for contract,

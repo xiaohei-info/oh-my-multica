@@ -25,6 +25,13 @@ This file records public changes to oh-my-multica. The format follows
 
 ### Changed
 
+- **`node retry|abandon|accept|accept-nits|hold|release` and `defect report|grant|resolve` no longer need the running `dag run` stopped.**
+  When a `dag run` holds the manifest write lock (previously exit 5), the command is queued in a host-local spool and the
+  runner applies it at its next tick boundary under the same lock, with the same command code and preconditions, then writes
+  a receipt; the command waits for it and replays the runner's stdout / stderr / exit code. New flags `--no-wait` (return once
+  queued) and `--wait-timeout` (default 600 s; exit 10, the write stays queued). With no runner the behaviour is unchanged. An
+  application interrupted by a crash is reported as unknown and never replayed.
+
 - CI observation no longer blocks the tick. The default CI command is now `gh pr checks {pr_url}` (no `--watch`); exit code
   8 (`ci.pending_exit_code`) means the checks are still running, so the node stays in place, other nodes keep being
   dispatched and defects keep being routed, and the check is observed again next tick. `ci.timeout_minutes` counts from the
