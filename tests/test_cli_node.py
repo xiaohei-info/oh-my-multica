@@ -254,13 +254,14 @@ def test_hold_refuses_an_unknown_node(tmp_path):
     assert main(["node", "hold", path, "nope"]) == exit_codes.VALIDATION
 
 
-def test_hold_and_release_wait_for_no_running_dag_run(tmp_path):
-    """The Loop is the single writer of node state: with a `dag run` active the hold is refused, not lost."""
+def test_hold_with_a_dag_run_alive_is_queued_not_lost_or_applied_behind_its_back(tmp_path, capsys):
+    """The Loop is the single writer of node state: with a `dag run` active the hold is queued for its tick boundary."""
     path = _write_manifest(tmp_path, _hold_nodes())
 
     with manifest_write_lock(path):
-        assert main(["node", "hold", path, "held"]) == exit_codes.VALIDATION
+        assert main(["node", "hold", path, "held", "--no-wait"]) == exit_codes.OK
 
+    assert json.loads(capsys.readouterr().out)["queued"] is True
     assert load_manifest(path).nodes["held"].held is False
 
 

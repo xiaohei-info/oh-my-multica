@@ -7,7 +7,8 @@ import yaml
 
 from .. import exit_codes
 from ..output import add_output_flag, hint, print_json
-from ...core.manifest import load_manifest, manifest_write_lock
+from ..queued_writes import add_queue_flags, run_write
+from ...core.manifest import load_manifest
 from ...errors import ValidationError
 from ...i18n import ui
 from ...pipeline.defects import describe, grant_budget, report_defects, resolve_defect
@@ -55,6 +56,9 @@ def register(parser):
     resolve.add_argument("fingerprint", help=ui("Defect fingerprint (see `omac defect list`)", "缺陷指纹(见 `omac defect list`)"))
     resolve.add_argument("--pr", required=True, help=ui("URL of the merged fix PR", "已合并修复 PR 的 URL"))
 
+    for writer in (report, grant, resolve):
+        add_queue_flags(writer)
+
 
 def _manifest(path):
     if not os.path.exists(path):
@@ -71,20 +75,24 @@ def _read_defects(path):
     return data.get("defects") if isinstance(data, dict) else data
 
 
+def apply_locked(args) -> int:
+    """Apply a write action. The caller holds the manifest write lock (a direct command or the runner's tick boundary)."""
+    manifest = _manifest(args.manifest)
+    if args.action == "report":
+        result = report_defects(manifest, args.manifest, args.before, _read_defects(args.report_file))
+    elif args.action == "resolve":
+        result = resolve_defect(manifest, args.manifest, args.fingerprint, args.pr)
+    else:
+        if args.count < 1:
+            raise ValidationError(ui("--count must be at least 1", "--count 至少为 1"))
+        result = grant_budget(manifest, args.manifest, args.reporter, args.count, global_scope=getattr(args, "global_scope", False))
+    print_json(result)
+    hint(ui(f"Run `omac dag run {args.manifest}` to route it.", f"运行 `omac dag run {args.manifest}` 使其生效。"))
+    return exit_codes.OK
+
+
 def run(args) -> int:
     if args.action == "list":
         print_json(describe(_manifest(args.manifest)))
         return exit_codes.OK
-    with manifest_write_lock(args.manifest):
-        manifest = _manifest(args.manifest)
-        if args.action == "report":
-            result = report_defects(manifest, args.manifest, args.before, _read_defects(args.report_file))
-        elif args.action == "resolve":
-            result = resolve_defect(manifest, args.manifest, args.fingerprint, args.pr)
-        else:
-            if args.count < 1:
-                raise ValidationError(ui("--count must be at least 1", "--count 至少为 1"))
-            result = grant_budget(manifest, args.manifest, args.reporter, args.count, global_scope=getattr(args, "global_scope", False))
-    print_json(result)
-    hint(ui(f"Run `omac dag run {args.manifest}` to route it.", f"运行 `omac dag run {args.manifest}` 使其生效。"))
-    return exit_codes.OK
+    return run_write(args, "defect", apply_locked)

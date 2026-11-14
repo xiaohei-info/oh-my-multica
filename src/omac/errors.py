@@ -58,6 +58,10 @@ class ValidationError(OmacError):
     exit_code = 5
 
 
+class ManifestLockedError(ValidationError):
+    """manifest 写锁被另一个进程持有(exit 5,与此前一致)。写命令据此改走本机写命令队列。"""
+
+
 class NeedsDecision(OmacError):
     """需要调用者决策 → exit 20。携带结构化报告(report dict)。"""
     exit_code = 20

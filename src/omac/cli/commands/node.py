@@ -8,9 +8,10 @@ from typing import Any
 
 from .. import exit_codes
 from ..output import add_output_flag, hint, print_json
+from ..queued_writes import add_queue_flags, run_write
 from ...core.config import load_config
 from ...core.manifest import (
-    MISSING_CONSUMES, clear_confirmed_merge, load_manifest, manifest_write_lock, save_manifest,
+    MISSING_CONSUMES, clear_confirmed_merge, load_manifest, save_manifest,
 )
 from ...core.graph import downstream_of
 from ...core.taskmeta import TaskKind, TaskPhase, exact_review_report_ref
@@ -117,6 +118,9 @@ def register(parser):
     release = sub.add_parser("release", help=ui("Release a held node", "取消节点挂起"))
     release.add_argument("manifest", help="manifest 文件路径")
     release.add_argument("node_key", help="节点 id")
+
+    for writer in (retry, accept_nits, accept, abandon, hold, release):
+        add_queue_flags(writer)
 
 
 # ==================== helpers ====================
@@ -676,23 +680,22 @@ def _cmd_abandon(args) -> int:
 # ==================== hold / release ====================
 
 def _cmd_hold_release(args) -> int:
-    """The write is a Plan applied through the manifest executor, under the manifest's single-writer lock."""
-    with manifest_write_lock(args.manifest):
-        manifest = _load_or_raise(args.manifest)
-        node = _require_node(manifest, args.node_key)
-        try:
-            plan = (plan_hold(node.id, node.status, args.reason) if args.action == "hold"
-                    else plan_release(node.id, node.held))
-        except HoldRefused as exc:
-            raise ValidationError(str(exc)) from exc
-        apply(plan, Ports(), ManifestState(manifest, args.manifest))
+    """The write is a Plan applied through the manifest executor; the caller holds the manifest's single-writer lock."""
+    manifest = _load_or_raise(args.manifest)
+    node = _require_node(manifest, args.node_key)
+    try:
+        plan = (plan_hold(node.id, node.status, args.reason) if args.action == "hold"
+                else plan_release(node.id, node.held))
+    except HoldRefused as exc:
+        raise ValidationError(str(exc)) from exc
+    apply(plan, Ports(), ManifestState(manifest, args.manifest))
     print_json({"node_key": node.id, "status": node.status, "held": node.held, "hold_reason": node.hold_reason})
     if node.held:
         hint(ui(
             f"Node {node.id} is held: it is not dispatched and its downstream waits; other branches continue. "
-            f"Release it with `omac node release {args.manifest} {node.id}` (stop any running `omac dag run` first).",
+            f"Release it with `omac node release {args.manifest} {node.id}`.",
             f"节点 {node.id} 已挂起:不派发,下游等待,其他分支继续。"
-            f"准备好后 `omac node release {args.manifest} {node.id}`(先停掉正在运行的 `omac dag run`)。"))
+            f"准备好后 `omac node release {args.manifest} {node.id}`。"))
     else:
         hint(ui(
             f"Node {node.id} released. Run `omac dag run {args.manifest}` to continue.",
@@ -700,17 +703,22 @@ def _cmd_hold_release(args) -> int:
     return exit_codes.OK
 
 
+_WRITERS = {"retry": _cmd_retry, "accept-nits": _cmd_accept_nits, "accept": _cmd_accept, "abandon": _cmd_abandon,
+            "hold": _cmd_hold_release, "release": _cmd_hold_release}
+
+
+def apply_locked(args) -> int:
+    """Apply a write command. The caller holds the manifest write lock (a direct command or the runner's tick boundary)."""
+    return _WRITERS[args.action](args)
+
+
 def run(args) -> int:
-    if args.action in ("hold", "release"):
-        return _cmd_hold_release(args)
     if args.action == "show":
         return _cmd_show(args)
-    writers = {"retry": _cmd_retry, "accept-nits": _cmd_accept_nits, "accept": _cmd_accept, "abandon": _cmd_abandon}
-    if args.action in writers:
-        # Same single-writer lock as hold/release and the Loop: with a `dag run` alive this is refused (exit 5)
-        # instead of succeeding and being overwritten by the Loop's in-memory state on its next save.
-        with manifest_write_lock(args.manifest):
-            return writers[args.action](args)
+    if args.action in _WRITERS:
+        # With a `dag run` alive the write is queued and applied by it at a tick boundary (cli/queued_writes.py):
+        # the Loop stays the single writer, so nothing is overwritten by its in-memory state.
+        return run_write(args, "node", apply_locked)
     raise ValidationError(ui(
         f"Unknown node subcommand: {args.action}",
         f"未知 node 子命令: {args.action}"))

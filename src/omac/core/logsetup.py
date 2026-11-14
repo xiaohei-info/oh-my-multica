@@ -37,6 +37,7 @@ EVT_NEEDS_DECISION = "needs_decision"    # loop 出口:有失败/受阻,需决�
 EVT_HELD = "held"                        # loop 出口:只剩被 hold 的节点及其下游,等 release
 EVT_AUTO_HOLD = "auto_hold"              # dispatch.hold_live:就绪的 live 节点由代码挂起,等 `omac node release`
 EVT_DECISION_PENDING = "decision_pending"  # --wait-decisions:新出现一个等人的决策(按 decision_key 去重,每个只发一次)
+EVT_QUEUED_WRITE = "queued_write"        # runner 在 tick 边界应用了一条排队的写命令(node/defect;回执带结果)
 EVT_DEFINITION_RELOADED = "definition_reloaded"  # tick 开始时发现定义文件被外部改动,已从磁盘重载
 EVT_DEFECT_ROUTED = "defect_routed"      # 上游缺陷回流:一份缺陷被路由(route: auto-fix / attach / queued / defect-*)
 EVT_CAPACITY_WAIT = "capacity_wait"      # Run 因额度/限流失败:等重置时间或退避后自动重跑(不耗回退,每个失败 Run 只发一次)

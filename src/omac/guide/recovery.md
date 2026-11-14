@@ -26,7 +26,7 @@
      只有 `todo` 节点能挂起：进行中的节点会被拒绝（等它结束或 `abandon`），`blocked`/`failed` 节点须先 `retry`。
      与 `abandon` 不同，挂起节点不会让下游视同依赖已满足，所以它后面的收尾节点不会被提前放行。
    - `omac node release <manifest> <key>`：取消挂起，节点按普通就绪节点派发。
-     两条命令都持 manifest 写锁，须先停掉正在运行的 `omac dag run`；挂起写在节点状态文件里，Loop 的 manifest 同步与重启都不会抹掉。
+     写命令（`node retry|abandon|accept|accept-nits|hold|release`、`defect report|grant|resolve`）不需要停 runner：`dag run` 持锁时命令自动入队，runner 在下一个 tick 边界应用并回执，命令等回执后原样返回其输出与退出码（`--no-wait` 入队即返回，`--wait-timeout` 超时 exit 10 且写入仍留在队列）；应用时重新校验前置条件，已失效则同样报错。挂起写在节点状态文件里，Loop 的 manifest 同步与重启都不会抹掉。
    - 若 DAG 尚未开始执行，可修改 manifest 后运行 `omac dag check`。
    - 若 DAG 已开始执行且问题属于 contract、验收映射或拓扑定义，使用受控
      `omac dag amend propose`，禁止直接覆盖运行中 manifest。
