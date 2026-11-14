@@ -13,6 +13,10 @@ This file records public changes to oh-my-multica. The format follows
 - **A node with many upstream nodes no longer crashes `dag run` on the 8KB metadata limit.** `source_refs` over 2KB is stored as an
   attachment reference and read back transparently; a metadata write over budget now blocks only that node (`metadata-budget`,
   `omac node retry`) instead of ending the run.
+- **`blocked_by` metadata is bounded too.** Like `source_refs`, a work item's `blocked_by` list over 2KB (a node with hundreds of
+  upstream nodes) is stored as an `omac.control-payload/v1` attachment reference and read back transparently (sha256 + byte
+  count verified; a damaged reference fails closed). Inline values written by older versions still read. Other work-item metadata
+  that is not DAG-size dependent (`artifacts`, `owner_answer`, …) stays inline; an over-budget write blocks only that node.
 
 ### Changed
 

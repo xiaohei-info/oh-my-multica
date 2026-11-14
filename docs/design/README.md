@@ -582,8 +582,8 @@ Issue metadata has a platform-wide 8KB aggregate limit. Every metadata write goe
 platform rejects it (or a control reference does not fit), `_free_metadata_budget` makes room in a fixed order: recoverable
 reductions (compacted baseline run ids, obligations, source refs), then inline `delivery_identity` / `reviewer_run_baseline` /
 `worker_handoff` become `omac.control-payload/v1` attachment references (read back by `_json_control_metadata`). If that is not
-enough the write fails with `MetadataBudgetError` (`platform-metadata-budget`). `source_refs` grows with a node's upstream
-count, so above 2KB it always becomes an attachment reference (same wrapper, same reader; inline values written by older
+enough the write fails with `MetadataBudgetError` (`platform-metadata-budget`). `source_refs` and `blocked_by` grow with a node's upstream
+count, so above 2KB each always becomes an attachment reference (same wrapper, same reader; inline values written by older
 versions still read). A per-value overrun (`assert_metadata_write_allowed`) is also a `MetadataBudgetError`: the Loop blocks
 only that node (`metadata-budget` comment with `omac node retry`) and keeps dispatching the others. A Reviewer submit that fails this way leaves a
 comment (`core/submit_rejection.py`, outside the metadata budget); the Loop blocks the stage with
