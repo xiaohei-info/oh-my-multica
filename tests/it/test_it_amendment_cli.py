@@ -75,6 +75,56 @@ def test_the_command_line_stops_after_the_reviewer_and_a_human_accept_applies_th
     assert yaml.safe_load(amendment_path.read_text())["human_confirmation"] == "applied"
 
 
+WORKER_DECISION = {"schema": "omac.decision-required/v1", "reason_code": "worker-decision-required", "kind": "develop", "phase": "authoring",
+                   "gate": "worker", "blocker": {"schema": "omac.worker-blocker/v3", "reason_code": "environment-failure"}}
+
+
+def held_worker_decision(kit, omac_dir):
+    path, item = blocked_bootstrap(kit, omac_dir)
+    kit.store.update_work_item_metadata(item.id, artifacts={"pr_url": "https://example.test/pr/1", "head_sha": "abc"},
+                                        verification={"subject_digest": "verify-1", "commands": []}, review_verdict="reject",
+                                        review_report={"blockers": ["bad mapping"]},
+                                        decision_required={**WORKER_DECISION, "resume_issue_id": item.id})
+    seal_review_fixture(kit.store, item.id)
+    amendment = omac_dir / "amendment-proposal.yaml"
+    amendment.write_text(yaml.safe_dump(proposal(contract_update()), sort_keys=False))
+    kit.stack.set_scenario("alice", [[submit_step(kit.stack, "--amendment-file", str(amendment))]])
+    return path, item
+
+
+def test_an_amendment_proposed_for_a_held_worker_decision_takes_it_over_on_accept_and_records_it(kit, cli):
+    omac_dir, report, docs = cli
+    path, item = held_worker_decision(kit, omac_dir)
+    kit.stack.set_scenario("bob", [[kit.stack.review("pass")]])
+    amendment_path = omac_dir / "dag.amendment.yaml"
+
+    code = main(propose_args(path, report, docs, "--blocked-node", "bootstrap", "--output-file", str(amendment_path)))
+
+    assert code == exit_codes.NEEDS_DECISION      # reached human confirmation: admission no longer refuses the held decision
+    assert kit.store.get_work_item(item.id).decision_required["reason_code"] == "worker-decision-required"   # propose changes nothing
+
+    assert main(["dag", "amend", "accept", str(path), str(amendment_path), "--reason", "reviewed by operator"]) == exit_codes.OK
+
+    assert kit.store.get_work_item(item.id).decision_required in (None, {})
+    entry = load_manifest(str(path)).meta["amendment_apply"]["nodes"]["bootstrap"]
+    assert entry["superseded_decision"]["reason_code"] == "worker-decision-required"
+    assert len(entry["superseded_decision"]["decision_sha256"]) == 64
+
+
+def test_a_rejected_amendment_leaves_the_worker_decision_in_place(kit, cli):
+    omac_dir, report, docs = cli
+    path, item = held_worker_decision(kit, omac_dir)
+    kit.stack.set_scenario("bob", [[kit.stack.review("reject")]] * 3)
+    amendment_path = omac_dir / "dag.amendment.yaml"
+
+    code = main(propose_args(path, report, docs, "--blocked-node", "bootstrap", "--output-file", str(amendment_path),
+                             "--max-revisions", "1"))
+
+    assert code != exit_codes.OK and not amendment_path.exists()
+    assert kit.store.get_work_item(item.id).decision_required["reason_code"] == "worker-decision-required"
+    assert load_manifest(str(path)).nodes["bootstrap"].status == "blocked"
+
+
 def forwarded(kit, monkeypatch, cli, *extra):
     """Run `omac dag amend propose` with the pipeline replaced by a recorder; returns (exit code, keyword arguments received)."""
     omac_dir, report, docs = cli

@@ -37,6 +37,8 @@ structured stdout report is the current recovery fact.
    - Before execution starts, change the manifest and run `omac dag check`.
    - After execution starts, use controlled `omac dag amend propose` for contract,
      acceptance-mapping, or topology defects. Do not overwrite the live manifest.
+     A node holding a `worker-decision-required` may be named with `--blocked-node`: when the amendment resumes it
+     (authoring or review), accept retires the decision (recorded as `superseded_decision`); a rejected amendment keeps it.
 4. Re-run `omac dag run <manifest>`. Completed nodes are reused; the remainder
    continues from current state.
 

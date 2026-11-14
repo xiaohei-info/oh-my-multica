@@ -473,6 +473,12 @@ happens: `_prepare_apply_ledger` writes `superseded_decision` (reason code, gate
 the node's apply-ledger entry in the same atomic manifest save as the amended definition, ahead of the Store recovery, so a
 crash resumes from the ledger and nothing is replayed. Defect-reporter nodes keep their separate rule (7.5).
 
+*Admission at propose.* `pipeline/amendment.py::_validate_amendment_admission` runs before any proposal exists, so it cannot know whether the
+amendment will recover the named node. It therefore admits a `worker-decision-required` on a `--blocked-node` and leaves the
+decision to `validate_affected`, which runs on the produced proposal (the guard of `_run_amendment_task`) and again at accept. Admitting
+it earlier than #193 did changes nothing on the platform: the decision is retired only by the applied recovery, so a rejected,
+unconfirmed or non-recovering amendment keeps it.
+
 *Amendment identity (`amendment-identity-conflict`).* The identity is `amend-<manifest stem>`, so every later proposal on the
 same manifest meets the historical issue and used to exit 20 until a person added `--new-attempt --supersedes-issue-id`.
 `pipeline/amendment.py::superseded_amendment_problem` (pure) already defined "terminal" for `--supersedes-issue-id`
