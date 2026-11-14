@@ -62,6 +62,18 @@ structured stdout report is the current recovery fact.
   the tick reports `held` with the `omac node release` command. Prepare the live environment, release it, and it
   dispatches like any other node.
 
+### Sync failures and stopping
+
+- `dag run|tick` checks at start and before every round that the checkout is on a branch with an upstream. A detached HEAD or
+  a branch without upstream can commit but never push, so the command exits 20 before dispatching (report
+  `reason: repository_not_on_branch`, `next_actions` are copyable `git -C <repo> ...` commands): put the checkout back on its
+  branch (or `git branch --set-upstream-to=origin/<branch> <branch>`) and rerun the same command.
+- After convergence the run exits 0 only once the state is pushed; otherwise exit 20 (`manifest_sync_failed`), repair and rerun.
+- The final-acceptance wait after convergence logs `acceptance_running`; the first SIGINT/SIGTERM stops it (exit 10, rerun
+  continues), no second signal needed.
+- An upstream in bounded rework (CI / review / Worker revision) does not block its downstream, which just keeps waiting; only
+  an upstream that is itself `blocked`/`failed` cascades.
+
 ### Upstream defect feedback
 
 After a Worker (or a Reviewer whose every blocker names a finished upstream node as `owner`) reports `upstream-defect`, the

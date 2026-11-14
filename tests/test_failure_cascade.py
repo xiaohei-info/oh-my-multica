@@ -79,3 +79,28 @@ def test_blocked_node_that_failed_itself_stays_blocked_for_an_explicit_retry(tmp
 
         assert loop._maybe_unblock(store, manifest, path) is False
         assert manifest.nodes["waiting"].status == "blocked"
+
+
+def test_upstream_in_bounded_rework_only_keeps_its_downstream_waiting(tmp_path):
+    manifest = Manifest(meta={}, nodes={
+        "reworked-upstream": Node(id="reworked-upstream", worker="alice", status="in_progress"),
+        "dependent": Node(id="dependent", worker="bob", blocked_by=["reworked-upstream"], status="todo"),
+    })
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+
+    newly_blocked = loop._mark_downstream_blocked(manifest, path, {"reworked-upstream"})
+
+    assert newly_blocked == set()
+    assert manifest.nodes["dependent"].status == "todo"
+
+
+def test_upstream_that_became_blocked_after_rework_budget_cascades(tmp_path):
+    manifest = Manifest(meta={}, nodes={
+        "spent-upstream": Node(id="spent-upstream", worker="alice", status="blocked"),
+        "dependent": Node(id="dependent", worker="bob", blocked_by=["spent-upstream"], status="todo"),
+    })
+    path = str(tmp_path / "dag.yaml")
+    save_manifest(manifest, path)
+
+    assert loop._mark_downstream_blocked(manifest, path, {"spent-upstream"}) == {"dependent"}

@@ -25,7 +25,7 @@ from ...core.graph import node_waves
 from ...core.lint import lint
 from ...core.manifest import load_manifest, manifest_write_lock
 from pathlib import Path
-from ...core.gitsync import ensure_config_synced
+from ...core.gitsync import ensure_config_synced, ensure_on_branch, ensure_state_pushed
 from ...engines import engine_from_config
 from ...errors import NeedsDecision, ValidationError
 from ...i18n import current_language, ui
@@ -727,12 +727,11 @@ def _maybe_acceptance(args, engine, config, manifest):
             f"Could not parse the acceptance document: {exc}",
             f"验收文档解析失败: {exc}"))
 
-    import time as _time
-    outcome = run_acceptance_loop(
+    log.info(logsetup.EVT_ACCEPTANCE_RUNNING, kind="develop", acceptance_doc=os.path.basename(doc_path))
+    return run_acceptance_loop(
         engine, manifest, manifest_path, doc, config, no_acceptance=False,
-        poll=lambda: _time.sleep(_poll_interval(config)),
+        poll=lambda: _park_between_ticks(_poll_interval(config), stop_raises=True),
     )
-    return outcome
 
 
 def _configured_acceptance_path(manifest, manifest_path: str) -> str:
@@ -773,13 +772,18 @@ def _node_statuses(manifest) -> dict:
     return {key: node.status for key, node in manifest.nodes.items()}
 
 
-def _park_between_ticks(seconds: float) -> None:
-    """Sleep between two ticks that changed nothing. A stop signal ends the sleep: no write is in flight between ticks."""
+def _park_between_ticks(seconds: float, *, stop_raises: bool = False) -> None:
+    """Sleep between two ticks that changed nothing. A stop signal ends the sleep: no write is in flight between ticks.
+
+    ``stop_raises``: the caller is a nested wait (the final acceptance) that cannot return early, so a stop signal
+    surfaces as ``_StopRequested`` instead of being swallowed.
+    """
     _STOP.parked = True
     try:
         time.sleep(seconds)
     except _StopRequested:
-        pass
+        if stop_raises:
+            raise
     finally:
         _STOP.parked = False
 
@@ -939,8 +943,17 @@ def _wait_for_decision_change(args, waiting: _Waiting, clock: _Clock) -> Optiona
 
 
 def _finish_converged(args, engine, config, manifest, retry_limits, max_parallel, last_result) -> int:
-    """The inner loop converged: run the final acceptance loop if there is one, then report."""
-    acceptance = _maybe_acceptance(args, engine, config, manifest)
+    """The inner loop converged: run the final acceptance loop if there is one, then report.
+
+    Exit 0 only once the state has reached git (`ensure_state_pushed`); a stop signal during the acceptance wait leaves
+    with exit 10 (rerun continues) instead of sleeping on until a second signal.
+    """
+    ensure_state_pushed(args.manifest, engine_type=engine.store.config.engine_type)
+    try:
+        acceptance = _maybe_acceptance(args, engine, config, manifest)
+    except _StopRequested:
+        _emit(last_result, manifest, args)
+        return exit_codes.IN_PROGRESS
     if acceptance is None:
         _emit(last_result, manifest, args)
         return exit_codes.OK
@@ -1021,8 +1034,9 @@ def _loop_or_single_locked(args, single_round: bool, clock: Optional[_Clock] = N
     engine, _ = _assemble_engine(args)
     # 派单前:真实引擎下自动把 config 同步到 main,否则隔离区 agent clone 后读不到。
     config_path = _config_path_for_manifest(args.manifest)
-    ensure_config_synced(config_path, branch="main",
-                         engine_type=engine.store.config.engine_type)
+    engine_type = engine.store.config.engine_type
+    ensure_on_branch(engine_type=engine_type)
+    ensure_config_synced(config_path, branch="main", engine_type=engine_type)
     config = load_config(config_path)
     if system_resume:                          # a code-built amendment left half applied: finish it, then re-check
         resume_system_amendment(engine, manifest, args.manifest, config)
@@ -1044,6 +1058,7 @@ def _loop_or_single_locked(args, single_round: bool, clock: Optional[_Clock] = N
 
     poll = _poll_interval(config)
     while True:
+        ensure_on_branch(engine_type=engine_type)       # before any dispatch of this round: never run on unsyncable state
         manifest = _apply_queued_writes(manifest, args.manifest)
         before = _node_statuses(manifest)
         last_result = _scheduled_tick(

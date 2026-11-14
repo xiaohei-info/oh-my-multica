@@ -280,6 +280,8 @@ class WaitingRun:
         engine = SimpleNamespace(store=SimpleNamespace(config=SimpleNamespace(engine_type="multica")))
         monkeypatch.setattr(dag_cmd, "_assemble_engine", lambda _args: (engine, None))
         monkeypatch.setattr(dag_cmd, "ensure_config_synced", lambda *_a, **_k: None)
+        monkeypatch.setattr(dag_cmd, "ensure_on_branch", lambda *_a, **_k: "main")
+        monkeypatch.setattr(dag_cmd, "ensure_state_pushed", lambda *_a, **_k: None)
         monkeypatch.setattr(dag_cmd, "_scheduled_tick", tick)
         monkeypatch.setattr(dag_cmd, "_emit", lambda *_a, **_k: None)
         monkeypatch.setattr(dag_cmd, "log", self.events)
@@ -493,3 +495,74 @@ def test_the_final_acceptance_loop_waits_the_default_poll_interval_when_none_is_
     from omac.cli.commands.dag import _poll_interval
 
     assert _poll_interval({}) == 30 and _poll_interval({"defaults": {}}) == 30 and _poll_interval({"defaults": {"poll_interval": 5}}) == 5
+
+
+def test_a_checkout_off_its_branch_stops_the_run_before_any_tick_with_exit_20(tmp_path, monkeypatch):
+    from omac.errors import NeedsDecision
+
+    run = _scripted_run(tmp_path, monkeypatch, ["done"])
+
+    def detached(*_a, **_k):
+        raise NeedsDecision("detached", report={"reason": "repository_not_on_branch"})
+
+    monkeypatch.setattr(run.dag_cmd, "ensure_on_branch", detached)
+
+    with pytest.raises(NeedsDecision) as exc:
+        run.run()
+
+    assert exc.value.report["reason"] == "repository_not_on_branch" and run.ticks == 0
+
+
+def test_the_branch_is_checked_again_before_every_round(tmp_path, monkeypatch):
+    from omac.errors import NeedsDecision
+
+    run = _scripted_run(tmp_path, monkeypatch, ["moves", "moves", "done"])
+    checks = []
+
+    def check(*_a, **_k):
+        checks.append(run.ticks)
+        if run.ticks == 1:                      # HEAD was detached while round 1 ran
+            raise NeedsDecision("detached", report={"reason": "repository_not_on_branch"})
+        return "main"
+
+    monkeypatch.setattr(run.dag_cmd, "ensure_on_branch", check)
+
+    with pytest.raises(NeedsDecision):
+        run.run()
+
+    assert run.ticks == 1 and checks == [0, 0, 1]
+
+
+def test_a_converged_run_leaves_with_exit_0_only_after_the_final_state_push_is_confirmed(tmp_path, monkeypatch):
+    from omac.errors import NeedsDecision
+
+    run = _scripted_run(tmp_path, monkeypatch, ["done"])
+
+    def unpushed(*_a, **_k):
+        raise NeedsDecision("unpushed", report={"reason": "manifest_sync_failed"})
+
+    monkeypatch.setattr(run.dag_cmd, "ensure_state_pushed", unpushed)
+
+    with pytest.raises(NeedsDecision) as exc:
+        run.run()
+
+    assert exc.value.report["reason"] == "manifest_sync_failed"
+
+
+def test_a_stop_signal_during_the_final_acceptance_wait_leaves_with_exit_10_not_a_second_signal(tmp_path, monkeypatch):
+    run = _scripted_run(tmp_path, monkeypatch, ["done"])
+
+    def acceptance(*_a, **_k):
+        run.dag_cmd._STOP.requested = True
+        run.dag_cmd._park_between_ticks(1, stop_raises=True)   # the sleep raises like the signal handler does
+        raise AssertionError("the acceptance wait must have been interrupted")
+
+    def interrupted_sleep(_seconds):
+        raise run.dag_cmd._StopRequested
+
+    monkeypatch.setattr(run.dag_cmd, "_maybe_acceptance", acceptance)
+    monkeypatch.setattr(run.dag_cmd, "time", SimpleNamespace(sleep=interrupted_sleep, monotonic=lambda: 0.0))
+
+    assert run.run() == exit_codes.IN_PROGRESS
+    with run.lock(run.path):
+        pass

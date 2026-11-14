@@ -755,3 +755,58 @@ def test_two_machines_advancing_different_nodes_merge_without_conflict(tmp_path)
     merged = load_manifest(path_a)
     assert (merged.nodes["n0"].status, merged.nodes["n3"].status) == ("done", "in_progress")
     assert _out(clones["a"], "status", "--porcelain").strip() == ""
+
+
+# ==================== 分支校验 + 收敛出口门 ====================
+
+def test_ensure_on_branch_accepts_a_tracking_branch(tmp_path):
+    work = _make_repo(tmp_path)
+    assert gitsync.ensure_on_branch(str(work), engine_type="multica") == "main"
+
+
+def test_ensure_on_branch_refuses_detached_head_with_copyable_actions(tmp_path):
+    work = _make_repo(tmp_path)
+    _git(work, "checkout", "--detach")
+
+    with pytest.raises(NeedsDecision) as exc:
+        gitsync.ensure_on_branch(str(work), engine_type="multica")
+
+    assert exc.value.report["reason"] == "repository_not_on_branch"
+    assert exc.value.report["branch"] is None
+    assert exc.value.report["next_actions"][0].startswith("git -C ")
+
+
+def test_ensure_on_branch_refuses_a_branch_without_upstream(tmp_path):
+    work = _make_repo(tmp_path)
+    _git(work, "checkout", "-b", "local-only")
+
+    with pytest.raises(NeedsDecision) as exc:
+        gitsync.ensure_on_branch(str(work), engine_type="multica")
+
+    assert exc.value.report["branch"] == "local-only"
+    assert "--set-upstream-to=origin/local-only" in exc.value.report["next_actions"][-1]
+
+
+def test_ensure_on_branch_is_a_noop_when_sync_is_off(tmp_path, monkeypatch):
+    monkeypatch.setenv("OMAC_GIT_SYNC", "0")
+    work = _make_repo(tmp_path)
+    _git(work, "checkout", "--detach")
+    assert gitsync.ensure_on_branch(str(work), engine_type="multica") == ""
+
+
+def test_ensure_state_pushed_refuses_exit_with_unpushed_manifest_then_passes_once_pushed(tmp_path):
+    work = _make_repo(tmp_path)
+    manifest = work / ".omac" / "dag.yaml"
+    manifest.parent.mkdir()
+    manifest.write_text("a: 1\n")
+    _git(work, "add", ".omac/dag.yaml")
+    _git(work, "commit", "-m", "state")
+    _git(work, "remote", "set-url", "origin", str(tmp_path / "gone.git"))
+
+    with pytest.raises(NeedsDecision) as exc:
+        gitsync.ensure_state_pushed(str(manifest), repo_root=str(work), engine_type="multica")
+    assert exc.value.report["reason"] == "manifest_sync_failed"
+
+    _git(work, "remote", "set-url", "origin", str(tmp_path / "remote.git"))
+    gitsync.ensure_state_pushed(str(manifest), repo_root=str(work), engine_type="multica")
+    assert not _unpushed(work, ".omac/dag.yaml")

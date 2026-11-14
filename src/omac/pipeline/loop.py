@@ -4155,7 +4155,12 @@ def collect_results(
 def _mark_downstream_blocked(
     manifest: Manifest, manifest_path: str, failed: Set[str],
 ) -> Set[str]:
-    """失败隔离:将失败节点的(传递)下游标记为 blocked。返回新标记的节点集合。"""
+    """失败隔离:将失败节点的(传递)下游标记为 blocked。返回新标记的节点集合。
+
+    只有节点自身处于待决策状态(`graph.NEEDS_DECISION`)才连坐:有界回退(CI/评审/worker revision)里的上游
+    仍是进行中节点,本轮上报了原因也只让下游保持等待(下游未满足依赖,不会就绪),不会被标 blocked。
+    """
+    failed = {key for key in failed if manifest.nodes[key].status in graph.NEEDS_DECISION}
     snapshot = _build_snapshot(manifest)
     downstream = graph.downstream_of(snapshot, failed)
     newly_blocked: Set[str] = set()

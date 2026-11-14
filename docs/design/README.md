@@ -88,7 +88,11 @@ it from git once.
   changes; nothing is aborted), `rebase_conflict` (aborted, remote untouched), `rebase_abort`, `push` / `push_retry`. The
   local commit is kept and the push backs off (10 s doubling to 300 s); when the same step keeps failing until the backoff
   sits at its cap, the tick raises `NeedsDecision` (exit 20) with the step, git's error and repair commands instead of
-  warning forever. The count is per process: one `dag tick` per process warns each time. The system-amendment file
+  warning forever. The count is per process: one `dag tick` per process warns each time. `dag run|tick` also checks
+  before every round (and at start) that the checkout is on a branch with an upstream; a detached HEAD or a branch
+  without upstream can commit but never push, so the run stops before dispatching with `NeedsDecision` (exit 20,
+  `reason: repository_not_on_branch`, copyable `git -C <repo> ...` actions). A converged run exits 0 only after
+  `ensure_state_pushed` confirmed the manifest state reached the remote (else exit 20, `manifest_sync_failed`). The system-amendment file
   (`.omac/<name>.system-amendment.yaml`, 7.5) is local and not synced.
 * **Bounded size.** A node's state file is limited to 64 KiB at save time (the error says to keep large payloads as
   platform attachments). The definition holds no run history; the amendment ledger in `meta` is replaced per amendment.
@@ -229,6 +233,10 @@ reconcile → result collection (collect_results) → evidence / CI / merge gate
   low-frequency full audit.
 * **result collection** walks each running node through staged functions (`worker blocker`, `handoff convergence`,
   `worker handoff`, `review phase`, then `in_progress | in_review | merging` collectors).
+* **failure isolation** blocks the downstream of a node only when that node itself is in a needs-decision state; an upstream in
+  bounded rework (CI / review / Worker revision) is still running and only keeps its downstream waiting.
+* **final acceptance** runs inside `dag run` after convergence (`acceptance_running` event); its waits honour the first
+  SIGINT/SIGTERM (exit 10, rerun continues) instead of ignoring it until a second signal.
 * **Pure decisions** live in the `decide_*` modules (7.3.1): facts in, a named action or an ordered plan of effects out,
   table-tested without a platform. The shell reads, decides, then applies the plan.
 * **Merge delivery** is a state machine on `merge_request_state` (`None → intent → requested → observed MERGED`). A marker

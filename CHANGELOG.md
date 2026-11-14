@@ -15,6 +15,15 @@ This file records public changes to oh-my-multica. The format follows
   `validate_affected`, which runs when the proposal is produced and again at accept: the amendment must resume the node
   (authoring or review) or it is refused, and a rejected or unapplied amendment leaves the original decision untouched.
   Other decision reasons keep their own recovery path.
+- **An upstream node in bounded rework no longer blocks its downstream.** A CI/review/Worker revision reported a failure reason,
+  and the failure isolation blocked the downstream (`cascade_blocked`) although the upstream was still running. Only an upstream
+  that is itself `blocked`/`failed` cascades now; a reworked upstream just keeps its downstream waiting.
+- **`dag run|tick` stops when the checkout cannot sync.** At start and before every round it checks that HEAD is on a branch with
+  an upstream; a detached HEAD or a branch without upstream exits 20 (`reason: repository_not_on_branch`, copyable
+  `git -C <repo> ...` actions) before dispatching, instead of logging `manifest_sync_failed` every round for hours.
+- **A converged `dag run` exits cleanly.** Exit 0 is returned only after the manifest state is confirmed pushed (else exit 20,
+  `manifest_sync_failed`). The final acceptance wait now logs `acceptance_running` and honours the first SIGINT/SIGTERM
+  (exit 10; rerun continues) instead of sleeping until a second signal.
 - **A node with many upstream nodes no longer crashes `dag run` on the 8KB metadata limit.** `source_refs` over 2KB is stored as an
   attachment reference and read back transparently; a metadata write over budget now blocks only that node (`metadata-budget`,
   `omac node retry`) instead of ending the run.
