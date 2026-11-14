@@ -91,3 +91,42 @@ def test_oversized_value_without_an_attachment_route_is_a_node_level_budget_erro
     with pytest.raises(MetadataBudgetError) as caught:
         store._set_metadata("issue-1", "artifacts", ["x" * 9000])
     assert isinstance(caught.value, PlatformError)
+
+
+def _upstream_ids(count: int) -> list:
+    return [f"fix.e2e-v01-background.{n:06x}" for n in range(count)]
+
+
+def test_blocked_by_of_hundreds_of_upstream_nodes_goes_to_an_attachment_and_reads_back(case):
+    store, metadata, _, _, _, publications, issue = case
+    upstream = _upstream_ids(400)
+    assert len(json.dumps(upstream).encode()) > 8192
+
+    store._set_metadata("issue-1", "blocked_by", upstream)
+
+    assert json.loads(metadata["blocked_by"])["schema"] == "omac.control-payload/v1"
+    assert store._issue_to_control_projection(issue(), "ws").work_item.blocked_by == upstream
+    store._set_metadata("issue-1", "blocked_by", upstream)
+    assert len(publications) == 1  # an unchanged re-write publishes nothing new
+
+
+def test_small_and_legacy_blocked_by_stay_readable_inline(case):
+    store, metadata, _, _, _, publications, issue = case
+
+    store._set_metadata("issue-1", "blocked_by", ["a", "b"])
+    assert json.loads(metadata["blocked_by"]) == ["a", "b"] and not publications
+    metadata["blocked_by"] = json.dumps(_upstream_ids(60))  # an old inline value
+    assert store._issue_to_control_projection(issue(), "ws").work_item.blocked_by == _upstream_ids(60)
+
+
+def test_blocked_by_reference_with_a_changed_digest_fails_closed(case):
+    from omac.errors import PlatformError
+
+    store, metadata, _, _, _, _, issue = case
+    store._set_metadata("issue-1", "blocked_by", _upstream_ids(400))
+    wrapper = json.loads(metadata["blocked_by"])
+    wrapper["ref"]["sha256"] = "0" * 64
+    metadata["blocked_by"] = json.dumps(wrapper)
+
+    with pytest.raises(PlatformError):
+        store._issue_to_control_projection(issue(), "ws")

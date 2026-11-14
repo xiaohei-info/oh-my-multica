@@ -168,11 +168,12 @@ def _is_metadata_budget_rejection(error: Exception) -> bool:
 _HANDOFF_CHECKPOINT_FIELDS = frozenset({"state", "target_run_id", "terminal_observed_at"})
 # Control facts that may move to an immutable attachment (wrapper ref in metadata) when the
 # 8KB aggregate budget needs room; the one reader is `_json_control_metadata`.
+BLOCKED_BY_KEY = "blocked_by"
 _CONTROL_REF_KEYS = frozenset({
-    WORKER_HANDOFF_KEY, DELIVERY_IDENTITY_KEY, REVIEWER_RUN_BASELINE_KEY, SOURCE_REFS_KEY})
+    WORKER_HANDOFF_KEY, DELIVERY_IDENTITY_KEY, REVIEWER_RUN_BASELINE_KEY, SOURCE_REFS_KEY, BLOCKED_BY_KEY})
 # Facts that grow with the DAG (source_refs: one entry per upstream node) move to an attachment above this size
 # even when the aggregate budget would still fit, so one node's fan-in cannot crowd out the other control facts.
-_ALWAYS_BOUNDED_BYTES = {SOURCE_REFS_KEY: 2048}
+_ALWAYS_BOUNDED_BYTES = {SOURCE_REFS_KEY: 2048, BLOCKED_BY_KEY: 2048}
 
 _INVALID_OBJECT_METADATA_SCHEMA = "omac.invalid-object-metadata/v1"
 
@@ -1003,14 +1004,9 @@ class MulticaStore(WorkItemStore):
             raw_assignee = raw_assignee.get("id") or raw_assignee.get("identifier")
         return str(raw_assignee) if raw_assignee else None
 
-    @staticmethod
-    def _blocked_by_and_wave(metadata: Dict) -> Tuple[List[Any], Optional[int]]:
-        blocked_by = metadata.get("blocked_by", [])
-        if isinstance(blocked_by, str):
-            try:
-                blocked_by = json.loads(blocked_by)
-            except Exception:
-                blocked_by = []
+    def _blocked_by_and_wave(self, item_id: str, metadata: Dict) -> Tuple[List[Any], Optional[int]]:
+        # Inline (legacy / small) or an attachment reference; a damaged reference raises PlatformError (fail closed).
+        blocked_by = self._json_control_metadata(item_id, metadata, BLOCKED_BY_KEY) or []
         wave = metadata.get("wave")
         if isinstance(wave, str):
             try:
@@ -1049,7 +1045,7 @@ class MulticaStore(WorkItemStore):
     ) -> WorkItemControlProjection:
         """Map one Issue envelope without downloading attachment-backed bodies."""
         metadata = issue_data.get("metadata", {})
-        blocked_by, wave = self._blocked_by_and_wave(metadata)
+        blocked_by, wave = self._blocked_by_and_wave(issue_data["id"], metadata)
         payloads = self._payload_ref_fields(metadata)
         review_ledger_ref = self._json_metadata(metadata, REVIEW_LEDGER_REF_KEY)
         review_obligations_ref = self._json_metadata(metadata, REVIEW_OBLIGATIONS_REF_KEY)
@@ -1446,7 +1442,7 @@ class MulticaStore(WorkItemStore):
         if reviewer:
             self._set_metadata(issue_id, "reviewer", reviewer)
         if blocked_by:
-            self._set_metadata(issue_id, "blocked_by", blocked_by)
+            self._set_metadata(issue_id, BLOCKED_BY_KEY, blocked_by)
         if wave is not None:
             self._set_metadata(issue_id, "wave", str(wave))
 
@@ -1854,7 +1850,7 @@ class MulticaStore(WorkItemStore):
         inline = sorted(
             (
                 k for k in _CONTROL_REF_KEYS - {key}
-                if _decode_json_metadata_value(metadata.get(k)) not in (None, {})
+                if _decode_json_metadata_value(metadata.get(k)) not in (None, {}, [])
                 and not _is_control_ref(metadata.get(k))
             ),
             key=lambda k: -len(encode_metadata_value(metadata[k])),
