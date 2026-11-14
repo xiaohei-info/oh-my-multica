@@ -199,6 +199,8 @@ def test_dag_tick_passes_configured_retry_limits(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(dag_cmd, "tick", fake_tick)
     monkeypatch.setattr(dag_cmd, "ensure_config_synced", lambda *a, **k: None)   # git push of the config: not under test
+    monkeypatch.setattr(dag_cmd, "ensure_on_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(dag_cmd, "ensure_state_pushed", lambda *_a, **_k: None)
 
     assert main(["dag", "tick", str(manifest)]) == exit_codes.OK
     assert seen["retry_limits"] == {"worker": 3, "ci": 0, "review": 1, "merge": 2, "environment": 1}

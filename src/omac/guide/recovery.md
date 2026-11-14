@@ -47,6 +47,15 @@
 - `dispatch.hold_live: true`：就绪的 `contract.evidence_mode: live` 节点由代码自动挂起（每个节点只挂一次），
   tick 报告 `held` 并给出 `omac node release` 命令；准备好真实环境后 release，之后与普通节点相同。
 
+### 同步失败与停止
+
+- `dag run|tick` 启动时和每轮派单前都检查工作区在带 upstream 的分支上。detached HEAD 或分支没有 upstream 时本地只能提交、推不上去，
+  命令在派发前 exit 20（报告 `reason: repository_not_on_branch`，`next_actions` 是可复制的 `git -C <repo> ...`）：
+  把工作区切回分支（或 `git branch --set-upstream-to=origin/<分支> <分支>`）后重跑同一条命令。
+- 收敛后只有状态已推到远程才 exit 0，否则 exit 20（`manifest_sync_failed`，修复后重跑）。
+- 收敛后的最终验收等待会打 `acceptance_running` 事件；第一次 SIGINT/SIGTERM 即停（exit 10，重跑续跑），不必发第二次。
+- 上游在有界回退（CI / 评审 / worker revision）时不会把下游标 `blocked`，下游只是继续等待；上游自己 `blocked`/`failed` 才连坐。
+
 ### 上游缺陷回流
 
 Worker（或所有 blocker 的 `owner` 都指向已完成上游的 Reviewer）上报 `upstream-defect` 后，持锁的 `omac dag run|tick`

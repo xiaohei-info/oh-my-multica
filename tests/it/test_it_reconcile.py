@@ -142,6 +142,8 @@ def test_the_online_dag_commands_map_a_reconcile_error_to_its_exit_code_without_
     before = open(path, "rb").read()
     kit.monkeypatch.setattr(dag, "_assemble_engine", lambda _args: (kit.engine, kit.store.config))
     kit.monkeypatch.setattr(dag, "ensure_config_synced", lambda *a, **k: None)
+    kit.monkeypatch.setattr(dag, "ensure_on_branch", lambda *_a, **_k: "main")
+    kit.monkeypatch.setattr(dag, "ensure_state_pushed", lambda *_a, **_k: None)
     kit.monkeypatch.setattr(dag, "load_config", lambda _path: {})
     kit.monkeypatch.setattr(dag, "_load_config_for_manifest", lambda _path: {})
     commits = []

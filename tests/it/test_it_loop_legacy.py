@@ -64,6 +64,8 @@ def test_runner_persists_the_legacy_convergence_decision_once_without_dispatch(k
     from omac.cli.commands import dag as dag_cmd
     kit.monkeypatch.setattr(dag_cmd, "_assemble_engine", lambda _args: (kit.engine, None))
     kit.monkeypatch.setattr(dag_cmd, "ensure_config_synced", lambda *_a, **_k: None)
+    kit.monkeypatch.setattr(dag_cmd, "ensure_on_branch", lambda *_a, **_k: "main")
+    kit.monkeypatch.setattr(dag_cmd, "ensure_state_pushed", lambda *_a, **_k: None)
     kit.monkeypatch.setattr(dag_cmd, "load_config", lambda _path: {})
     kit.monkeypatch.setattr(dag_cmd, "_emit", lambda *_a, **_k: None)
     args = SimpleNamespace(manifest=path, max_parallel=1, max_rounds=None, max_minutes=None, output="json")

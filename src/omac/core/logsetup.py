@@ -33,6 +33,7 @@ EVT_HUMAN_GATE_WAIT = "human_gate_wait"  # confirm 门:amendment 暂停等人确
 EVT_CASCADE_BLOCKED = "cascade_blocked"  # 失败连坐:下游被标 blocked
 EVT_UNBLOCK = "unblock"                  # 上游修复:blocked 下游解封回 todo
 EVT_CONVERGED = "converged"              # loop 出口:全部 done
+EVT_ACCEPTANCE_RUNNING = "acceptance_running"  # 收敛后进入最终验收外层循环(之后的等待是验收,不是卡住)
 EVT_NEEDS_DECISION = "needs_decision"    # loop 出口:有失败/受阻,需决策
 EVT_HELD = "held"                        # loop 出口:只剩被 hold 的节点及其下游,等 release
 EVT_AUTO_HOLD = "auto_hold"              # dispatch.hold_live:就绪的 live 节点由代码挂起,等 `omac node release`

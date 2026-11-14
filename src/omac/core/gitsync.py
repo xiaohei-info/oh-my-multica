@@ -409,6 +409,55 @@ def commit_files(paths, message: str, repo_root: str = ".",
     return True
 
 
+def _repo_next_actions(repo: str) -> list:
+    return [f"git -C {repo} status", f"git -C {repo} branch -a", f"git -C {repo} switch <branch>"]
+
+
+def ensure_on_branch(repo_root: str = ".", engine_type=None) -> str:
+    """Fail closed unless the checkout is on a branch that tracks an upstream; returns the branch name.
+
+    A detached HEAD (or a branch without upstream) can commit state but never push it, so a Loop that carries on
+    would run for hours with state that other machines and agents never see. Sync disabled: no-op, returns "".
+    """
+    if not sync_enabled(engine_type):
+        return ""
+    repo = os.path.abspath(repo_root)
+    branch = _run(repo_root, "symbolic-ref", "-q", "--short", "HEAD")
+    name = branch.stdout.strip() if branch.returncode == 0 else ""
+    upstream = _run(repo_root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}") if name else None
+    if name and upstream.returncode == 0:
+        return name
+    why = (ui("HEAD is detached", "HEAD 处于 detached 状态") if not name else
+           ui(f"branch '{name}' has no upstream", f"分支 '{name}' 没有 upstream"))
+    actions = _repo_next_actions(repo)
+    if name:
+        actions = [actions[0], f"git -C {repo} branch --set-upstream-to=origin/{name} {name}"]
+    raise NeedsDecision(ui(
+        f"OMAC state cannot be synced to git: {why} in {repo}. Nothing was dispatched.\n"
+        f"  Inspect with `{actions[0]}`, put the checkout back on its branch (`{actions[-1]}`), "
+        f"then rerun the same omac command.",
+        f"OMAC 状态无法同步到 git:{repo} 的 {why}。本次未派发任何节点。\n"
+        f"  用 `{actions[0]}` 检查,把工作区切回分支(`{actions[-1]}`)后重跑同一条 omac 命令。"),
+        report={"reason": "repository_not_on_branch", "repository": repo,
+                "branch": name or None, "next_actions": actions})
+
+
+def ensure_state_pushed(path: str, repo_root: str = ".", engine_type=None) -> None:
+    """Exit gate of a converged run: the manifest state must have reached the remote, else NeedsDecision (exit 20)."""
+    if not sync_enabled(engine_type):
+        return
+    ensure_on_branch(repo_root, engine_type)
+    relative = _repo_relative_paths(repo_root, [path])
+    dirty = bool(_run(repo_root, "status", "--porcelain", "--", *relative).stdout.strip())
+    if not dirty and not _has_unpushed_files(repo_root, relative):
+        return
+    if not dirty and _run(repo_root, "push").returncode == 0:
+        return
+    failure = SyncFailure("push", ui("state is not pushed", "状态尚未推送"), ui(
+        "Converged, but the final state never reached the remote.", "DAG 已收敛,但最终状态没有推送到远程。"))
+    _raise_sync_stuck(repo_root, failure, 1)
+
+
 def _raise_sync_stuck(repo_root: str, failure: SyncFailure, failures) -> None:
     repo = os.path.abspath(repo_root)
     actions = [f"git -C {repo} status", f"git -C {repo} log --oneline @{{upstream}}..HEAD", f"git -C {repo} push"]
