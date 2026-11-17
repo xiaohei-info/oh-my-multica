@@ -23,14 +23,16 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 import yaml
 
 from ..core.acceptance import AcceptanceDoc, load_acceptance_doc_file
 from ..core.config import (
-    DEFAULT_MAX_ROUNDS, get_value, resolve_no_submit_runs, resolve_retry,
+    DEFAULT_MAX_ROUNDS, DEFAULT_NO_SUBMIT_RUNS, get_value, resolve_no_submit_runs, resolve_retry,
 )
+from ..core import logsetup
 from ..core.evidence import validate_acceptance_results
 from ..core.lint import lint_increment
 from ..core.manifest import Manifest, Node, _dump_contract, loads_manifest
@@ -43,7 +45,10 @@ from ..pipeline import loop as loop_mod
 from .defects import merge_acceptance_increment, recurred_flows
 from .tasks import AuthoringTaskSpec, create_authoring_task
 from .apply import Ports, apply
+from .decide_reviewer import NO_SUBMIT_GRACE_SECONDS_DEFAULT, NoSubmitAction, decide_no_submit, no_submit_grace
 from .decide_effects import Assign, UpdateStatus, Wake
+
+log = logsetup.get_logger(__name__)
 
 
 @dataclass
@@ -177,6 +182,7 @@ class _AcceptanceRun:
     source_refs: List[Dict[str, Any]]
     project_name: str
     poll: Callable[[], None]
+    no_submit_runs: int
 
     def scope(self, round_num: int) -> str:
         return f"{self.plan_id}-r{round_num}" if self.plan_id else f"r{round_num}"
@@ -188,7 +194,7 @@ def _acceptance_run(engine, manifest, manifest_path, acceptance_doc, config, acc
     reviewers = _reviewers(config) or _collect_workers(manifest)
     plan_id = manifest.meta.get("plan_id")
     resolve_retry(config)  # 校验 retry 配置合法性(副作用)
-    resolve_no_submit_runs(config)  # 同上:reviewer no-submit 续跑预算
+    no_submit_runs = resolve_no_submit_runs(config)  # 作者 Run 结束未提交的续跑预算(与 reviewer 共用)
     return _AcceptanceRun(
         engine=engine, manifest=manifest, manifest_path=manifest_path, doc=acceptance_doc,
         config=config, language=language, reviewers=reviewers,
@@ -202,6 +208,7 @@ def _acceptance_run(engine, manifest, manifest_path, acceptance_doc, config, acc
             manifest.meta.get("title") or manifest.meta.get("name") or plan_id
             or ui("Current project", "当前项目", language=language)),
         poll=poll,
+        no_submit_runs=no_submit_runs,
     )
 
 
@@ -303,7 +310,8 @@ def _run_acceptance_round(run: _AcceptanceRun, round_num: int):
     """步骤 1–2:派发 final-acceptance 任务并做左移校验。返回 (acceptor, item_id, results)。"""
     acceptor = _pick_acceptor(run, round_num)
     acceptance_item_id = _dispatch_and_wait(
-        run.engine, _final_acceptance_spec(run, round_num, acceptor), poll=run.poll)
+        run.engine, _final_acceptance_spec(run, round_num, acceptor), poll=run.poll,
+        no_submit_runs=run.no_submit_runs, language=run.language)
     results = _read_acceptance_results(run.engine.store, acceptance_item_id)
     validation_errors = validate_acceptance_results(run.doc, results)
     if validation_errors:
@@ -334,7 +342,7 @@ def _merge_round_increment(run: _AcceptanceRun, round_num: int, failed_items: Li
     decompose_item_id = _dispatch_and_wait(
         run.engine,
         _incremental_decompose_spec(run, round_num, failed_items, acceptance_item_id),
-        poll=run.poll,
+        poll=run.poll, no_submit_runs=run.no_submit_runs, language=run.language,
     )
     increment = _read_increment(run.engine.store, decompose_item_id)
     if not increment or not increment.nodes:
@@ -408,12 +416,17 @@ def _dispatch_and_wait(
     *,
     poll: Callable[[], None],
     max_ticks: int = 10000,
+    no_submit_runs: int = DEFAULT_NO_SUBMIT_RUNS,
+    language: Optional[str] = None,
+    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> str:
     """派发一个非 develop 任务(kind×authoring),等终态,返回 item_id。
 
     final-acceptance:创建后把验收文档挂到 contract.acceptance_doc 上,供
     work submit 路径的左移校验(_validate_final_acceptance_authoring)读取。
     decompose:作者提交后状态落在 IN_REVIEW(待审),一并视为终态。
+    作者 Run 已结束、过了宽限期而事项仍未进入终态(没提交):用同一 Agent 续跑(沿用原会话),
+    消耗 retry.no_submit_runs 预算;预算用完抛 NeedsDecision,绝不无限等、也不放行。
     """
     store = engine.store
     runtime = engine.runtime
@@ -428,12 +441,53 @@ def _dispatch_and_wait(
     # decompose 作者提交后落在 IN_REVIEW(待审),视为终态一并退出
     terminal = (WorkItemStatus.DONE, WorkItemStatus.FAILED,
                 WorkItemStatus.BLOCKED, WorkItemStatus.IN_REVIEW)
+    agent_id = store.resolve_agent_id(spec.assignee)
     for _ in range(max_ticks):
         cur = store.get_work_item(item_id)
         if cur.status in terminal:
             break
+        if _author_run_needs_resume(
+                runtime.list_runs(item_id), agent_id, item_id, spec, no_submit_runs, language, now):
+            if store.get_work_item(item_id).status in terminal:
+                break  # 宽限期内提交已落地
+            apply([Wake(item_id, spec.assignee, "worker")], Ports(store=store, runtime=runtime))
+            continue
         poll()
     return item_id
+
+
+def _author_run_needs_resume(runs, agent_id, item_id, spec, budget, language, now) -> bool:
+    """作者最新 Run 已结束且过宽限期 → True(调用方续跑);Run 仍在跑/宽限内 → False;预算用尽 → NeedsDecision。"""
+    direct = [r for r in runs if r.kind == "direct" and r.agent_id == agent_id]
+    if not direct or any(r.active for r in runs):
+        return False
+    ended = [r for r in direct if r.terminal]
+    latest = max(direct, key=lambda r: r.created_at or "")
+    if not latest.terminal:
+        return False
+    action = decide_no_submit(
+        no_submit_grace(latest.updated_at, now(), NO_SUBMIT_GRACE_SECONDS_DEFAULT),
+        consecutive_runs=len(ended), budget=budget)
+    if action is NoSubmitAction.WAIT:
+        return False
+    if action is NoSubmitAction.RETRY:
+        log.info(logsetup.EVT_AUTHORING_NO_SUBMIT, action="resume", kind=spec.kind.value, id=item_id,
+                 agent=spec.assignee, run_id=latest.id, consumed=len(ended), budget=budget)
+        return True
+    reason = ("run terminal time is unavailable" if action is NoSubmitAction.BLOCK_TERMINAL_TIME_UNAVAILABLE
+              else f"no-submit budget {budget} is exhausted")
+    log.warning(logsetup.EVT_AUTHORING_NO_SUBMIT, action="exhausted", kind=spec.kind.value, id=item_id,
+                agent=spec.assignee, run_id=latest.id, consumed=len(ended), budget=budget, reason=reason)
+    raise NeedsDecision(
+        ui(
+            f"{spec.kind.value} work item {item_id}: agent {spec.assignee} run {latest.id} ended "
+            f"without submitting ({reason}). Inspect the item, then rerun it "
+            f"(`multica issue rerun-task {item_id}`) or restart the DAG.",
+            f"{spec.kind.value} 事项 {item_id}:Agent {spec.assignee} 的 Run {latest.id} 结束但未提交"
+            f"({reason})。请检查该事项,再手动重跑(`multica issue rerun-task {item_id}`)或重启 DAG。",
+            language=language),
+        report={"work_item_id": item_id, "run_id": latest.id, "agent": spec.assignee,
+                "reason": "authoring-run-no-submit", "detail": reason, "budget": budget})
 
 
 def _run_inner_loop(
